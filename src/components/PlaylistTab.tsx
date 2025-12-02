@@ -51,7 +51,7 @@ export const PlaylistTab: React.FC<PlaylistTabProps> = ({
       <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
         {reorderedPlaylist.map(({ video, originalIndex }, displayIndex) => (
           <div
-            key={video.id}
+            key={`${video.id}-${originalIndex}`}
             style={{
               padding: '8px',
               borderBottom: '1px solid #eee',

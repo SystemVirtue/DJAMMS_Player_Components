@@ -1,0 +1,132 @@
+// DJAMMS Kiosk - Public Search & Request Interface
+// Styled with obie-v5 aesthetic
+
+import { useEffect, useState, useCallback } from 'react';
+import {
+  BackgroundPlaylist,
+  DEFAULT_BACKGROUND_ASSETS,
+  FallbackBackground,
+  SearchInterface,
+  NowPlaying,
+  ComingUpTicker,
+  CreditsDisplay
+} from './components';
+import {
+  supabase,
+  getPlayerState,
+  subscribeToPlayerState,
+  isPlayerOnline,
+  DEFAULT_PLAYER_ID
+} from '@shared/supabase-client';
+import type { SupabasePlayerState, QueueVideoItem } from '@shared/types';
+
+function App() {
+  const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
+  const [isOnline, setIsOnline] = useState(false);
+  const [credits, setCredits] = useState(999); // Placeholder - future implementation
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
+
+  // Load initial player state
+  useEffect(() => {
+    const loadState = async () => {
+      const state = await getPlayerState(DEFAULT_PLAYER_ID);
+      if (state) {
+        setPlayerState(state);
+        setIsOnline(isPlayerOnline(state));
+      }
+    };
+    loadState();
+  }, []);
+
+  // Subscribe to real-time player state updates
+  useEffect(() => {
+    const channel = subscribeToPlayerState(DEFAULT_PLAYER_ID, (state) => {
+      setPlayerState(state);
+      setIsOnline(isPlayerOnline(state));
+    });
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, []);
+
+  // Handle successful song request
+  const handleSongRequested = useCallback((video: QueueVideoItem) => {
+    console.log('Song requested:', video.title);
+    setShowSuccessToast(true);
+    
+    // Hide toast after 3 seconds
+    setTimeout(() => {
+      setShowSuccessToast(false);
+    }, 3000);
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-slate-900 relative">
+      {/* Background */}
+      <BackgroundPlaylist assets={DEFAULT_BACKGROUND_ASSETS} />
+      <FallbackBackground />
+
+      {/* Now Playing Display - Top Left */}
+      <NowPlaying 
+        video={playerState?.now_playing_video || null}
+        isOnline={isOnline}
+      />
+
+      {/* Credits Display - Top Right (Placeholder) */}
+      <CreditsDisplay credits={credits} />
+
+      {/* Main Content */}
+      <main className="relative z-10 pt-24 pb-24 min-h-screen">
+        <div className="max-w-6xl mx-auto">
+          {/* Title */}
+          <div className="text-center mb-8">
+            <h1 
+              className="text-5xl font-bold text-white mb-2"
+              style={{ 
+                filter: 'drop-shadow(-5px -5px 10px rgba(0,0,0,0.8))'
+              }}
+            >
+              DJAMMS Jukebox
+            </h1>
+            <p className="text-amber-400 text-lg">
+              Search and request your favorite songs
+            </p>
+          </div>
+
+          {/* Search Interface */}
+          <div className="h-[calc(100vh-280px)]">
+            <SearchInterface 
+              onSongRequested={handleSongRequested}
+              credits={credits}
+            />
+          </div>
+        </div>
+      </main>
+
+      {/* Coming Up Ticker - Bottom */}
+      <ComingUpTicker
+        priorityQueue={playerState?.priority_queue || []}
+        activeQueue={playerState?.active_queue || []}
+        maxActiveItems={3}
+      />
+
+      {/* Success Toast */}
+      {showSuccessToast && (
+        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 animate-fade-in">
+          <div className="kiosk-card text-center px-12 py-8">
+            <div className="text-6xl mb-4">🎵</div>
+            <h2 className="text-2xl font-bold text-white mb-2">
+              Song Requested!
+            </h2>
+            <p className="text-amber-400">
+              Your song has been added to the queue
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;

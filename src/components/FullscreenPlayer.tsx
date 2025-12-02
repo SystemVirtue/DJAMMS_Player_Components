@@ -1,5 +1,5 @@
-// components/FullscreenPlayer.tsx - BROWSER COMPATIBLE VERSION
-import React, { useRef, useEffect, useCallback } from 'react';
+// components/FullscreenPlayer.tsx - THE ONLY PLAYER - handles all audio/video playback
+import React, { useRef, useEffect, useState } from 'react';
 import { DJAMMSPlayer } from './DJAMMSPlayer';
 import { Video } from '../types';
 
@@ -31,6 +31,43 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
   const playerRef = useRef<any>(null);
   const prevVideoRef = useRef<Video | null>(null);
   const prevIsPlayingRef = useRef<boolean>(false);
+  
+  // Track window dimensions for responsive video sizing
+  const [dimensions, setDimensions] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight
+  });
+
+  // Listen for window resize events
+  useEffect(() => {
+    const handleResize = () => {
+      setDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+    };
+
+    window.addEventListener('resize', handleResize);
+    
+    // Also handle fullscreen changes
+    const handleFullscreenChange = () => {
+      // Small delay to let the browser update dimensions
+      setTimeout(handleResize, 100);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  // Handle volume changes from Main Window
+  useEffect(() => {
+    if (playerRef.current) {
+      playerRef.current.setVolume(volume);
+    }
+  }, [volume]);
 
   useEffect(() => {
     // Handle video playback changes
@@ -111,8 +148,8 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
     }}>
       <DJAMMSPlayer
         ref={playerRef}
-        width={window.innerWidth}
-        height={window.innerHeight}
+        width={dimensions.width}
+        height={dimensions.height}
         showControls={false}
         showProgress={false}
         showNowPlaying={false}

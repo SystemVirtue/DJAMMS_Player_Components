@@ -19,8 +19,17 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   const videoARef = videoRefs[0] || useRef<HTMLVideoElement>(null);
   const videoBRef = videoRefs[1] || useRef<HTMLVideoElement>(null);
 
-  const [activeVideoRef, setActiveVideoRef] = useState<React.RefObject<HTMLVideoElement>>(videoARef);
-  const [inactiveVideoRef, setInactiveVideoRef] = useState<React.RefObject<HTMLVideoElement>>(videoBRef);
+  // Use refs instead of state for active/inactive tracking to avoid async state update issues
+  // This ensures skip operations always target the correct video element
+  const activeVideoRefRef = useRef<React.RefObject<HTMLVideoElement>>(videoARef);
+  const inactiveVideoRefRef = useRef<React.RefObject<HTMLVideoElement>>(videoBRef);
+  
+  // Expose current refs via getters for components that need them
+  const activeVideoRef = activeVideoRefRef.current;
+  const inactiveVideoRef = inactiveVideoRefRef.current;
+  
+  // State to trigger re-renders when active video changes (for UI updates)
+  const [, forceUpdate] = useState(0);
 
   const videoRefsObj: VideoRefs = {
     videoA: videoARef,
@@ -51,6 +60,11 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   // Retry tracking
   const retryCountRef = useRef(0);
   const retryDelayRef = useRef(1000);
+
+  // Prevent rapid re-triggering of playVideo
+  const isLoadingRef = useRef(false);
+  const lastPlayRequestRef = useRef<string | null>(null);
+  const playDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Web Audio API functions for volume normalization
   const initializeAudioAnalysis = useCallback(() => {
@@ -209,6 +223,8 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   const handleVideoError = useCallback((video: HTMLVideoElement, error: Event) => {
     console.error('[useVideoPlayer] Handling video error, retry:', retryCountRef.current);
 
+    setIsLoading(false); // Reset loading state on error
+
     const errorMessage = `Failed to play: ${currentVideo?.title || 'Unknown'}`;
     setError(errorMessage);
     onError?.(errorMessage);
@@ -220,6 +236,23 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   }, [currentVideo, onVideoEnd, onError]);
 
   const playVideo = useCallback((video: Video) => {
+    const videoId = video.id || video.path || video.src || '';
+    
+    // Prevent duplicate play requests for the same video
+    if (isLoadingRef.current && lastPlayRequestRef.current === videoId) {
+      console.log('[useVideoPlayer] Skipping duplicate play request for:', video.title);
+      return;
+    }
+
+    // Clear any pending debounced play
+    if (playDebounceRef.current) {
+      clearTimeout(playDebounceRef.current);
+    }
+
+    // Mark as loading immediately using ref (sync)
+    isLoadingRef.current = true;
+    lastPlayRequestRef.current = videoId;
+
     console.log('[useVideoPlayer] Playing video:', video.title, 'by', video.artist);
 
     setCurrentVideo(video);
@@ -238,16 +271,43 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       console.error('[useVideoPlayer] No video path found in video object:', video);
       setError('No video path');
       setIsLoading(false);
+      isLoadingRef.current = false;
       return;
     }
 
-    const videoSrc = videoPath.startsWith('http://') || videoPath.startsWith('https://') || videoPath.startsWith('/playlist/')
-      ? videoPath.startsWith('/playlist/')
-        ? `http://localhost:3000${videoPath}`
-        : videoPath
-      : videoPath.startsWith('file://')
-        ? videoPath
-        : `file://${videoPath}`;
+    // Detect if we're in Electron (can use file://) or web browser (need http proxy)
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
+    
+    // Get the current origin for relative URLs (handles port changes)
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    
+    // Check if we're in dev mode (loaded from localhost) - even in Electron, we need to use
+    // the Vite proxy for local files because file:// URLs are blocked for security
+    const isDevMode = origin.startsWith('http://localhost');
+    
+    let videoSrc: string;
+    if (videoPath.startsWith('http://') || videoPath.startsWith('https://')) {
+      // Already an HTTP URL
+      videoSrc = videoPath;
+    } else if (videoPath.startsWith('/playlist/')) {
+      // Vite proxy path - use current origin for proper port handling
+      videoSrc = `${origin}${videoPath}`;
+    } else if (isElectron && !isDevMode) {
+      // In production Electron (loaded from file://), we can use file:// URLs
+      videoSrc = videoPath.startsWith('file://') ? videoPath : `file://${videoPath}`;
+    } else {
+      // In web browser OR Electron dev mode, convert local path to Vite proxy URL
+      // Extract playlist name and filename from path like /Users/.../PLAYLISTS/PlaylistName/filename.mp4
+      const playlistMatch = videoPath.match(/PLAYLISTS\/([^\/]+)\/([^\/]+)$/);
+      if (playlistMatch) {
+        const [, playlistName, fileName] = playlistMatch;
+        videoSrc = `${origin}/playlist/${encodeURIComponent(playlistName)}/${encodeURIComponent(fileName)}`;
+      } else {
+        // Fallback - this won't work in browser but log it
+        console.warn('[useVideoPlayer] Cannot convert local path to proxy URL:', videoPath);
+        videoSrc = videoPath;
+      }
+    }
     console.log('[useVideoPlayer] Video source:', videoSrc);
 
     // Use crossfade if already playing
@@ -260,7 +320,10 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
   const directPlay = useCallback((videoSrc: string) => {
     const activeVideo = activeVideoRef.current;
-    if (!activeVideo) return;
+    if (!activeVideo) {
+      isLoadingRef.current = false;
+      return;
+    }
 
     console.log('[useVideoPlayer] Direct play:', videoSrc);
 
@@ -280,6 +343,7 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
           console.log('[useVideoPlayer] Playback started successfully');
           setIsPlaying(true);
           setIsLoading(false);
+          isLoadingRef.current = false;
 
           // Initialize audio analysis if enabled
           if (enableAudioNormalization) {
@@ -291,17 +355,30 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
           }
         })
         .catch(error => {
+          // Check if it's the "interrupted by new load" error - this is expected during rapid switching
+          if (error.name === 'AbortError' || error.message?.includes('interrupted')) {
+            console.log('[useVideoPlayer] Play request was interrupted (expected during rapid switching)');
+            // Don't treat this as an error - a new video is loading
+            return;
+          }
+          
           console.error('[useVideoPlayer] Play failed:', error.message);
-          // Try to play muted first
+          // Try to play muted first (for autoplay policy)
           activeVideo.muted = true;
           activeVideo.play()
             .then(() => {
               console.log('[useVideoPlayer] Playing muted due to autoplay policy');
+              setIsPlaying(true);
+              setIsLoading(false);
+              isLoadingRef.current = false;
               setTimeout(() => {
                 activeVideo.muted = false;
               }, 100);
             })
-            .catch(e => handleVideoError(activeVideo, e));
+            .catch(e => {
+              isLoadingRef.current = false;
+              handleVideoError(activeVideo, e);
+            });
         });
     }
   }, [activeVideoRef, inactiveVideoRef, volume, handleVideoError, enableAudioNormalization, initializeAudioAnalysis, analyzeVolume]);
@@ -373,10 +450,13 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       if (progress < 1) {
         requestAnimationFrame(fadeStep);
       } else {
-        // Swap references
-        const oldActive = activeVideoRef;
-        setActiveVideoRef(inactiveVideoRef);
-        setInactiveVideoRef(oldActive);
+        // Swap references synchronously using refs
+        const oldActive = activeVideoRefRef.current;
+        activeVideoRefRef.current = inactiveVideoRefRef.current;
+        inactiveVideoRefRef.current = oldActive;
+        
+        // Force a re-render so UI components get updated refs
+        forceUpdate(n => n + 1);
 
         // Reset old active video
         activeVideo.pause();
@@ -385,8 +465,9 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
         setIsPlaying(true);
         setIsLoading(false);
+        isLoadingRef.current = false;
 
-        console.log('[useVideoPlayer] Crossfade complete');
+        console.log('[useVideoPlayer] Crossfade complete, swapped active video to:', activeVideoRefRef.current === videoARef ? 'A' : 'B');
       }
     };
 

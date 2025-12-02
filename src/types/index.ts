@@ -2,13 +2,16 @@
 export interface Video {
   id: string;
   title: string;
-  artist: string;
+  artist: string | null; // null if filename doesn't conform to expected format
   src: string;
   path?: string;
   file_path?: string;
   duration?: number;
   size?: number;
   album?: string;
+  playlist?: string; // Original folder name (may include YouTube Playlist ID prefix)
+  playlistDisplayName?: string; // Display name without YouTube Playlist ID prefix
+  filename?: string;
 }
 
 export interface PlayerState {

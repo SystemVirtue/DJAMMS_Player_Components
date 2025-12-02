@@ -19,12 +19,22 @@ try {
       const playlistPath = path.join(playlistsDir, playlistName)
       const files = fs.readdirSync(playlistPath)
         .filter(file => file.endsWith('.mp4'))
-        .map(file => ({
-          name: file,
-          path: path.join(playlistPath, file),
-          url: `/playlist/${playlistName}/${file}`, // Serve through Vite dev server
-          title: file.replace(/\.mp4$/, '').replace(/^[^|]*\| /, '') // Remove ID prefix and .mp4 extension
-        }))
+        .map((file, index) => {
+          // Parse title from filename (format: "ID | Title.mp4" or just "Title.mp4")
+          const nameWithoutExt = file.replace(/\.mp4$/, '')
+          const parts = nameWithoutExt.split(' | ')
+          const title = parts.length > 1 ? parts.slice(1).join(' | ') : nameWithoutExt
+          
+          return {
+            id: `${playlistName}-${index}`,
+            title,
+            artist: playlistName,
+            filename: file,
+            playlist: playlistName,
+            src: `/playlist/${encodeURIComponent(playlistName)}/${encodeURIComponent(file)}`, // Vite proxy URL
+            path: path.join(playlistPath, file) // Keep original path for reference
+          }
+        })
         .sort((a, b) => a.title.localeCompare(b.title))
       playlists[playlistName] = files
       console.log(`Playlist ${playlistName}: ${files.length} files`)
@@ -76,7 +86,8 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    open: true
+    strictPort: true,  // Force port 3000 so Electron wait-on works
+    open: false  // Don't auto-open browser when running with Electron
   },
   define: {
     __PLAYLISTS__: JSON.stringify(playlists)
