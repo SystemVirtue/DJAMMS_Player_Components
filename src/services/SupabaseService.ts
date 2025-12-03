@@ -329,6 +329,8 @@ class SupabaseService {
   private async startCommandListener(): Promise<void> {
     if (!this.client) throw new Error('Client not initialized');
 
+    console.log(`[SupabaseService] Setting up command listener for player: ${this.playerId}`);
+
     // Subscribe to admin_commands table for this player
     this.commandChannel = this.client
       .channel(`commands:${this.playerId}`)
@@ -338,16 +340,29 @@ class SupabaseService {
           event: 'INSERT',
           schema: 'public',
           table: 'admin_commands',
-          filter: `status=eq.pending`
+          filter: `player_id=eq.${this.playerId}`
         },
         async (payload) => {
           const command = payload.new as SupabaseCommand;
-          console.log('[SupabaseService] Received command:', command.command_type);
-          await this.processCommand(command);
+          // Only process pending commands for this player
+          if (command.status === 'pending') {
+            console.log('[SupabaseService] 📥 Received command via Realtime:', command.command_type, command.id);
+            await this.processCommand(command);
+          }
         }
       )
-      .subscribe((status) => {
-        console.log(`[SupabaseService] Command channel status: ${status}`);
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[SupabaseService] ✅ Command listener SUBSCRIBED - ready to receive commands');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('[SupabaseService] ❌ Command channel ERROR:', err);
+          console.error('[SupabaseService] Commands from Web Admin/Kiosk will NOT be received!');
+          console.error('[SupabaseService] Check: Is Realtime enabled for admin_commands table in Supabase?');
+        } else if (status === 'TIMED_OUT') {
+          console.warn('[SupabaseService] ⚠️ Command channel TIMED_OUT - retrying...');
+        } else {
+          console.log(`[SupabaseService] Command channel status: ${status}`);
+        }
       });
 
     // Also check for any pending commands that arrived while offline
@@ -365,6 +380,7 @@ class SupabaseService {
     const { data: pendingCommands, error } = await this.client
       .from('admin_commands')
       .select('*')
+      .eq('player_id', this.playerId)
       .eq('status', 'pending')
       .gt('created_at', expiryTime)
       .order('created_at', { ascending: true });
@@ -390,17 +406,19 @@ class SupabaseService {
     
     try {
       if (handlers && handlers.length > 0) {
+        console.log(`[SupabaseService] ⚙️ Executing command: ${command.command_type} (${command.id})`);
         for (const handler of handlers) {
           await handler(command);
         }
+        console.log(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
       } else {
-        console.warn(`[SupabaseService] No handler for command type: ${command.command_type}`);
+        console.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
       }
 
       // Mark command as executed
       await this.markCommandExecuted(command.id, true);
     } catch (error) {
-      console.error(`[SupabaseService] Error processing command ${command.id}:`, error);
+      console.error(`[SupabaseService] ❌ Error processing command ${command.id}:`, error);
       await this.markCommandExecuted(command.id, false, String(error));
     }
   }
@@ -415,6 +433,8 @@ class SupabaseService {
   ): Promise<void> {
     if (!this.client) return;
 
+    console.log(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
+
     const { error } = await this.client
       .from('admin_commands')
       .update({
@@ -426,6 +446,8 @@ class SupabaseService {
 
     if (error) {
       console.error('[SupabaseService] Error marking command as executed:', error);
+    } else {
+      console.log(`[SupabaseService] ✅ Command ${commandId} marked as ${success ? 'executed' : 'failed'}`);
     }
   }
 

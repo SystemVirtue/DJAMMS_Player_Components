@@ -1,0 +1,19 @@
+{
+  "name": "djamms-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for DJAMMS Web Admin and Kiosk endpoints",
+  "scripts": {
+    "test": "playwright test",
+    "test:admin": "ADMIN_URL=http://localhost:5176 playwright test --grep 'Web Admin'",
+    "test:kiosk": "KIOSK_URL=http://localhost:5175 playwright test --grep 'Web Kiosk'",
+    "test:all": "ADMIN_URL=http://localhost:5176 KIOSK_URL=http://localhost:5175 playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "report": "playwright show-report ./reports/html",
+    "install-browsers": "playwright install"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}

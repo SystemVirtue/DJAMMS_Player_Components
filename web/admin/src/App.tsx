@@ -3,7 +3,19 @@
 // Uses Supabase for state sync instead of Electron IPC
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { supabase, subscribeToPlayerState, queryLocalVideos, insertCommand, searchLocalVideos } from '@shared/supabase-client';
+import { 
+  supabase, 
+  subscribeToPlayerState, 
+  getPlayerState, 
+  getAllLocalVideos, 
+  insertCommand, 
+  searchLocalVideos, 
+  blockingCommands, 
+  DEFAULT_PLAYER_ID,
+  onConnectionChange,
+  isConnected as getConnectionStatus
+} from '@shared/supabase-client';
+import type { CommandResult } from '@shared/supabase-client';
 import type { 
   SupabasePlayerState, 
   SupabaseLocalVideo, 
@@ -13,8 +25,9 @@ import type {
 } from '@shared/types';
 
 // Helper to strip YouTube Playlist ID prefix from folder name
+// Handles both underscore and dot separators: PLxxxxxx_Name or PLxxxxxx.Name
 const getPlaylistDisplayName = (folderName: string): string => {
-  const match = folderName.match(/^PL[A-Za-z0-9_-]+_(.+)$/);
+  const match = folderName.match(/^PL[A-Za-z0-9_-]+[._](.+)$/);
   return match ? match[1] : folderName;
 };
 
@@ -24,6 +37,12 @@ const getDisplayArtist = (artist: string | null | undefined): string => {
     return '';
   }
   return artist;
+};
+
+// Helper to extract playlist from SupabaseLocalVideo (stored in metadata)
+const getVideoPlaylist = (video: SupabaseLocalVideo): string => {
+  const metadata = video.metadata as any;
+  return metadata?.playlist || '';
 };
 
 type TabId = 'queue' | 'search' | 'browse' | 'settings' | 'tools';
@@ -75,6 +94,10 @@ export default function App() {
   const [playlistToLoad, setPlaylistToLoad] = useState<string | null>(null);
   const [showPauseDialog, setShowPauseDialog] = useState(false);
 
+  // Blocking command state - prevents multiple simultaneous commands
+  const [isCommandPending, setIsCommandPending] = useState(false);
+  const [commandError, setCommandError] = useState<string | null>(null);
+
   // Settings (local-only for web, commands sent to player)
   const [settings, setSettings] = useState({
     autoShufflePlaylists: true,
@@ -97,13 +120,14 @@ export default function App() {
 
   // Subscribe to Supabase player_state updates
   useEffect(() => {
-    const unsubscribe = subscribeToPlayerState((state) => {
+    // Helper to apply state
+    const applyState = (state: SupabasePlayerState) => {
       setPlayerState(state);
-      setIsConnected(true);
       
       // Update local state from Supabase
-      if (state.now_playing) {
-        setCurrentVideo(state.now_playing);
+      // Note: Electron writes 'now_playing_video', not 'now_playing'
+      if (state.now_playing_video) {
+        setCurrentVideo(state.now_playing_video);
       }
       if (typeof state.is_playing === 'boolean') {
         setIsPlaying(state.is_playing);
@@ -114,31 +138,49 @@ export default function App() {
       if (state.priority_queue) {
         setPriorityQueue(state.priority_queue);
       }
-      if (typeof state.queue_index === 'number') {
-        setQueueIndex(state.queue_index);
-      }
-      if (state.active_playlist) {
-        setActivePlaylist(state.active_playlist);
-      }
       if (typeof state.volume === 'number') {
         setVolume(Math.round(state.volume * 100));
       }
-    });
+    };
 
-    return () => unsubscribe();
+    // Fetch initial state on mount (realtime subscription only fires on CHANGES)
+    const loadInitialState = async () => {
+      const state = await getPlayerState(DEFAULT_PLAYER_ID);
+      if (state) {
+        applyState(state);
+      }
+    };
+    loadInitialState();
+
+    // Then subscribe to real-time changes
+    const channel = subscribeToPlayerState(DEFAULT_PLAYER_ID, applyState);
+
+    // unsubscribe() returns a Promise but cleanup must be sync - ignore return value
+    return () => { channel.unsubscribe(); };
+  }, []);
+
+  // Monitor Supabase Realtime connection status
+  useEffect(() => {
+    const unsubscribe = onConnectionChange((connected) => {
+      console.log(`[WebAdmin] Supabase Realtime ${connected ? '✅ connected' : '❌ disconnected'}`);
+      setIsConnected(connected);
+    });
+    return unsubscribe;
   }, []);
 
   // Load all videos from local_videos table for Browse/Search
   useEffect(() => {
     const loadAllVideos = async () => {
       try {
-        const videos = await queryLocalVideos();
+        const videos = await getAllLocalVideos();
         setAllVideos(videos);
         
-        // Group videos by playlist
+        // Group videos by playlist (playlist is stored in metadata)
         const grouped: Record<string, SupabaseLocalVideo[]> = {};
         videos.forEach(video => {
-          const playlist = video.playlist || 'Unknown';
+          // playlist is in metadata.playlist, not video.playlist
+          const metadata = video.metadata as any;
+          const playlist = metadata?.playlist || 'Unknown';
           if (!grouped[playlist]) grouped[playlist] = [];
           grouped[playlist].push(video);
         });
@@ -180,7 +222,7 @@ export default function App() {
     return shuffled;
   };
 
-  // Send command to player via Supabase
+  // Send command to player via Supabase (fire-and-forget for non-critical)
   const sendCommand = useCallback(async (type: CommandType, payload?: any) => {
     try {
       await insertCommand(type, payload);
@@ -189,8 +231,39 @@ export default function App() {
     }
   }, []);
 
-  // Player control functions
+  // Send blocking command - waits for Electron to acknowledge
+  const sendBlockingCommand = useCallback(async (
+    commandFn: () => Promise<CommandResult>
+  ): Promise<boolean> => {
+    if (isCommandPending) {
+      console.warn('[WebAdmin] Command blocked - previous command still pending');
+      return false;
+    }
+
+    setIsCommandPending(true);
+    setCommandError(null);
+
+    try {
+      const result = await commandFn();
+      if (!result.success) {
+        setCommandError(result.error || 'Command failed');
+        console.error('[WebAdmin] Command failed:', result.error);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setCommandError(errorMsg);
+      console.error('[WebAdmin] Command exception:', error);
+      return false;
+    } finally {
+      setIsCommandPending(false);
+    }
+  }, [isCommandPending]);
+
+  // Player control functions - now use blocking commands
   const handlePauseClick = () => {
+    if (isCommandPending) return; // Block if command in progress
     if (isPlaying) {
       setShowPauseDialog(true);
     } else {
@@ -199,30 +272,33 @@ export default function App() {
   };
 
   const confirmPause = async () => {
-    await sendCommand('pause');
     setShowPauseDialog(false);
+    await sendBlockingCommand(() => blockingCommands.pause());
   };
 
   const handleResumePlayback = async () => {
-    await sendCommand('resume');
+    await sendBlockingCommand(() => blockingCommands.resume());
   };
 
   const skipTrack = async () => {
-    await sendCommand('skip');
+    await sendBlockingCommand(() => blockingCommands.skip());
   };
 
   const toggleShuffle = async () => {
-    await sendCommand('shuffle');
+    await sendBlockingCommand(() => blockingCommands.queueShuffle());
   };
 
   const handleVolumeChange = async (newVolume: number) => {
     setVolume(newVolume);
-    await sendCommand('set_volume', { volume: newVolume / 100 });
+    // Volume change is non-blocking (frequent updates)
+    await sendCommand('setVolume', { volume: newVolume / 100 });
   };
 
   // Play video at specific index in queue (click-to-play)
   const playVideoAtIndex = async (index: number) => {
-    await sendCommand('play_at_index', { index });
+    await sendBlockingCommand(() => 
+      blockingCommands.play({} as any, index)
+    );
   };
 
   // Playlist functions
@@ -240,12 +316,11 @@ export default function App() {
 
   const confirmLoadPlaylist = async () => {
     if (playlistToLoad) {
-      await sendCommand('load_playlist', { 
-        playlist: playlistToLoad,
-        shuffle: settings.autoShufflePlaylists 
-      });
+      setShowLoadDialog(false);
+      await sendBlockingCommand(() => 
+        blockingCommands.loadPlaylist(playlistToLoad, settings.autoShufflePlaylists)
+      );
     }
-    setShowLoadDialog(false);
     setPlaylistToLoad(null);
   };
 
@@ -277,15 +352,17 @@ export default function App() {
       case 'karaoke': return videos.filter(v => v.title?.toLowerCase().includes('karaoke'));
       case 'queue': 
         // Convert queue items to match local video format for display
+        // Put playlist in metadata to match SupabaseLocalVideo structure
         return activeQueue.map(q => ({
           id: q.id,
           title: q.title,
           artist: q.artist || null,
           duration: q.duration || null,
-          playlist: q.playlist || null,
-          file_path: q.file_path || '',
-          src: q.src || '',
-          indexed_at: new Date().toISOString(),
+          metadata: { playlist: q.playlist || null },
+          path: q.path || '',
+          is_available: true,
+          player_id: DEFAULT_PLAYER_ID,
+          created_at: new Date().toISOString(),
         })) as SupabaseLocalVideo[];
       case 'playlist':
         if (!selectedPlaylist) return [];
@@ -323,18 +400,19 @@ export default function App() {
 
   // Queue management
   const handleClearQueue = async () => {
-    await sendCommand('clear_queue');
+    await sendCommand('queue_clear');
   };
 
   const handleAddToQueue = async (video: SupabaseLocalVideo) => {
+    const metadata = video.metadata as any;
     await sendCommand('queue_add', {
       id: video.id,
       title: video.title,
       artist: video.artist,
       duration: video.duration,
-      playlist: video.playlist,
-      file_path: video.file_path,
-      src: video.src,
+      playlist: metadata?.playlist || null,
+      path: video.path,
+      src: video.path, // Use path as src for local videos
     });
   };
 
@@ -407,13 +485,25 @@ export default function App() {
         
         <div className="header-right">
           <div className="player-controls">
-            <button className="control-btn control-btn-large" onClick={skipTrack}>
-              <span className="control-btn-label">SKIP</span>
+            <button 
+              className={`control-btn control-btn-large ${isCommandPending ? 'btn-loading' : ''}`}
+              onClick={skipTrack}
+              disabled={isCommandPending}
+            >
+              <span className="control-btn-label">{isCommandPending ? '...' : 'SKIP'}</span>
             </button>
-            <button className="control-btn control-btn-large" onClick={toggleShuffle}>
-              <span className="control-btn-label">SHUFFLE</span>
+            <button 
+              className={`control-btn control-btn-large ${isCommandPending ? 'btn-loading' : ''}`}
+              onClick={toggleShuffle}
+              disabled={isCommandPending}
+            >
+              <span className="control-btn-label">{isCommandPending ? '...' : 'SHUFFLE'}</span>
             </button>
-            <button className="control-btn play-btn" onClick={handlePauseClick}>
+            <button 
+              className={`control-btn play-btn ${isCommandPending ? 'btn-loading' : ''}`}
+              onClick={handlePauseClick}
+              disabled={isCommandPending}
+            >
               <span className="material-symbols-rounded">{isPlaying ? 'pause' : 'play_arrow'}</span>
             </button>
             <div className="volume-control">
@@ -427,6 +517,11 @@ export default function App() {
               />
             </div>
           </div>
+          {commandError && (
+            <div className="command-error" style={{ color: '#ff6b6b', fontSize: '12px', marginTop: '4px' }}>
+              {commandError}
+            </div>
+          )}
         </div>
       </header>
 
@@ -615,7 +710,7 @@ export default function App() {
                           <td className="col-title">{track.title}</td>
                           <td>{getDisplayArtist(track.artist)}</td>
                           <td>{track.duration || '—'}</td>
-                          <td>{getPlaylistDisplayName(track.playlist || '')}</td>
+                          <td>{getPlaylistDisplayName(getVideoPlaylist(track))}</td>
                         </tr>
                       ))
                     )}
@@ -678,7 +773,7 @@ export default function App() {
                           <td className="col-title">{track.title}</td>
                           <td>{getDisplayArtist(track.artist)}</td>
                           <td>{track.duration || '—'}</td>
-                          <td>{getPlaylistDisplayName(track.playlist || '')}</td>
+                          <td>{getPlaylistDisplayName(getVideoPlaylist(track))}</td>
                         </tr>
                       ))
                     )}

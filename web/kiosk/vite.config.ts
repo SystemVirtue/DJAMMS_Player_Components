@@ -12,6 +12,13 @@ export default defineConfig({
   },
   server: {
     port: 5175,
+    fs: {
+      allow: [
+        // Allow serving files from project root and shared
+        path.resolve(__dirname, '..'),
+        path.resolve(__dirname, '../shared'),
+      ],
+    },
   },
   build: {
     outDir: 'dist',

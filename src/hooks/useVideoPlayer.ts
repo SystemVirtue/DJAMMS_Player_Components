@@ -66,6 +66,10 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   const lastPlayRequestRef = useRef<string | null>(null);
   const playDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Track whether we've already triggered the early crossfade for this video
+  // This prevents double-triggering (once at fade point, once at actual end)
+  const crossfadeTriggeredRef = useRef(false);
+
   // Web Audio API functions for volume normalization
   const initializeAudioAnalysis = useCallback(() => {
     if (!enableAudioNormalization || !activeVideoRef.current || audioContextRef.current) return;
@@ -164,11 +168,17 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     const handleVideoEnd = (video: HTMLVideoElement) => {
       if (video === activeVideoRef.current) {
-        onVideoEnd?.();
-        ipcAdapter.send('playback-ended', {
-          videoId: currentVideo?.id,
-          title: currentVideo?.title
-        });
+        // Only trigger onVideoEnd if we haven't already triggered it via early crossfade
+        if (!crossfadeTriggeredRef.current) {
+          console.log('[useVideoPlayer] Video ended naturally (no early crossfade)');
+          onVideoEnd?.();
+          ipcAdapter.send('playback-ended', {
+            videoId: currentVideo?.id,
+            title: currentVideo?.title
+          });
+        } else {
+          console.log('[useVideoPlayer] Video ended after crossfade already triggered - ignoring');
+        }
       }
     };
 
@@ -181,11 +191,39 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     const handleLoadedMetadata = (video: HTMLVideoElement) => {
       setDuration(video.duration);
+      // Reset crossfade trigger flag when new video metadata loads
+      crossfadeTriggeredRef.current = false;
     };
 
     const handleTimeUpdate = (video: HTMLVideoElement) => {
       if (video === activeVideoRef.current && isPlaying) {
-        setCurrentTime(video.currentTime);
+        const currentTimeValue = video.currentTime;
+        const durationValue = video.duration;
+        
+        setCurrentTime(currentTimeValue);
+        
+        // Check if we should trigger early crossfade
+        // Trigger when currentTime reaches (duration - fadeDuration)
+        // Only trigger once per video (checked via crossfadeTriggeredRef)
+        if (
+          !crossfadeTriggeredRef.current &&
+          durationValue > 0 &&
+          fadeDuration > 0 &&
+          currentTimeValue >= (durationValue - fadeDuration) &&
+          currentTimeValue < durationValue // Ensure we're not past the end
+        ) {
+          console.log(`[useVideoPlayer] Early crossfade trigger at ${currentTimeValue.toFixed(2)}s (duration: ${durationValue.toFixed(2)}s, fadeDuration: ${fadeDuration}s)`);
+          crossfadeTriggeredRef.current = true;
+          
+          // Trigger onVideoEnd to request the next video
+          // The parent component should call playVideo() with the next video,
+          // which will use crossfadeToVideo() since isPlaying is true
+          onVideoEnd?.();
+          ipcAdapter.send('playback-ended', {
+            videoId: currentVideo?.id,
+            title: currentVideo?.title
+          });
+        }
       }
     };
 
@@ -218,7 +256,7 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
         video.removeEventListener('playing', handlePlaying);
       });
     };
-  }, [activeVideoRef, currentVideo, ipcAdapter, onVideoEnd, isPlaying]);
+  }, [activeVideoRef, currentVideo, ipcAdapter, onVideoEnd, isPlaying, fadeDuration]);
 
   const handleVideoError = useCallback((video: HTMLVideoElement, error: Event) => {
     console.error('[useVideoPlayer] Handling video error, retry:', retryCountRef.current);
@@ -262,6 +300,9 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     // Reset normalization for new video
     normalizationFactorRef.current = 1.0;
     isAnalyzingRef.current = false;
+    
+    // Reset crossfade trigger flag for the new video
+    crossfadeTriggeredRef.current = false;
 
     retryCountRef.current = 0;
 

@@ -213,7 +213,7 @@ function FullscreenApp() {
         priorityQueue
       })
     }
-  }, [supabaseReady, isPlaying, video, volume, syncState])
+  }, [supabaseReady, isPlaying, video, volume, activeQueue, priorityQueue, syncState])
 
   // Handle video end - notify Main Window to play next track
   const handleVideoEnd = () => {

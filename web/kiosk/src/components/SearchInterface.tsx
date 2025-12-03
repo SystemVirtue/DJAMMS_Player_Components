@@ -7,7 +7,7 @@ import { SearchKeyboard } from './SearchKeyboard';
 import { VideoResultCard, VideoGrid } from './VideoResultCard';
 import { 
   searchLocalVideos, 
-  commands,
+  blockingCommands,
   localVideoToQueueItem 
 } from '@shared/supabase-client';
 import type { SupabaseLocalVideo, QueueVideoItem } from '@shared/types';
@@ -74,10 +74,10 @@ export function SearchInterface({ onSongRequested, credits = 999 }: SearchInterf
     try {
       const queueItem = localVideoToQueueItem(selectedVideo);
       
-      // Send command to add to priority queue
-      const success = await commands.queueAdd(queueItem, 'priority', 'kiosk');
+      // Send command to add to priority queue (using blocking command for feedback)
+      const result = await blockingCommands.queueAdd(queueItem, 'priority', 'kiosk');
       
-      if (success) {
+      if (result.success) {
         onSongRequested?.(queueItem);
         // Reset state
         setShowConfirm(false);
@@ -85,7 +85,7 @@ export function SearchInterface({ onSongRequested, credits = 999 }: SearchInterf
         setSearchQuery('');
         setResults([]);
       } else {
-        console.error('Failed to add song to queue');
+        console.error('Failed to add song to queue:', result.error);
       }
     } catch (error) {
       console.error('Request error:', error);

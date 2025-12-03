@@ -16,6 +16,7 @@ import {
   getPlayerState,
   subscribeToPlayerState,
   isPlayerOnline,
+  onConnectionChange,
   DEFAULT_PLAYER_ID
 } from '@shared/supabase-client';
 import type { SupabasePlayerState, QueueVideoItem } from '@shared/types';
@@ -23,6 +24,7 @@ import type { SupabasePlayerState, QueueVideoItem } from '@shared/types';
 function App() {
   const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
   const [isOnline, setIsOnline] = useState(false);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [credits, setCredits] = useState(999); // Placeholder - future implementation
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
@@ -45,9 +47,17 @@ function App() {
       setIsOnline(isPlayerOnline(state));
     });
 
-    return () => {
-      channel.unsubscribe();
-    };
+    // unsubscribe() returns a Promise but cleanup must be sync - ignore return value
+    return () => { channel.unsubscribe(); };
+  }, []);
+
+  // Monitor Supabase Realtime connection status
+  useEffect(() => {
+    const unsubscribe = onConnectionChange((connected) => {
+      console.log(`[Kiosk] Supabase Realtime ${connected ? '✅ connected' : '❌ disconnected'}`);
+      setIsRealtimeConnected(connected);
+    });
+    return unsubscribe;
   }, []);
 
   // Handle successful song request
