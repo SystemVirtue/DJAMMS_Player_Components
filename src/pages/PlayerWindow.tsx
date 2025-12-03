@@ -1,5 +1,5 @@
 // src/pages/PlayerWindow.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Video } from '../types';
 import { localSearchService, SearchResult } from '../services';
 import { getPlaylistDisplayName, getDisplayArtist } from '../utils/playlistHelpers';
@@ -437,11 +437,32 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   };
 
   // Video end handler - called when Player Window notifies us video ended
+  // Uses refs to avoid stale closure issues with IPC listener
+  const queueRef = useRef(queue);
+  const queueIndexRef = useRef(queueIndex);
+  
+  // Keep refs in sync with state
+  useEffect(() => {
+    queueRef.current = queue;
+    queueIndexRef.current = queueIndex;
+  }, [queue, queueIndex]);
+
   const handleVideoEnd = useCallback(() => {
-    if (queueIndex < queue.length - 1) {
-      playVideoAtIndex(queueIndex + 1);
+    const currentQueue = queueRef.current;
+    const currentIndex = queueIndexRef.current;
+    
+    console.log('[PlayerWindow] Video ended, currentIndex:', currentIndex, 'queueLength:', currentQueue.length);
+    
+    if (currentQueue.length === 0) {
+      console.log('[PlayerWindow] Queue is empty, nothing to play');
+      return;
     }
-  }, [queue.length, queueIndex, playVideoAtIndex]);
+    
+    // Advance to next track, or loop back to beginning if at end
+    const nextIndex = currentIndex < currentQueue.length - 1 ? currentIndex + 1 : 0;
+    console.log('[PlayerWindow] Playing next track at index:', nextIndex);
+    playVideoAtIndex(nextIndex);
+  }, [playVideoAtIndex]);
 
   // Set up IPC listener to receive video end events from Player Window
   useEffect(() => {
