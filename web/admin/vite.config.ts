@@ -9,6 +9,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@shared': path.resolve(__dirname, '../shared'),
     },
+    dedupe: ['@supabase/supabase-js', 'react', 'react-dom'],
   },
   optimizeDeps: {
     include: ['@supabase/supabase-js', 'react', 'react-dom', 'lucide-react', 'clsx', 'tailwind-merge'],
@@ -26,5 +27,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    commonjsOptions: {
+      include: [/node_modules/, /shared/],
+    },
+    rollupOptions: {
+      external: [],
+    },
   },
 });
