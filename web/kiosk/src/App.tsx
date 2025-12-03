@@ -92,12 +92,13 @@ function App() {
           {/* Title */}
           <div className="text-center mb-8">
             <h1 
-              className="text-5xl font-bold text-white mb-2"
+              className="text-5xl font-bold text-white mb-2 flex items-center gap-4"
               style={{ 
                 filter: 'drop-shadow(-5px -5px 10px rgba(0,0,0,0.8))'
               }}
             >
-              DJAMMS Jukebox
+              <img src="/icon.png" alt="DJAMMS" style={{ height: '60px', width: 'auto' }} />
+              Jukebox
             </h1>
             <p className="text-amber-400 text-lg">
               Search and request your favorite songs

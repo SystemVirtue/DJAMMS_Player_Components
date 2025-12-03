@@ -332,6 +332,8 @@ class SupabaseService {
     console.log(`[SupabaseService] Setting up command listener for player: ${this.playerId}`);
 
     // Subscribe to admin_commands table for this player
+    // Note: We subscribe to ALL inserts and filter client-side because
+    // Supabase Realtime filter columns must be explicitly enabled in the dashboard
     this.commandChannel = this.client
       .channel(`commands:${this.playerId}`)
       .on(
@@ -339,12 +341,17 @@ class SupabaseService {
         {
           event: 'INSERT',
           schema: 'public',
-          table: 'admin_commands',
-          filter: `player_id=eq.${this.playerId}`
+          table: 'admin_commands'
+          // Removed server-side filter - will filter client-side instead
         },
         async (payload) => {
           const command = payload.new as SupabaseCommand;
-          // Only process pending commands for this player
+          // Filter client-side: only process commands for this player
+          if (command.player_id !== this.playerId) {
+            console.log('[SupabaseService] Ignoring command for different player:', command.player_id);
+            return;
+          }
+          // Only process pending commands
           if (command.status === 'pending') {
             console.log('[SupabaseService] 📥 Received command via Realtime:', command.command_type, command.id);
             await this.processCommand(command);

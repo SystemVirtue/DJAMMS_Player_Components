@@ -463,7 +463,7 @@ export default function App() {
       {/* Fixed Top Header */}
       <header className="top-header">
         <div className="header-left">
-          <div className="app-title">DJAMMS</div>
+          <img src="/icon.png" alt="DJAMMS" className="app-logo" style={{ height: '40px', width: 'auto' }} />
           <div className={`online-indicator ${isConnected ? '' : 'offline'}`} title={isConnected ? 'Connected to Player' : 'Disconnected'}></div>
         </div>
         

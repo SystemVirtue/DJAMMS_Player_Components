@@ -101,6 +101,8 @@ export function subscribeToPlayerState(
   playerId: string = DEFAULT_PLAYER_ID,
   callback: (state: SupabasePlayerState) => void
 ): RealtimeChannel {
+  // Note: We subscribe to ALL changes and filter client-side because
+  // Supabase Realtime filter columns must be explicitly enabled in the dashboard
   const channel = supabase
     .channel(`player_state:${playerId}`)
     .on(
@@ -108,12 +110,14 @@ export function subscribeToPlayerState(
       {
         event: '*',
         schema: 'public',
-        table: 'player_state',
-        filter: `player_id=eq.${playerId}`
+        table: 'player_state'
+        // Removed server-side filter - will filter client-side instead
       },
       (payload) => {
-        if (payload.new) {
-          callback(payload.new as SupabasePlayerState);
+        // Filter client-side: only process updates for the target player
+        const newState = payload.new as SupabasePlayerState;
+        if (newState && newState.player_id === playerId) {
+          callback(newState);
         }
       }
     )
@@ -214,12 +218,18 @@ export async function sendCommandAndWait(
           resolved = true;
           cleanup();
           console.warn(`[SupabaseClient] Command ${commandType} timed out after ${timeoutMs}ms`);
-          resolve({ success: false, error: 'Timeout waiting for command execution', commandId });
+          resolve({ 
+            success: false, 
+            error: 'Player not responding. Is the Electron app running?', 
+            commandId 
+          });
         }
       }, timeoutMs);
 
       // 3. Subscribe to this command's status change (Realtime - instant acknowledgment)
       //    With fallback to polling if Realtime fails or channel closes unexpectedly
+      //    Note: We subscribe to ALL admin_commands updates and filter client-side
+      //    because Supabase Realtime filter columns must be enabled in the dashboard
       
       channelRef = supabase
         .channel(`cmd-ack:${commandId}`)
@@ -228,13 +238,17 @@ export async function sendCommandAndWait(
           {
             event: 'UPDATE',
             schema: 'public',
-            table: 'admin_commands',
-            filter: `id=eq.${commandId}`
+            table: 'admin_commands'
+            // Removed server-side filter - will filter client-side instead
           },
           (payload) => {
             if (resolved) return;
             
             const newStatus = payload.new as any;
+            
+            // Filter client-side: only process updates for our specific command
+            if (newStatus.id !== commandId) return;
+            
             console.log(`[SupabaseClient] Command ${commandId} status: ${newStatus.status}`);
             
             if (newStatus.status === 'executed') {

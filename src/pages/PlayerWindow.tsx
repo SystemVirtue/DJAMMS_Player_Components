@@ -3,6 +3,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Video } from '../types';
 import { localSearchService, SearchResult } from '../services';
 import { getPlaylistDisplayName, getDisplayArtist } from '../utils/playlistHelpers';
+import { useSupabase } from '../hooks/useSupabase';
+import { QueueVideoItem } from '../types/supabase';
 
 interface PlayerWindowProps {
   className?: string;
@@ -76,6 +78,129 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
+
+  // Supabase integration - listen for remote commands from Web Admin / Kiosk
+  // This runs in the main window so commands are received even without Player Window open
+  const { isInitialized: supabaseInitialized, isOnline: supabaseOnline, syncState } = useSupabase({
+    autoInit: isElectron, // Only initialize in Electron environment
+    onPlay: (video?: QueueVideoItem) => {
+      console.log('[PlayerWindow] Supabase play command received:', video?.title);
+      if (video) {
+        // Convert QueueVideoItem to Video format and play
+        const videoToPlay: Video = {
+          id: video.id,
+          src: video.src,
+          title: video.title,
+          artist: video.artist,
+          path: video.path,
+          playlist: video.playlist,
+          playlistDisplayName: video.playlistDisplayName,
+          duration: video.duration
+        };
+        setCurrentVideo(videoToPlay);
+        setIsPlaying(true);
+        if (isElectron) {
+          (window as any).electronAPI.controlPlayerWindow('play', videoToPlay);
+        }
+      } else if (currentVideo) {
+        // Resume current video
+        setIsPlaying(true);
+        if (isElectron) {
+          (window as any).electronAPI.controlPlayerWindow('resume');
+        }
+      }
+    },
+    onPause: () => {
+      console.log('[PlayerWindow] Supabase pause command received');
+      setIsPlaying(false);
+      if (isElectron) {
+        (window as any).electronAPI.controlPlayerWindow('pause');
+      }
+    },
+    onResume: () => {
+      console.log('[PlayerWindow] Supabase resume command received');
+      setIsPlaying(true);
+      if (isElectron) {
+        (window as any).electronAPI.controlPlayerWindow('resume');
+      }
+    },
+    onSkip: () => {
+      console.log('[PlayerWindow] Supabase skip command received');
+      // Use the same skip logic as handleSkip
+      const nextIndex = queueRef.current.length > 0 
+        ? (queueIndexRef.current + 1) % queueRef.current.length 
+        : 0;
+      const nextVideo = queueRef.current[nextIndex];
+      if (nextVideo) {
+        setQueueIndex(nextIndex);
+        setCurrentVideo(nextVideo);
+        setIsPlaying(true);
+        if (isElectron) {
+          (window as any).electronAPI.controlPlayerWindow('play', nextVideo);
+        }
+      }
+    },
+    onSetVolume: (newVolume: number) => {
+      console.log('[PlayerWindow] Supabase volume command received:', newVolume);
+      setVolume(Math.round(newVolume * 100));
+      if (isElectron) {
+        (window as any).electronAPI.controlPlayerWindow('setVolume', newVolume);
+        (window as any).electronAPI.saveSetting('volume', newVolume);
+      }
+    },
+    onSeekTo: (position: number) => {
+      console.log('[PlayerWindow] Supabase seek command received:', position);
+      if (isElectron) {
+        (window as any).electronAPI.controlPlayerWindow('seekTo', position);
+      }
+    },
+    onQueueAdd: (video: QueueVideoItem, queueType: 'active' | 'priority') => {
+      console.log('[PlayerWindow] Supabase queue_add command received:', video.title, queueType);
+      const videoToAdd: Video = {
+        id: video.id,
+        src: video.src,
+        title: video.title,
+        artist: video.artist,
+        path: video.path,
+        playlist: video.playlist,
+        playlistDisplayName: video.playlistDisplayName,
+        duration: video.duration
+      };
+      if (queueType === 'priority') {
+        // Add to priority queue (insert after current position)
+        setQueue(prev => {
+          const newQueue = [...prev];
+          newQueue.splice(queueIndexRef.current + 1, 0, videoToAdd);
+          return newQueue;
+        });
+      } else {
+        // Add to end of active queue
+        setQueue(prev => [...prev, videoToAdd]);
+      }
+    },
+    onLoadPlaylist: (playlistName: string, shuffle?: boolean) => {
+      console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
+      // Find the playlist (may have YouTube ID prefix)
+      const playlistKey = Object.keys(playlists).find(key => 
+        key === playlistName || key.includes(playlistName)
+      );
+      if (playlistKey && playlists[playlistKey]) {
+        const playlistTracks = playlists[playlistKey];
+        const shouldShuffle = shuffle ?? settings.autoShufflePlaylists;
+        const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
+        setActivePlaylist(playlistKey);
+        setQueue(finalTracks);
+        setQueueIndex(0);
+        if (finalTracks.length > 0) {
+          setCurrentVideo(finalTracks[0]);
+          setIsPlaying(true);
+          if (isElectron) {
+            (window as any).electronAPI.controlPlayerWindow('play', finalTracks[0]);
+          }
+        }
+      }
+    }
+  });
 
   // Shuffle helper
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -500,6 +625,21 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     });
   }, [isElectron, queue, priorityQueue]);
 
+  // Sync player state to Supabase when it changes
+  // This ensures Web Admin / Kiosk see up-to-date state
+  useEffect(() => {
+    if (!supabaseInitialized) return;
+    
+    syncState({
+      status: isPlaying ? 'playing' : 'paused',
+      isPlaying,
+      currentVideo,
+      volume: volume / 100,
+      activeQueue: queue,
+      priorityQueue
+    });
+  }, [supabaseInitialized, isPlaying, currentVideo, volume, queue, priorityQueue, syncState]);
+
   // Tools handlers
   const handleOpenFullscreen = useCallback(async () => {
     if (!isElectron) return;
@@ -576,7 +716,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       {/* Fixed Top Header */}
       <header className="top-header">
         <div className="header-left">
-          <div className="app-title">DJAMMS</div>
+          <img src="/icon.png" alt="DJAMMS" className="app-logo" style={{ height: '40px', width: 'auto' }} />
         </div>
         
         <div className="header-center">
