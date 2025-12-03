@@ -10,6 +10,9 @@ export default defineConfig({
       '@shared': path.resolve(__dirname, '../shared'),
     },
   },
+  optimizeDeps: {
+    include: ['@supabase/supabase-js', 'react', 'react-dom', 'lucide-react', 'clsx', 'tailwind-merge'],
+  },
   server: {
     port: 5175,
     fs: {
