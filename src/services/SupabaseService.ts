@@ -303,11 +303,9 @@ class SupabaseService {
         updateData.priority_queue = state.priorityQueue.map(v => this.videoToQueueItem(v));
       }
 
-      // Note: queue_index is not synced because the column doesn't exist in Supabase yet
-      // To enable: Add 'queue_index' integer column to player_state table in Supabase dashboard
-      // if (state.queueIndex !== undefined) {
-      //   updateData.queue_index = state.queueIndex;
-      // }
+      if (state.queueIndex !== undefined) {
+        updateData.queue_index = state.queueIndex;
+      }
 
       // Only update if something changed
       if (Object.keys(updateData).length <= 1) {
@@ -318,6 +316,7 @@ class SupabaseService {
         now_playing: updateData.now_playing_video?.title,
         is_playing: updateData.is_playing,
         queue_length: updateData.active_queue?.length,
+        queue_index: updateData.queue_index,
         priority_length: updateData.priority_queue?.length
       });
 
