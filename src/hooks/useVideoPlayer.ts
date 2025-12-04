@@ -70,6 +70,12 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   // This prevents double-triggering (once at fade point, once at actual end)
   const crossfadeTriggeredRef = useRef(false);
 
+  // Track if we're currently in a crossfade to allow dual-play during that time
+  const isCrossfadingRef = useRef(false);
+
+  // Dual-play detection - check if both videos are playing simultaneously outside of crossfade
+  const dualPlayCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // Web Audio API functions for volume normalization
   const initializeAudioAnalysis = useCallback(() => {
     if (!enableAudioNormalization || !activeVideoRef.current || audioContextRef.current) return;
@@ -491,6 +497,9 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       if (progress < 1) {
         requestAnimationFrame(fadeStep);
       } else {
+        // Crossfade complete - clear the flag
+        isCrossfadingRef.current = false;
+        
         // Swap references synchronously using refs
         const oldActive = activeVideoRefRef.current;
         activeVideoRefRef.current = inactiveVideoRefRef.current;
@@ -512,6 +521,8 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       }
     };
 
+    // Mark that we're starting a crossfade
+    isCrossfadingRef.current = true;
     requestAnimationFrame(fadeStep);
   }, [activeVideoRef, inactiveVideoRef, volume, fadeDuration]);
 
@@ -613,6 +624,81 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     return () => clearInterval(interval);
   }, [enableAudioNormalization, applyNormalization, activeVideoRef]);
+
+  // SAFEGUARD: Detect and handle dual-play situations (both videos playing outside of crossfade)
+  // This prevents state desync and ensures only the active video is playing
+  useEffect(() => {
+    const checkDualPlay = () => {
+      const videoA = videoARef.current;
+      const videoB = videoBRef.current;
+      const activeVideo = activeVideoRefRef.current.current;
+      const inactiveVideo = inactiveVideoRefRef.current.current;
+      
+      if (!videoA || !videoB) return;
+      
+      // Check if both videos are playing
+      const videoAPlaying = !videoA.paused && !videoA.ended && videoA.currentTime > 0;
+      const videoBPlaying = !videoB.paused && !videoB.ended && videoB.currentTime > 0;
+      
+      // If both are playing and we're NOT in a crossfade, this is an error state
+      if (videoAPlaying && videoBPlaying && !isCrossfadingRef.current) {
+        console.warn('[useVideoPlayer] ⚠️ DUAL-PLAY DETECTED: Both videos playing outside of crossfade!');
+        console.warn('[useVideoPlayer] Active video:', activeVideo === videoA ? 'A' : 'B');
+        console.warn('[useVideoPlayer] Video A playing:', videoAPlaying, 'time:', videoA.currentTime.toFixed(2));
+        console.warn('[useVideoPlayer] Video B playing:', videoBPlaying, 'time:', videoB.currentTime.toFixed(2));
+        
+        // Determine which video should be stopped (the inactive one)
+        const videoToStop = inactiveVideo;
+        
+        if (videoToStop) {
+          console.log('[useVideoPlayer] 🛑 Stopping incorrectly playing video with fade-out');
+          
+          // Fade out the incorrect video over 500ms
+          const startVolume = videoToStop.volume;
+          const fadeStartTime = Date.now();
+          const fadeDurationMs = 500;
+          
+          const fadeOutStep = () => {
+            const elapsed = Date.now() - fadeStartTime;
+            const progress = Math.min(elapsed / fadeDurationMs, 1);
+            
+            // Fade out volume and opacity
+            videoToStop.volume = startVolume * (1 - progress);
+            videoToStop.style.opacity = (1 - progress).toString();
+            
+            if (progress < 1) {
+              requestAnimationFrame(fadeOutStep);
+            } else {
+              // Fade complete - stop the video
+              videoToStop.pause();
+              videoToStop.currentTime = 0;
+              videoToStop.volume = volume; // Reset volume for next use
+              videoToStop.style.opacity = '0';
+              console.log('[useVideoPlayer] ✅ Incorrectly playing video stopped and reset');
+              
+              // Ensure active video is at full opacity and volume
+              if (activeVideo) {
+                activeVideo.style.opacity = '1';
+                activeVideo.volume = volume;
+              }
+            }
+          };
+          
+          requestAnimationFrame(fadeOutStep);
+        }
+      }
+    };
+    
+    // Check every 500ms for dual-play situations
+    dualPlayCheckIntervalRef.current = setInterval(checkDualPlay, 500);
+    
+    return () => {
+      if (dualPlayCheckIntervalRef.current) {
+        clearInterval(dualPlayCheckIntervalRef.current);
+        dualPlayCheckIntervalRef.current = null;
+      }
+    };
+  }, [volume]);
 
   return {
     currentVideo,
