@@ -40,6 +40,8 @@ export interface UseSupabaseOptions {
   onSeekTo?: (position: number) => void;
   /** Callback when a queue add command is received */
   onQueueAdd?: (video: QueueVideoItem, queueType: 'active' | 'priority') => void;
+  /** Callback when a queue shuffle command is received */
+  onQueueShuffle?: () => void;
   /** Callback when a load playlist command is received */
   onLoadPlaylist?: (playlistName: string, shuffle?: boolean) => void;
 }
@@ -77,6 +79,7 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     onSetVolume,
     onSeekTo,
     onQueueAdd,
+    onQueueShuffle,
     onLoadPlaylist
   } = options;
 
@@ -175,6 +178,11 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
       });
     }
 
+    // Queue shuffle command
+    if (onQueueShuffle) {
+      service.onCommand('queue_shuffle', () => onQueueShuffle());
+    }
+
     // Load playlist command
     if (onLoadPlaylist) {
       service.onCommand('load_playlist', (cmd) => {
@@ -184,7 +192,7 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     }
 
     handlersRegisteredRef.current = true;
-  }, [isInitialized, onPlay, onPause, onResume, onSkip, onSetVolume, onSeekTo, onQueueAdd, onLoadPlaylist]);
+  }, [isInitialized, onPlay, onPause, onResume, onSkip, onSetVolume, onSeekTo, onQueueAdd, onQueueShuffle, onLoadPlaylist]);
 
   // Auto-initialize on mount
   useEffect(() => {

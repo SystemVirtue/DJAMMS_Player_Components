@@ -178,6 +178,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         setQueue(prev => [...prev, videoToAdd]);
       }
     },
+    onQueueShuffle: () => {
+      console.log('[PlayerWindow] Supabase queue_shuffle command received');
+      setQueue(prev => {
+        // Keep the current video at index 0, shuffle the rest
+        const currentIdx = queueIndexRef.current;
+        const currentVideo = prev[currentIdx];
+        const otherVideos = prev.filter((_, idx) => idx !== currentIdx);
+        const shuffledOthers = shuffleArray(otherVideos);
+        // Put current video at index 0, shuffled rest after
+        const newQueue = [currentVideo, ...shuffledOthers];
+        setQueueIndex(0); // Current video is now at index 0
+        return newQueue;
+      });
+    },
     onLoadPlaylist: (playlistName: string, shuffle?: boolean) => {
       console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
       // Find the playlist (may have YouTube ID prefix)
