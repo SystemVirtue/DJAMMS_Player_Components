@@ -839,7 +839,7 @@ export default function App() {
       </header>
 
       {/* Priority Queue Bar */}
-      <div className="priority-queue-bar">
+      <div className={`priority-queue-bar ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <div className="priority-queue-label">Priority Queue:</div>
         <div className="priority-queue-content">
           {priorityQueue.length === 0 ? (

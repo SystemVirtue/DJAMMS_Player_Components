@@ -271,7 +271,7 @@ body {
 .priority-queue-bar {
   position: fixed;
   top: var(--header-height);
-  left: 0;
+  left: var(--sidebar-width);
   right: 0;
   height: 40px;
   background-color: var(--bg-secondary);
@@ -281,6 +281,12 @@ body {
   padding: 0 24px;
   gap: 16px;
   z-index: 999;
+  transition: left var(--transition-medium);
+}
+
+/* When sidebar is collapsed, adjust priority queue bar position */
+.priority-queue-bar.sidebar-collapsed {
+  left: var(--sidebar-collapsed);
 }
 
 .priority-queue-label {
