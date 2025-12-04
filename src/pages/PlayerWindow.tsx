@@ -61,6 +61,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [showLoadDialog, setShowLoadDialog] = useState(false);
   const [playlistToLoad, setPlaylistToLoad] = useState<string | null>(null);
   const [showPauseDialog, setShowPauseDialog] = useState(false);
+  const [showQueuePlayDialog, setShowQueuePlayDialog] = useState(false);
+  const [queueVideoToPlay, setQueueVideoToPlay] = useState<{ video: Video; index: number } | null>(null);
 
   // Settings
   const [settings, setSettings] = useState({
@@ -76,6 +78,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Display management state
   const [availableDisplays, setAvailableDisplays] = useState<DisplayInfo[]>([]);
   const [playerWindowOpen, setPlayerWindowOpen] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false); // True after first video starts playing
 
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
@@ -422,6 +425,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Player control functions
   const handlePauseClick = () => {
+    if (!playerReady) return; // Ignore until player is ready
     if (isPlaying) {
       setShowPauseDialog(true);
     } else {
@@ -449,6 +453,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   };
 
   const skipTrack = () => {
+    if (!playerReady) return; // Ignore until player is ready
     if (queueIndex < queue.length - 1) {
       playVideoAtIndex(queueIndex + 1);
     }
@@ -461,6 +466,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   };
 
   const toggleShuffle = () => {
+    if (!playerReady) return; // Ignore until player is ready
     // Shuffle the current queue (keeping current video at position 0)
     if (queue.length > 1) {
       const currentTrack = queue[queueIndex];
@@ -489,6 +495,25 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       sendPlayCommand(video);
     }
   }, [queue, sendPlayCommand]);
+
+  // Show confirmation dialog before playing from queue
+  const handleQueueItemClick = useCallback((index: number) => {
+    if (!playerReady) return; // Ignore until player is ready
+    const video = queue[index];
+    if (video) {
+      setQueueVideoToPlay({ video, index });
+      setShowQueuePlayDialog(true);
+    }
+  }, [queue, playerReady]);
+
+  // Confirm and play the selected queue video
+  const confirmQueuePlay = useCallback(() => {
+    if (queueVideoToPlay) {
+      playVideoAtIndex(queueVideoToPlay.index);
+    }
+    setShowQueuePlayDialog(false);
+    setQueueVideoToPlay(null);
+  }, [queueVideoToPlay, playVideoAtIndex]);
 
   // Playlist functions
   const handlePlaylistClick = (playlistName: string) => {
@@ -671,6 +696,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       if (state) {
         if (typeof state.isPlaying === 'boolean') {
           setIsPlaying(state.isPlaying);
+          // Mark player as ready once first video starts playing
+          if (state.isPlaying && !playerReady) {
+            console.log('[PlayerWindow] Player is now ready - first video playing');
+            setPlayerReady(true);
+          }
         }
       }
     });
@@ -781,6 +811,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           </div>
         </div>
       )}
+
+      {/* Queue Play Confirmation Dialog */}
+      {showQueuePlayDialog && queueVideoToPlay && (
+        <div className="dialog-overlay" onClick={() => { setShowQueuePlayDialog(false); setQueueVideoToPlay(null); }}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+            <h3>{queueVideoToPlay.video.title}{queueVideoToPlay.video.artist ? ` - ${getDisplayArtist(queueVideoToPlay.video.artist)}` : ''}</h3>
+            <p>Play now?</p>
+            <div className="dialog-actions">
+              <button className="dialog-btn dialog-btn-primary" onClick={confirmQueuePlay}>PLAY NOW</button>
+              <button className="dialog-btn" onClick={() => { setShowQueuePlayDialog(false); setQueueVideoToPlay(null); }}>CANCEL</button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Fixed Top Header */}
       <header className="top-header">
@@ -806,13 +850,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         
         <div className="header-right">
           <div className="player-controls">
-            <button className="control-btn control-btn-large" onClick={skipTrack}>
+            <button className={`control-btn control-btn-large ${!playerReady ? 'disabled' : ''}`} onClick={skipTrack} disabled={!playerReady}>
               <span className="control-btn-label">SKIP</span>
             </button>
-            <button className="control-btn control-btn-large" onClick={toggleShuffle}>
+            <button className={`control-btn control-btn-large ${!playerReady ? 'disabled' : ''}`} onClick={toggleShuffle} disabled={!playerReady}>
               <span className="control-btn-label">SHUFFLE</span>
             </button>
-            <button className="control-btn play-btn" onClick={handlePauseClick}>
+            <button className={`control-btn play-btn ${!playerReady ? 'disabled' : ''}`} onClick={handlePauseClick} disabled={!playerReady}>
               <span className="material-symbols-rounded">{isPlaying ? 'pause' : 'play_arrow'}</span>
             </button>
             <div className="volume-control">
@@ -931,36 +975,97 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 </div>
               </div>
               <div className="table-container">
-                <table className="media-table">
-                  <thead>
-                    <tr>
-                      <th className="col-index">#</th>
-                      <th className="col-title">Title</th>
-                      <th className="col-artist">Artist</th>
-                      <th className="col-duration">Duration</th>
-                      <th className="col-playlist">Playlist</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {queue.length === 0 ? (
-                      <tr className="empty-state">
-                        <td colSpan={5}>Queue is empty. Add tracks from Search or Browse.</td>
+                {/* Now Playing Section */}
+                {currentVideo && (
+                  <div className="queue-section now-playing-section">
+                    <div className="queue-section-header">
+                      <span className="material-symbols-rounded">play_circle</span>
+                      NOW PLAYING
+                    </div>
+                    <table className="media-table">
+                      <tbody>
+                        <tr className="playing">
+                          <td className="col-index">▶</td>
+                          <td className="col-title">{currentVideo.title}</td>
+                          <td>{getDisplayArtist(currentVideo.artist)}</td>
+                          <td>{currentVideo.duration || '—'}</td>
+                          <td>{currentVideo.playlistDisplayName || getPlaylistDisplayName(currentVideo.playlist || '')}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Priority Queue Section */}
+                {priorityQueue.length > 0 && (
+                  <div className="queue-section priority-queue-section">
+                    <div className="queue-section-header priority">
+                      <span className="material-symbols-rounded">priority_high</span>
+                      PRIORITY QUEUE
+                    </div>
+                    <table className="media-table">
+                      <tbody>
+                        {priorityQueue.map((track, index) => (
+                          <tr
+                            key={`priority-${track.id}-${index}`}
+                            className="priority-item"
+                          >
+                            <td className="col-index">P{index + 1}</td>
+                            <td className="col-title">{track.title}</td>
+                            <td>{getDisplayArtist(track.artist)}</td>
+                            <td>{track.duration || '—'}</td>
+                            <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Active Queue Section */}
+                <div className="queue-section active-queue-section">
+                  <div className="queue-section-header">
+                    <span className="material-symbols-rounded">queue_music</span>
+                    UP NEXT
+                  </div>
+                  <table className="media-table">
+                    <thead>
+                      <tr>
+                        <th className="col-index">#</th>
+                        <th className="col-title">Title</th>
+                        <th className="col-artist">Artist</th>
+                        <th className="col-duration">Duration</th>
+                        <th className="col-playlist">Playlist</th>
                       </tr>
-                    ) : queue.map((track, index) => (
-                      <tr
-                        key={`${track.id}-${index}`}
-                        className={index === queueIndex ? 'playing' : ''}
-                        onClick={() => playVideoAtIndex(index)}
-                      >
-                        <td>{index + 1}</td>
-                        <td className="col-title">{track.title}</td>
-                        <td>{getDisplayArtist(track.artist)}</td>
-                        <td>{track.duration || '—'}</td>
-                        <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {queue.length === 0 ? (
+                        <tr className="empty-state">
+                          <td colSpan={5}>Queue is empty. Add tracks from Search or Browse.</td>
+                        </tr>
+                      ) : queue.filter((_, idx) => idx !== queueIndex).length === 0 ? (
+                        <tr className="empty-state">
+                          <td colSpan={5}>No more tracks in queue.</td>
+                        </tr>
+                      ) : queue.map((track, index) => {
+                        // Skip the currently playing track
+                        if (index === queueIndex) return null;
+                        return (
+                          <tr
+                            key={`queue-${track.id}-${index}`}
+                            onClick={() => handleQueueItemClick(index)}
+                          >
+                            <td>{index + 1}</td>
+                            <td className="col-title">{track.title}</td>
+                            <td>{getDisplayArtist(track.artist)}</td>
+                            <td>{track.duration || '—'}</td>
+                            <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
