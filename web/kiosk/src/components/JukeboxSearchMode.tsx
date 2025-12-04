@@ -79,6 +79,20 @@ interface JukeboxSearchModeProps {
   isFreePlay?: boolean;
 }
 
+// Clean title by removing YouTube video IDs in brackets like [dQw4w9WgXcQ]
+// Handles formats: [ID] at start, [ID] at end, or [ID] in middle
+const cleanTitle = (title: string): string => {
+  if (!title) return 'Unknown';
+  // Remove YouTube-style IDs: [11-char alphanumeric] or [any bracketed text that looks like an ID]
+  return title
+    .replace(/\s*\[[A-Za-z0-9_-]{10,15}\]\s*/g, ' ') // YouTube IDs are 11 chars
+    .replace(/\s*\[[^\]]{10,20}\]\s*/g, ' ') // Other bracketed IDs
+    .replace(/^\s*-\s*/, '') // Leading dash after ID removal
+    .replace(/\s*-\s*$/, '') // Trailing dash after ID removal
+    .replace(/\s+/g, ' ') // Collapse multiple spaces
+    .trim();
+};
+
 // Quick filter categories
 const QUICK_FILTERS = [
   { id: 'popular', label: '🔥 Most Popular', icon: '🔥' },
@@ -89,13 +103,12 @@ const QUICK_FILTERS = [
   { id: 'dance', label: '💃 Dance', icon: '💃' },
 ];
 
-// Keyboard layout
-const KEYBOARD_ROWS = [
-  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-  ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-  ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-  ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
-];
+// Keyboard layout - 3 rows with letters and numbers combined
+const KEYBOARD_ROW_1 = ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'];
+const KEYBOARD_ROW_2 = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'];
+const KEYBOARD_ROW_3 = ['Z', 'X', 'C', 'V', 'B', 'N', 'M'];
+const KEYBOARD_NUMS_TOP = ['1', '2', '3', '4', '5'];
+const KEYBOARD_NUMS_BOT = ['6', '7', '8', '9', '0'];
 
 export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
   nowPlaying = null,
@@ -294,7 +307,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
         </div>
       )}
       
-      {/* Top Bar - Now Playing & Credits */}
+      {/* Top Bar - Now Playing, Search & Credits */}
       <header className="jukebox-header">
         <div className="now-playing-section">
           {nowPlaying ? (
@@ -322,6 +335,26 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
           )}
         </div>
         
+        {/* Search Bar - Centered in Header */}
+        <div className="header-search-wrapper">
+          <span className="search-icon">🔍</span>
+          <input
+            ref={searchInputRef}
+            type="text"
+            className="search-input"
+            placeholder="Search songs, artists..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            readOnly
+          />
+          {searchQuery && (
+            <button className="search-clear-btn" onClick={handleClear}>
+              ✕
+            </button>
+          )}
+          {isSearching && <div className="search-loading-bar" />}
+        </div>
+        
         <div className="credits-section">
           <div className="credits-icon">
             <span className="coin-icon">🪙</span>
@@ -333,51 +366,6 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
           </div>
         </div>
       </header>
-      
-      {/* Search Bar */}
-      <div className="jukebox-search-bar">
-        <div className="search-bar-row">
-          <div className="search-input-wrapper">
-            <span className="search-icon">🔍</span>
-            <input
-              ref={searchInputRef}
-              type="text"
-              className="search-input"
-              placeholder="Search songs, artists..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              readOnly // Using on-screen keyboard
-            />
-            {searchQuery && (
-              <button className="search-clear-btn" onClick={handleClear}>
-                ✕
-              </button>
-            )}
-            <button className="search-mic-btn" title="Voice search (coming soon)">
-              🎤
-            </button>
-          </div>
-          
-          {/* Karaoke Filter Toggle */}
-          <div className="karaoke-filter-toggle">
-            <button
-              className={`filter-btn ${karaokeFilter === 'show' ? 'active' : ''}`}
-              onClick={() => setKaraokeFilter('show')}
-            >
-              <span className="filter-btn-icon">🎤</span>
-              <span className="filter-btn-text">Show Karaoke</span>
-            </button>
-            <button
-              className={`filter-btn ${karaokeFilter === 'hide' ? 'active' : ''}`}
-              onClick={() => setKaraokeFilter('hide')}
-            >
-              <span className="filter-btn-icon">🎵</span>
-              <span className="filter-btn-text">Hide Karaoke</span>
-            </button>
-          </div>
-        </div>
-        {isSearching && <div className="search-loading-bar" />}
-      </div>
       
       {/* Main Results Area */}
       <main className="jukebox-results" ref={resultsRef}>
@@ -434,29 +422,20 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
                 </div>
                 
                 <div className="song-card-info">
-                  <h3 className="song-title">{video.title}</h3>
+                  <h3 className="song-title">{cleanTitle(video.title)}</h3>
                   <p className="song-artist">{video.artist || 'Unknown Artist'}</p>
                   <span className="song-duration">{formatDuration(video.duration)}</span>
                 </div>
                 
                 <div className="song-card-actions">
                   <button
-                    className="queue-btn"
+                    className="queue-btn queue-btn-large"
                     onClick={() => handleQueueClick(video)}
                     disabled={queueingVideo === video.id}
                   >
                     <span className="btn-icon">➕</span>
                     <span className="btn-text">QUEUE</span>
                     {!isFreePlay && <span className="btn-cost">{creditCostQueue}💰</span>}
-                  </button>
-                  <button
-                    className="play-now-btn"
-                    onClick={() => handlePlayNowClick(video)}
-                    disabled={queueingVideo === video.id}
-                  >
-                    <span className="btn-icon">⚡</span>
-                    <span className="btn-text">PLAY NOW</span>
-                    {!isFreePlay && <span className="btn-cost">{creditCostPlayNow}💰</span>}
                   </button>
                 </div>
               </div>
@@ -465,35 +444,89 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
         )}
       </main>
       
-      {/* On-Screen Keyboard */}
+      {/* On-Screen Keyboard - 3 Row Layout */}
       <div className={`jukebox-keyboard ${keyboardVisible ? 'visible' : 'hidden'}`}>
-        {KEYBOARD_ROWS.map((row, rowIndex) => (
-          <div key={rowIndex} className="keyboard-row">
-            {rowIndex === 3 && (
-              <button className="keyboard-key key-backspace" onClick={handleBackspace}>
-                ⌫
-              </button>
-            )}
-            {row.map((key) => (
-              <button
-                key={key}
-                className="keyboard-key"
-                onClick={() => handleKeyPress(key)}
-              >
-                {key}
-              </button>
-            ))}
-            {rowIndex === 3 && (
-              <button className="keyboard-key key-clear" onClick={handleClear}>
-                CLR
-              </button>
-            )}
+        {/* Row 1: QWERTYUIOP | BKSP CLR | Karaoke */}
+        <div className="keyboard-row">
+          <div className="keyboard-section-left">
+            <div className="keyboard-letters">
+              {KEYBOARD_ROW_1.map((key) => (
+                <button key={key} className="keyboard-key" onClick={() => handleKeyPress(key)}>
+                  {key}
+                </button>
+              ))}
+            </div>
           </div>
-        ))}
-        <div className="keyboard-row keyboard-bottom-row">
-          <button className="keyboard-key key-space" onClick={handleSpace}>
-            SPACE
-          </button>
+          <div className="keyboard-section-center">
+            <div className="keyboard-actions-row">
+              <button className="keyboard-key key-backspace" onClick={handleBackspace}>⌫</button>
+              <button className="keyboard-key key-clear" onClick={handleClear}>CLR</button>
+            </div>
+          </div>
+          <div className="keyboard-section-right">
+            <button
+              className={`keyboard-key key-filter ${karaokeFilter === 'show' ? 'active' : ''}`}
+              onClick={() => setKaraokeFilter('show')}
+            >
+              🎤 Karaoke
+            </button>
+          </div>
+        </div>
+        
+        {/* Row 2: ASDFGHJKL | 12345 | (spacer) */}
+        <div className="keyboard-row">
+          <div className="keyboard-section-left">
+            <div className="keyboard-letters keyboard-letters-offset">
+              {KEYBOARD_ROW_2.map((key) => (
+                <button key={key} className="keyboard-key" onClick={() => handleKeyPress(key)}>
+                  {key}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="keyboard-section-center">
+            <div className="keyboard-numbers-row">
+              {KEYBOARD_NUMS_TOP.map((key) => (
+                <button key={key} className="keyboard-key key-number" onClick={() => handleKeyPress(key)}>
+                  {key}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="keyboard-section-right">
+            {/* Spacer for alignment */}
+          </div>
+        </div>
+        
+        {/* Row 3: ZXCVBNM SPACE | 67890 | Music */}
+        <div className="keyboard-row">
+          <div className="keyboard-section-left">
+            <div className="keyboard-letters keyboard-letters-offset-2">
+              {KEYBOARD_ROW_3.map((key) => (
+                <button key={key} className="keyboard-key" onClick={() => handleKeyPress(key)}>
+                  {key}
+                </button>
+              ))}
+            </div>
+            <button className="keyboard-key key-space" onClick={handleSpace}>SPACE</button>
+          </div>
+          <div className="keyboard-section-center">
+            <div className="keyboard-numbers-row">
+              {KEYBOARD_NUMS_BOT.map((key) => (
+                <button key={key} className="keyboard-key key-number" onClick={() => handleKeyPress(key)}>
+                  {key}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="keyboard-section-right">
+            <button
+              className={`keyboard-key key-filter ${karaokeFilter === 'hide' ? 'active' : ''}`}
+              onClick={() => setKaraokeFilter('hide')}
+            >
+              🎵 Music
+            </button>
+          </div>
         </div>
       </div>
       
@@ -505,7 +538,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
               <span className="art-initial">{getInitial(selectedVideo.title)}</span>
             </div>
             <div className="modal-info">
-              <h2 className="modal-title">{selectedVideo.title}</h2>
+              <h2 className="modal-title">{cleanTitle(selectedVideo.title)}</h2>
               <p className="modal-artist">{selectedVideo.artist || 'Unknown Artist'}</p>
             </div>
             <div className="modal-action">

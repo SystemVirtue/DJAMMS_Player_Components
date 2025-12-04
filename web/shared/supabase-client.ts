@@ -438,18 +438,73 @@ export const commands = {
 
 /**
  * Search local videos by title or artist
+ * 
+ * SEARCH IMPLEMENTATION DETAILS:
+ * ------------------------------
+ * The search splits the query into individual words and matches videos where
+ * ANY word appears in EITHER the title OR artist field.
+ * 
+ * How it works:
+ * 1. Query is split by spaces into words (e.g., "with or" → ["with", "or"])
+ * 2. Words shorter than 2 characters are filtered out to avoid noise
+ * 3. Each word generates an OR clause: title.ilike.%word% OR artist.ilike.%word%
+ * 4. All word clauses are combined with OR (any word match counts)
+ * 
+ * Examples:
+ * - "green" matches: "Green Day", "Green Grass of Home", "Greenlight"
+ * - "with or" matches: "With Or Without You" (matches "with" AND "or")
+ * - "U2" matches any song with "U2" in title or artist
+ * 
+ * Tunable Parameters:
+ * - MIN_WORD_LENGTH (2): Minimum characters per word to search
+ * - limit (50): Maximum results returned
+ * - MIN_QUERY_LENGTH (2): Minimum total query length to trigger search
+ * 
+ * Data Source:
+ * - Searches the `local_videos` table in Supabase
+ * - This table is populated by the Electron player when it indexes the PLAYLISTS folder
+ * - Only videos with is_available=true are searchable
+ * - Each video record contains: id, title, artist, path, duration, metadata (playlist info)
  */
 export async function searchLocalVideos(
   query: string,
   playerId: string = DEFAULT_PLAYER_ID,
   limit: number = 50
 ): Promise<SupabaseLocalVideo[]> {
+  // Minimum query length before searching
+  const MIN_QUERY_LENGTH = 2;
+  // Minimum word length to include in search (filters out single letters)
+  const MIN_WORD_LENGTH = 2;
+  
+  const trimmedQuery = query.trim();
+  
+  if (trimmedQuery.length < MIN_QUERY_LENGTH) {
+    return [];
+  }
+  
+  // Split query into words and filter short words
+  const words = trimmedQuery
+    .split(/\s+/)
+    .filter(word => word.length >= MIN_WORD_LENGTH)
+    .map(word => word.replace(/[%_]/g, '')); // Escape SQL wildcards
+  
+  if (words.length === 0) {
+    // If all words were too short, fall back to original query
+    words.push(trimmedQuery);
+  }
+  
+  // Build OR filter: match ANY word in title OR artist
+  // Format: (title.ilike.%word1%,artist.ilike.%word1%),(title.ilike.%word2%,artist.ilike.%word2%)
+  const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
+  
+  console.log(`[SupabaseClient] Search query: "${query}" → words: [${words.join(', ')}]`);
+  
   const { data, error } = await supabase
     .from('local_videos')
     .select('*')
     .eq('player_id', playerId)
     .eq('is_available', true)
-    .or(`title.ilike.%${query}%,artist.ilike.%${query}%`)
+    .or(orClauses)
     .order('title')
     .limit(limit);
 
@@ -457,6 +512,8 @@ export async function searchLocalVideos(
     console.error('[SupabaseClient] Error searching videos:', error);
     return [];
   }
+  
+  console.log(`[SupabaseClient] Search returned ${data?.length || 0} results`);
 
   return data || [];
 }

@@ -40,6 +40,7 @@ export function getDisplayArtist(artist: string | null | undefined): string {
 /**
  * Check if a filename conforms to the expected format:
  * "[Youtube_ID] | [Artist_Name] - [Song_Title].mp4"
+ * Also accepts middle dot (·) and bullet (•) as separators (Windows may substitute these for |)
  * 
  * @param filename - The video filename
  * @returns true if filename matches expected format
@@ -49,11 +50,14 @@ export function isValidVideoFilename(filename: string): boolean {
   
   const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
   
-  // Must have " | " separator
-  const pipeIndex = nameWithoutExt.indexOf(' | ');
-  if (pipeIndex === -1) return false;
+  // Valid separators: pipe (|), middle dot (·), bullet (•) - with surrounding spaces
+  // Windows may substitute | with · or • when copying/renaming files
+  const separatorPattern = / [|·•] /;
+  const separatorMatch = nameWithoutExt.match(separatorPattern);
   
-  // Part after pipe must have " - " separator for Artist - Title
-  const afterPipe = nameWithoutExt.substring(pipeIndex + 3);
-  return afterPipe.includes(' - ');
+  if (!separatorMatch) return false;
+  
+  // Part after separator must have " - " separator for Artist - Title
+  const afterSeparator = nameWithoutExt.substring(separatorMatch.index! + separatorMatch[0].length);
+  return afterSeparator.includes(' - ');
 }

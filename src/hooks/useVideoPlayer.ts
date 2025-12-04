@@ -448,9 +448,13 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     const activeVideo = activeVideoRef.current;
     const inactiveVideo = inactiveVideoRef.current;
 
-    if (!activeVideo || !inactiveVideo) return;
+    if (!activeVideo || !inactiveVideo) {
+      console.error('[useVideoPlayer] crossfadeToVideo failed: video elements not available');
+      return;
+    }
 
-    console.log('[useVideoPlayer] Starting crossfade to:', videoSrc);
+    console.log('[useVideoPlayer] 🎬 Starting crossfade to:', videoSrc);
+    const crossfadeStartTime = Date.now();
 
     // Preload in inactive video
     inactiveVideo.src = videoSrc;
@@ -459,21 +463,48 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     inactiveVideo.volume = targetVolume;
     inactiveVideo.load();
 
-    // Wait for canplaythrough
-    await new Promise<void>((resolve) => {
-      const handleCanPlay = () => {
-        inactiveVideo.removeEventListener('canplaythrough', handleCanPlay);
-        resolve();
-      };
-      inactiveVideo.addEventListener('canplaythrough', handleCanPlay);
-    });
+    // Wait for canplaythrough with a timeout to prevent hanging
+    const CANPLAY_TIMEOUT_MS = 10000; // 10 second timeout
+    try {
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          const handleCanPlay = () => {
+            inactiveVideo.removeEventListener('canplaythrough', handleCanPlay);
+            inactiveVideo.removeEventListener('error', handleError);
+            console.log('[useVideoPlayer] ✅ canplaythrough fired after', Date.now() - crossfadeStartTime, 'ms');
+            resolve();
+          };
+          const handleError = (e: Event) => {
+            inactiveVideo.removeEventListener('canplaythrough', handleCanPlay);
+            inactiveVideo.removeEventListener('error', handleError);
+            console.error('[useVideoPlayer] ❌ Video load error during crossfade:', e);
+            throw new Error('Video load failed during crossfade');
+          };
+          inactiveVideo.addEventListener('canplaythrough', handleCanPlay);
+          inactiveVideo.addEventListener('error', handleError);
+        }),
+        new Promise<void>((_, reject) => {
+          setTimeout(() => {
+            console.error('[useVideoPlayer] ⏰ canplaythrough timeout after', CANPLAY_TIMEOUT_MS, 'ms');
+            reject(new Error('Timeout waiting for video to load'));
+          }, CANPLAY_TIMEOUT_MS);
+        })
+      ]);
+    } catch (error) {
+      console.error('[useVideoPlayer] ❌ Crossfade preload failed:', error);
+      isCrossfadingRef.current = false;
+      // Trigger video error handling to skip to next
+      handleVideoError(inactiveVideo, error as Event);
+      return;
+    }
 
     // Start playing inactive video. If the browser blocks autoplay for unmuted playback,
     // fall back to a muted-play and then unmute so audio is audible as soon as possible.
     try {
+      console.log('[useVideoPlayer] 🎵 Starting playback of incoming video...');
       const playPromise = inactiveVideo.play();
       if (playPromise !== undefined) {
-        playPromise.catch(async (err) => {
+        await playPromise.catch(async (err) => {
           console.warn('[useVideoPlayer] crossfade play blocked, attempting muted play', err);
           try {
             inactiveVideo.muted = true;
@@ -481,13 +512,18 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
             // Unmute once playing if permitted
             inactiveVideo.muted = false;
             inactiveVideo.volume = targetVolume;
+            console.log('[useVideoPlayer] ✅ Muted play succeeded, unmuted');
           } catch (err2) {
-            console.error('[useVideoPlayer] muted crossfade play failed', err2);
+            console.error('[useVideoPlayer] ❌ muted crossfade play failed', err2);
+            throw err2; // Re-throw to be caught by outer catch
           }
         });
       }
     } catch (err) {
-      console.warn('[useVideoPlayer] play() threw:', err);
+      console.error('[useVideoPlayer] ❌ play() failed completely:', err);
+      isCrossfadingRef.current = false;
+      handleVideoError(inactiveVideo, err as Event);
+      return;
     }
 
     // Perform crossfade: only fade OUT the active video (audio+video), while the incoming
@@ -531,7 +567,8 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
         setIsLoading(false);
         isLoadingRef.current = false;
 
-        console.log('[useVideoPlayer] Crossfade complete, swapped active video to:', activeVideoRefRef.current === videoARef ? 'A' : 'B');
+        const totalCrossfadeTime = Date.now() - crossfadeStartTime;
+        console.log('[useVideoPlayer] ✅ Crossfade complete in', totalCrossfadeTime, 'ms, swapped active video to:', activeVideoRefRef.current === videoARef ? 'A' : 'B');
       }
     };
 

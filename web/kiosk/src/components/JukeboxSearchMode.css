@@ -93,18 +93,99 @@
 }
 
 /* ============================================
-   Header - Now Playing & Credits
+   Header - Now Playing, Search & Credits
    ============================================ */
 .jukebox-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--jukebox-spacing-lg);
   padding: var(--jukebox-spacing-md) var(--jukebox-spacing-lg);
   background: var(--jukebox-glass-bg);
   backdrop-filter: blur(var(--jukebox-glass-blur));
   border-bottom: 1px solid var(--jukebox-glass-border);
   min-height: 90px;
   flex-shrink: 0;
+}
+
+/* Search Bar in Header */
+.header-search-wrapper {
+  flex: 1;
+  max-width: 500px;
+  display: flex;
+  align-items: center;
+  background: var(--jukebox-card-bg);
+  border: 2px solid var(--jukebox-card-border);
+  border-radius: var(--jukebox-radius-lg);
+  padding: var(--jukebox-spacing-sm) var(--jukebox-spacing-md);
+  gap: var(--jukebox-spacing-sm);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+}
+
+.header-search-wrapper:focus-within {
+  border-color: var(--jukebox-accent-1);
+  box-shadow: var(--jukebox-glow-cyan);
+}
+
+.header-search-wrapper .search-icon {
+  font-size: 20px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.header-search-wrapper .search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: 18px;
+  color: var(--jukebox-text-primary);
+  padding: var(--jukebox-spacing-xs) 0;
+  min-height: 40px;
+}
+
+.header-search-wrapper .search-input::placeholder {
+  color: var(--jukebox-text-muted);
+}
+
+.header-search-wrapper .search-clear-btn {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  padding: var(--jukebox-spacing-xs);
+  min-width: 36px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+  border-radius: var(--jukebox-radius-sm);
+  color: var(--jukebox-text-primary);
+}
+
+.header-search-wrapper .search-clear-btn:active {
+  opacity: 1;
+}
+
+.header-search-wrapper .search-loading-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    transparent, 
+    var(--jukebox-accent-1), 
+    var(--jukebox-accent-2), 
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: loading-slide 1s ease-in-out infinite;
+  border-radius: 0 0 var(--jukebox-radius-lg) var(--jukebox-radius-lg);
 }
 
 /* Now Playing Section */
@@ -253,144 +334,7 @@
   background-clip: text;
 }
 
-/* ============================================
-   Search Bar
-   ============================================ */
-.jukebox-search-bar {
-  padding: var(--jukebox-spacing-md) var(--jukebox-spacing-lg);
-  background: var(--jukebox-glass-bg);
-  border-bottom: 1px solid var(--jukebox-glass-border);
-  position: relative;
-  flex-shrink: 0;
-}
-
-.search-bar-row {
-  display: flex;
-  align-items: center;
-  gap: var(--jukebox-spacing-lg);
-}
-
-.search-input-wrapper {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  background: var(--jukebox-card-bg);
-  border: 2px solid var(--jukebox-card-border);
-  border-radius: var(--jukebox-radius-lg);
-  padding: var(--jukebox-spacing-sm) var(--jukebox-spacing-md);
-  gap: var(--jukebox-spacing-md);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-/* Karaoke Filter Toggle */
-.karaoke-filter-toggle {
-  display: flex;
-  gap: var(--jukebox-spacing-sm);
-  flex-shrink: 0;
-}
-
-.filter-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--jukebox-spacing-sm);
-  padding: var(--jukebox-spacing-sm) var(--jukebox-spacing-md);
-  min-height: var(--jukebox-touch-min);
-  min-width: 140px;
-  background: var(--jukebox-card-bg);
-  border: 2px solid var(--jukebox-card-border);
-  border-radius: var(--jukebox-radius-md);
-  font-family: 'Orbitron', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  color: var(--jukebox-text-secondary);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.filter-btn:active {
-  transform: scale(0.95);
-}
-
-.filter-btn.active {
-  background: linear-gradient(135deg, rgba(0, 240, 255, 0.2) 0%, rgba(255, 0, 255, 0.15) 100%);
-  border-color: var(--jukebox-accent-1);
-  color: var(--jukebox-accent-1);
-  box-shadow: var(--jukebox-glow-cyan);
-}
-
-.filter-btn-icon {
-  font-size: 18px;
-}
-
-.filter-btn-text {
-  white-space: nowrap;
-}
-
-.search-input-wrapper:focus-within {
-  border-color: var(--jukebox-accent-1);
-  box-shadow: var(--jukebox-glow-cyan);
-}
-
-.search-icon {
-  font-size: 24px;
-  opacity: 0.7;
-}
-
-.search-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-family: inherit;
-  font-size: 20px;
-  color: var(--jukebox-text-primary);
-  padding: var(--jukebox-spacing-sm) 0;
-  min-height: 44px;
-}
-
-.search-input::placeholder {
-  color: var(--jukebox-text-muted);
-}
-
-.search-clear-btn,
-.search-mic-btn {
-  background: transparent;
-  border: none;
-  font-size: 20px;
-  padding: var(--jukebox-spacing-sm);
-  min-width: var(--jukebox-touch-min);
-  min-height: var(--jukebox-touch-min);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0.7;
-  transition: opacity 0.2s ease, transform 0.1s ease;
-  border-radius: var(--jukebox-radius-md);
-}
-
-.search-clear-btn:active,
-.search-mic-btn:active {
-  transform: scale(0.95);
-  opacity: 1;
-}
-
-.search-loading-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, 
-    transparent, 
-    var(--jukebox-accent-1), 
-    var(--jukebox-accent-2), 
-    transparent
-  );
-  background-size: 200% 100%;
-  animation: loading-slide 1s ease-in-out infinite;
-}
+/* Search bar styles moved to header section above */
 
 @keyframes loading-slide {
   0% { background-position: 100% 0; }
@@ -734,6 +678,19 @@
   box-shadow: var(--jukebox-glow-cyan);
 }
 
+/* Large queue button when it's the only action */
+.queue-btn-large {
+  min-height: 60px;
+  min-width: 120px;
+  font-size: 14px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.queue-btn-large .btn-icon {
+  font-size: 20px;
+}
+
 .play-now-btn {
   background: linear-gradient(135deg, rgba(255, 0, 255, 0.2) 0%, rgba(255, 0, 255, 0.1) 100%);
   border: 1px solid var(--jukebox-accent-2);
@@ -764,16 +721,16 @@
 }
 
 /* ============================================
-   On-Screen Keyboard
+   On-Screen Keyboard - 3 Row Layout
    ============================================ */
 .jukebox-keyboard {
   background: var(--jukebox-glass-bg);
   backdrop-filter: blur(var(--jukebox-glass-blur));
   border-top: 1px solid var(--jukebox-glass-border);
-  padding: var(--jukebox-spacing-md) var(--jukebox-spacing-lg);
+  padding: var(--jukebox-spacing-sm) var(--jukebox-spacing-lg);
   display: flex;
   flex-direction: column;
-  gap: var(--jukebox-spacing-sm);
+  gap: 6px;
   flex-shrink: 0;
   transition: transform 0.3s ease, opacity 0.3s ease;
 }
@@ -786,19 +743,67 @@
 
 .keyboard-row {
   display: flex;
+  align-items: center;
+  gap: var(--jukebox-spacing-md);
+  width: 100%;
+}
+
+/* Left section - alphabet keys, aligned left */
+.keyboard-section-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+/* Center section - numbers and action keys in aligned block */
+.keyboard-section-center {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  gap: var(--jukebox-spacing-sm);
+  width: 260px; /* Fixed width for alignment */
+  flex-shrink: 0;
+}
+
+/* Right section - filter buttons, aligned right */
+.keyboard-section-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 180px;
+  flex-shrink: 0;
+}
+
+.keyboard-letters {
+  display: flex;
+  gap: 4px;
+}
+
+.keyboard-letters-offset {
+  margin-left: 26px;
+}
+
+.keyboard-letters-offset-2 {
+  margin-left: 52px;
+}
+
+.keyboard-actions-row,
+.keyboard-numbers-row {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  width: 100%;
 }
 
 .keyboard-key {
-  min-width: var(--jukebox-keyboard-key);
-  min-height: var(--jukebox-keyboard-key);
-  padding: var(--jukebox-spacing-sm);
+  min-width: 52px;
+  min-height: 48px;
+  padding: var(--jukebox-spacing-xs) var(--jukebox-spacing-sm);
   background: var(--jukebox-card-bg);
   border: 1px solid var(--jukebox-card-border);
-  border-radius: var(--jukebox-radius-md);
+  border-radius: var(--jukebox-radius-sm);
   font-family: 'Orbitron', sans-serif;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--jukebox-text-primary);
   cursor: pointer;
@@ -815,10 +820,16 @@
   box-shadow: var(--jukebox-glow-cyan);
 }
 
+.key-number {
+  min-width: 48px;
+  background: linear-gradient(135deg, rgba(100, 150, 255, 0.15) 0%, rgba(100, 100, 200, 0.1) 100%);
+  border-color: rgba(100, 150, 255, 0.4);
+}
+
 .key-backspace,
 .key-clear {
-  min-width: 80px;
-  font-size: 16px;
+  min-width: 125px; /* Match 2.5 number keys width for alignment */
+  font-size: 14px;
 }
 
 .key-backspace {
@@ -843,15 +854,31 @@
   color: #000;
 }
 
-.keyboard-bottom-row {
-  padding-top: var(--jukebox-spacing-sm);
-}
-
 .key-space {
-  flex: 1;
-  max-width: 400px;
+  min-width: 360px; /* 6x wider - double previous width for SPACE text to fit comfortably */
   font-size: 14px;
   letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+.key-filter {
+  min-width: 180px; /* 50% wider: 120 * 1.5 = 180 */
+  min-height: 64px; /* 45% taller: 44 * 1.45 ≈ 64 */
+  font-size: 14px;
+  gap: var(--jukebox-spacing-sm);
+  background: var(--jukebox-card-bg);
+  border: 2px solid var(--jukebox-card-border);
+}
+
+.key-filter.active {
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.2) 0%, rgba(255, 0, 255, 0.15) 100%);
+  border-color: var(--jukebox-accent-1);
+  color: var(--jukebox-accent-1);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+
+.key-filter:active {
+  transform: scale(0.95);
 }
 
 /* ============================================

@@ -132,6 +132,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const consecutiveFailuresRef = useRef(0);
   const MAX_CONSECUTIVE_FAILURES = 3; // Skip video after this many rapid failures
 
+  // Playback watchdog - detects when playback stalls after video transition
+  const watchdogTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastPlaybackTimeRef = useRef<number>(0);
+  const watchdogCheckCountRef = useRef<number>(0);
+  const WATCHDOG_CHECK_INTERVAL_MS = 2000; // Check every 2 seconds
+  const WATCHDOG_MAX_STALL_CHECKS = 3; // Trigger recovery after 3 consecutive stall detections (6 seconds)
+
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
@@ -635,7 +642,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
     lastPlayNextTimeRef.current = now;
     
-    console.log('[PlayerWindow] playNextVideo called, priorityQueue:', priorityQueueRef.current.length, 'activeQueue:', queueRef.current.length);
+    console.log('[PlayerWindow] 🎬 playNextVideo called at', new Date().toISOString());
+    console.log('[PlayerWindow] └─ priorityQueue:', priorityQueueRef.current.length, 'activeQueue:', queueRef.current.length, 'currentIndex:', queueIndexRef.current);
+    
+    // Reset watchdog state since we're initiating a new video
+    watchdogCheckCountRef.current = 0;
+    lastPlaybackTimeRef.current = 0;
     
     // ALWAYS check priority queue first (KIOSK requests take precedence)
     if (priorityQueueRef.current.length > 0) {
@@ -1102,6 +1114,71 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       if (unsubscribePlaybackState) unsubscribePlaybackState();
     };
   }, [isElectron, handleVideoEnd]);
+
+  // PLAYBACK WATCHDOG: Monitor player state and recover from stalled playback
+  // This detects when the player is supposed to be playing but playback time isn't advancing
+  useEffect(() => {
+    if (!isElectron || !playerReady) return;
+
+    // Clear any existing watchdog timer
+    if (watchdogTimerRef.current) {
+      clearInterval(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+
+    // Start watchdog monitoring
+    watchdogTimerRef.current = setInterval(() => {
+      // Only monitor when we expect playback to be happening
+      if (!isPlaying || !currentVideo) {
+        watchdogCheckCountRef.current = 0;
+        lastPlaybackTimeRef.current = 0;
+        return;
+      }
+
+      const currentPlaybackTime = playbackTime;
+      const currentDuration = playbackDuration;
+      
+      // Check if playback time is advancing
+      const isTimeAdvancing = currentPlaybackTime > lastPlaybackTimeRef.current;
+      const isNearEnd = currentDuration > 0 && currentPlaybackTime >= (currentDuration - 0.5);
+      const isAtStart = currentPlaybackTime < 1; // First second - give it time to start
+      
+      console.log(`[Watchdog] Check: isPlaying=${isPlaying}, time=${currentPlaybackTime.toFixed(1)}s, lastTime=${lastPlaybackTimeRef.current.toFixed(1)}s, advancing=${isTimeAdvancing}, nearEnd=${isNearEnd}`);
+      
+      if (!isTimeAdvancing && !isNearEnd && !isAtStart && currentPlaybackTime > 0) {
+        // Playback appears stalled
+        watchdogCheckCountRef.current++;
+        console.warn(`[Watchdog] ⚠️ Playback stalled - check ${watchdogCheckCountRef.current}/${WATCHDOG_MAX_STALL_CHECKS}`);
+        
+        if (watchdogCheckCountRef.current >= WATCHDOG_MAX_STALL_CHECKS) {
+          console.error('[Watchdog] 🚨 PLAYBACK STALL DETECTED - Triggering recovery skip!');
+          console.error(`[Watchdog] Current video: ${currentVideo?.title}, time stuck at: ${currentPlaybackTime.toFixed(1)}s`);
+          
+          // Reset watchdog state
+          watchdogCheckCountRef.current = 0;
+          lastPlaybackTimeRef.current = 0;
+          
+          // Force skip to next video (bypass normal debounce)
+          lastPlayNextTimeRef.current = 0; // Clear debounce
+          playNextVideo();
+        }
+      } else {
+        // Playback is progressing normally - reset stall counter
+        if (watchdogCheckCountRef.current > 0) {
+          console.log('[Watchdog] ✅ Playback resumed, resetting stall counter');
+        }
+        watchdogCheckCountRef.current = 0;
+        lastPlaybackTimeRef.current = currentPlaybackTime;
+      }
+    }, WATCHDOG_CHECK_INTERVAL_MS);
+
+    return () => {
+      if (watchdogTimerRef.current) {
+        clearInterval(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+    };
+  }, [isElectron, playerReady, isPlaying, currentVideo, playbackTime, playbackDuration, playNextVideo]);
 
   // Sync queue to Player Window for Supabase state sync
   // The Player Window will update Supabase with the queue state

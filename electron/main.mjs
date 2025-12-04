@@ -479,32 +479,39 @@ ipcMain.handle('get-playlists', async () => {
 
     // Helper function to parse artist and title from filename
     // Expected format: "[Youtube_ID] | [Artist_Name] - [Song_Title].mp4"
+    // Also accepts middle dot (·) and bullet (•) as separators (Windows may substitute these for |)
     // Returns { artist: string | null, title: string }
     const parseFilename = (filename) => {
       const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
       
-      // Check if filename has the expected format with " | "
-      const pipeIndex = nameWithoutExt.indexOf(' | ');
-      if (pipeIndex === -1) {
-        // No pipe separator - filename doesn't conform to expected format
+      // Valid separators: pipe (|), middle dot (·), bullet (•) - with surrounding spaces
+      // Windows may substitute | with · or • when copying/renaming files
+      const separatorPattern = / [|·•] /;
+      const separatorMatch = nameWithoutExt.match(separatorPattern);
+      
+      if (!separatorMatch) {
+        // No valid separator - filename doesn't conform to expected format
         return { artist: null, title: nameWithoutExt };
       }
       
-      // Get the part after the YouTube ID (everything after " | ")
-      const afterPipe = nameWithoutExt.substring(pipeIndex + 3);
+      const separatorIndex = separatorMatch.index;
+      const separatorLength = separatorMatch[0].length; // Should be 3 (space + char + space)
+      
+      // Get the part after the YouTube ID (everything after the separator)
+      const afterSeparator = nameWithoutExt.substring(separatorIndex + separatorLength);
       
       // Check if it has " - " separator for Artist - Title
-      const dashIndex = afterPipe.indexOf(' - ');
+      const dashIndex = afterSeparator.indexOf(' - ');
       if (dashIndex === -1) {
         // No dash separator - just use the whole thing as title, no artist
-        return { artist: null, title: afterPipe };
+        return { artist: null, title: afterSeparator };
       }
       
       // Split into artist and title
-      const artist = afterPipe.substring(0, dashIndex).trim();
-      const title = afterPipe.substring(dashIndex + 3).trim();
+      const artist = afterSeparator.substring(0, dashIndex).trim();
+      const title = afterSeparator.substring(dashIndex + 3).trim();
       
-      return { artist: artist || null, title: title || afterPipe };
+      return { artist: artist || null, title: title || afterSeparator };
     };
 
     for (const entry of entries) {
