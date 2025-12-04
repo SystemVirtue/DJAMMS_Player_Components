@@ -68,6 +68,7 @@ export type CommandType =
 
 export interface SupabaseCommand {
   id: string;
+  player_id: string;
   command_type: CommandType;
   command_data: CommandPayload;
   issued_by: string;

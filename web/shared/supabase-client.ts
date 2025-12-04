@@ -158,7 +158,7 @@ export async function sendCommandAndWait(
 ): Promise<CommandResult> {
   return new Promise(async (resolve) => {
     try {
-      // 1. Insert command and get the ID
+      // 1. Insert command and get the ID (for persistence/audit)
       const { data, error: insertError } = await supabase
         .from('admin_commands')
         .insert({
@@ -189,29 +189,10 @@ export async function sendCommandAndWait(
 
       const commandId = data.id;
       let resolved = false;
-      let intentionalClose = false; // Track if we closed the channel ourselves
-      const startTime = Date.now();
-      let channelRef: ReturnType<typeof supabase.channel> | null = null;
+      let ackChannelRef: ReturnType<typeof supabase.channel> | null = null;
       
       const cleanup = () => {
-        intentionalClose = true; // Mark as intentional before unsubscribing
-        channelRef?.unsubscribe();
-      };
-      
-      const fallbackToPolling = () => {
-        if (resolved || intentionalClose) return; // Don't fallback if we intentionally closed
-        const elapsed = Date.now() - startTime;
-        const remaining = Math.max(timeoutMs - elapsed, 1000);
-        console.log(`[SupabaseClient] Falling back to polling (${remaining}ms remaining)`);
-        cleanup();
-        
-        pollCommandStatus(commandId, remaining, 300)
-          .then(result => {
-            if (!resolved) {
-              resolved = true;
-              resolve(result);
-            }
-          });
+        ackChannelRef?.unsubscribe();
       };
 
       // 2. Set up timeout
@@ -228,64 +209,54 @@ export async function sendCommandAndWait(
         }
       }, timeoutMs);
 
-      // 3. Subscribe to this command's status change (Realtime - instant acknowledgment)
-      //    With fallback to polling if Realtime fails or channel closes unexpectedly
-      //    Note: We subscribe to ALL admin_commands updates and filter client-side
-      //    because Supabase Realtime filter columns must be enabled in the dashboard
-      
-      channelRef = supabase
-        .channel(`cmd-ack:${commandId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'admin_commands'
-            // Removed server-side filter - will filter client-side instead
-          },
-          (payload) => {
-            if (resolved) return;
-            
-            const newStatus = payload.new as any;
-            
-            // Filter client-side: only process updates for our specific command
-            if (newStatus.id !== commandId) return;
-            
-            console.log(`[SupabaseClient] Command ${commandId} status: ${newStatus.status}`);
-            
-            if (newStatus.status === 'executed') {
-              resolved = true;
-              clearTimeout(timeoutId);
-              channelRef?.unsubscribe();
-              const result = newStatus.execution_result as any;
-              resolve({ 
-                success: result?.success !== false, 
-                commandId,
-                error: result?.error 
-              });
-            } else if (newStatus.status === 'failed') {
-              resolved = true;
-              clearTimeout(timeoutId);
-              channelRef?.unsubscribe();
-              const result = newStatus.execution_result as any;
-              resolve({ 
-                success: false, 
-                error: result?.error || 'Command failed', 
-                commandId 
-              });
-            }
-          }
-        )
-        .subscribe((status) => {
-          console.log(`[SupabaseClient] Command ack subscription (${commandId}): ${status}`);
+      // 3. Subscribe to acknowledgment channel (Broadcast - instant)
+      ackChannelRef = supabase
+        .channel(`djamms-ack:${commandId}`)
+        .on('broadcast', { event: 'ack' }, (payload) => {
+          if (resolved) return;
           
-          // If subscription fails or closes unexpectedly (not by us), fall back to polling
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.warn('[SupabaseClient] Realtime subscription failed, falling back to polling');
-            fallbackToPolling();
-          } else if (status === 'CLOSED' && !intentionalClose && !resolved) {
-            console.warn('[SupabaseClient] Realtime channel closed unexpectedly, falling back to polling');
-            fallbackToPolling();
+          const ackData = payload.payload as { success: boolean; error?: string };
+          console.log(`[SupabaseClient] 📥 Command ${commandId} acknowledged:`, ackData);
+          
+          resolved = true;
+          clearTimeout(timeoutId);
+          cleanup();
+          resolve({ 
+            success: ackData.success, 
+            commandId,
+            error: ackData.error 
+          });
+        })
+        .subscribe(async (status) => {
+          console.log(`[SupabaseClient] Ack channel (${commandId}): ${status}`);
+          
+          if (status === 'SUBSCRIBED') {
+            // 4. Now broadcast the command to the player (only after ack channel is ready)
+            const commandChannel = supabase.channel(`djamms-commands:${playerId}`);
+            await commandChannel.subscribe();
+            
+            const command: SupabaseCommand = {
+              id: commandId,
+              player_id: playerId,
+              command_type: commandType,
+              command_data: commandData,
+              issued_by: issuedBy,
+              issued_at: new Date().toISOString(),
+              executed_at: null,
+              status: 'pending',
+              execution_result: null,
+              created_at: new Date().toISOString()
+            };
+            
+            console.log(`[SupabaseClient] 📤 Broadcasting command: ${commandType} to player: ${playerId}`);
+            await commandChannel.send({
+              type: 'broadcast',
+              event: 'command',
+              payload: { command, timestamp: new Date().toISOString() }
+            });
+            
+            // Cleanup command channel after sending
+            commandChannel.unsubscribe();
           }
         });
 
@@ -297,51 +268,7 @@ export async function sendCommandAndWait(
 }
 
 /**
- * Fallback polling for command status (used if Realtime fails)
- */
-async function pollCommandStatus(
-  commandId: string,
-  remainingTimeMs: number,
-  pollIntervalMs: number = 200
-): Promise<CommandResult> {
-  const startTime = Date.now();
-  
-  while (Date.now() - startTime < remainingTimeMs) {
-    const { data: cmd, error: fetchError } = await supabase
-      .from('admin_commands')
-      .select('status, execution_result')
-      .eq('id', commandId)
-      .single();
-
-    if (fetchError) {
-      console.error('[SupabaseClient] Error polling command status:', fetchError);
-      return { success: false, error: fetchError.message, commandId };
-    }
-
-    if (cmd?.status === 'executed') {
-      const result = cmd.execution_result as any;
-      return { 
-        success: result?.success !== false, 
-        commandId,
-        error: result?.error 
-      };
-    } else if (cmd?.status === 'failed') {
-      const result = cmd.execution_result as any;
-      return { 
-        success: false, 
-        error: result?.error || 'Command failed', 
-        commandId 
-      };
-    }
-
-    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-  }
-
-  return { success: false, error: 'Timeout (polling)', commandId };
-}
-
-/**
- * Blocking command helpers - wait for acknowledgment via Realtime
+ * Blocking command helpers - wait for acknowledgment via Broadcast
  */
 export const blockingCommands = {
   skip: (playerId?: string) => sendCommandAndWait('skip', {}, 'web-admin', playerId || DEFAULT_PLAYER_ID),
@@ -360,7 +287,7 @@ export const blockingCommands = {
 
 /**
  * Insert a command to be executed by the Electron player (fire-and-forget)
- * Uses 'admin_commands' table in Supabase
+ * Inserts to database for persistence and broadcasts for instant delivery
  */
 export async function insertCommand(
   commandType: CommandType,
@@ -369,7 +296,8 @@ export async function insertCommand(
   playerId: string = DEFAULT_PLAYER_ID
 ): Promise<boolean> {
   try {
-    const { error } = await supabase
+    // 1. Insert to database for persistence/audit
+    const { data, error } = await supabase
       .from('admin_commands')
       .insert({
         player_id: playerId,
@@ -378,7 +306,9 @@ export async function insertCommand(
         issued_by: issuedBy,
         status: 'pending',
         issued_at: new Date().toISOString()
-      });
+      })
+      .select('id')
+      .single();
 
     if (error) {
       // Handle case where table doesn't exist yet
@@ -394,6 +324,32 @@ export async function insertCommand(
       return false;
     }
 
+    // 2. Broadcast for instant delivery
+    const commandId = data?.id || crypto.randomUUID();
+    const commandChannel = supabase.channel(`djamms-commands:${playerId}`);
+    await commandChannel.subscribe();
+    
+    const command: SupabaseCommand = {
+      id: commandId,
+      player_id: playerId,
+      command_type: commandType,
+      command_data: commandData,
+      issued_by: issuedBy,
+      issued_at: new Date().toISOString(),
+      executed_at: null,
+      status: 'pending',
+      execution_result: null,
+      created_at: new Date().toISOString()
+    };
+    
+    console.log(`[SupabaseClient] 📤 Broadcasting command: ${commandType} to player: ${playerId}`);
+    await commandChannel.send({
+      type: 'broadcast',
+      event: 'command',
+      payload: { command, timestamp: new Date().toISOString() }
+    });
+    
+    commandChannel.unsubscribe();
     return true;
   } catch (err) {
     console.error('[SupabaseClient] Exception inserting command:', err);

@@ -51,7 +51,6 @@ class SupabaseService {
   private commandChannel: RealtimeChannel | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private stateSyncTimeout: ReturnType<typeof setTimeout> | null = null;
-  private commandPollInterval: ReturnType<typeof setInterval> | null = null;
   
   // Command handlers
   private commandHandlers: Map<CommandType, CommandHandler[]> = new Map();
@@ -60,7 +59,6 @@ class SupabaseService {
   private isInitialized = false;
   private isOnline = false;
   private lastSyncedState: Partial<SupabasePlayerState> | null = null;
-  private realtimeEnabled = false; // Track if Realtime is working
 
   private constructor() {
     // Private constructor for singleton
@@ -139,9 +137,6 @@ class SupabaseService {
       this.stateSyncTimeout = null;
     }
 
-    // Stop command polling
-    this.stopCommandPolling();
-
     // Unsubscribe from realtime
     if (this.commandChannel) {
       await this.commandChannel.unsubscribe();
@@ -150,7 +145,6 @@ class SupabaseService {
 
     this.isInitialized = false;
     this.isOnline = false;
-    this.realtimeEnabled = false;
     console.log('[SupabaseService] Shutdown complete');
   }
 
@@ -345,90 +339,53 @@ class SupabaseService {
   // ==================== Command Handling ====================
 
   /**
-   * Start listening for remote commands
+   * Start listening for remote commands using Broadcast channels
+   * 
+   * Uses Supabase Broadcast (not postgres_changes) because:
+   * 1. No database Realtime replication config needed
+   * 2. Instant delivery - no database round-trip
+   * 3. More reliable - simple pub/sub pattern
    */
   private async startCommandListener(): Promise<void> {
     if (!this.client) throw new Error('Client not initialized');
 
-    console.log(`[SupabaseService] Setting up command listener for player: ${this.playerId}`);
+    console.log(`[SupabaseService] Setting up Broadcast command listener for player: ${this.playerId}`);
 
-    // Subscribe to admin_commands table for this player
-    // Note: We subscribe to ALL inserts and filter client-side because
-    // Supabase Realtime filter columns must be explicitly enabled in the dashboard
+    // Use Broadcast channel for instant command delivery
+    // Channel name includes player ID so each player gets its own channel
     this.commandChannel = this.client
-      .channel(`commands:${this.playerId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'admin_commands'
-          // Removed server-side filter - will filter client-side instead
-        },
-        async (payload) => {
-          const command = payload.new as SupabaseCommand;
-          // Filter client-side: only process commands for this player
-          if (command.player_id !== this.playerId) {
-            console.log('[SupabaseService] Ignoring command for different player:', command.player_id);
-            return;
-          }
-          // Only process pending commands
-          if (command.status === 'pending') {
-            console.log('[SupabaseService] 📥 Received command via Realtime:', command.command_type, command.id);
-            await this.processCommand(command);
-          }
+      .channel(`djamms-commands:${this.playerId}`)
+      .on('broadcast', { event: 'command' }, async (payload) => {
+        const message = payload.payload as {
+          command: SupabaseCommand;
+          timestamp: string;
+        };
+        
+        if (!message || !message.command) {
+          console.warn('[SupabaseService] Received invalid broadcast message:', payload);
+          return;
         }
-      )
+
+        const command = message.command;
+        console.log('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id);
+        
+        // Process the command
+        await this.processCommand(command);
+      })
       .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
-          console.log('[SupabaseService] ✅ Command listener SUBSCRIBED - ready to receive commands');
-          this.realtimeEnabled = true;
-          // Stop polling if it was running
-          this.stopCommandPolling();
+          console.log('[SupabaseService] ✅ Broadcast command listener SUBSCRIBED - ready to receive commands');
         } else if (status === 'CHANNEL_ERROR') {
-          console.error('[SupabaseService] ❌ Command channel ERROR:', err);
-          console.warn('[SupabaseService] ⚠️ Falling back to polling for commands (every 2 seconds)');
-          this.realtimeEnabled = false;
-          // Start polling as fallback
-          this.startCommandPolling();
+          console.error('[SupabaseService] ❌ Broadcast channel ERROR:', err);
         } else if (status === 'TIMED_OUT') {
-          console.warn('[SupabaseService] ⚠️ Command channel TIMED_OUT - falling back to polling');
-          this.realtimeEnabled = false;
-          this.startCommandPolling();
+          console.warn('[SupabaseService] ⚠️ Broadcast channel TIMED_OUT');
         } else {
-          console.log(`[SupabaseService] Command channel status: ${status}`);
+          console.log(`[SupabaseService] Broadcast channel status: ${status}`);
         }
       });
 
     // Also check for any pending commands that arrived while offline
     await this.processPendingCommands();
-  }
-
-  /**
-   * Start polling for commands (fallback when Realtime fails)
-   */
-  private startCommandPolling(): void {
-    if (this.commandPollInterval) {
-      console.log('[SupabaseService] Command polling already running');
-      return;
-    }
-
-    console.log('[SupabaseService] 🔄 Starting command polling (every 2 seconds)');
-    
-    this.commandPollInterval = setInterval(async () => {
-      await this.processPendingCommands();
-    }, 2000); // Poll every 2 seconds
-  }
-
-  /**
-   * Stop command polling
-   */
-  private stopCommandPolling(): void {
-    if (this.commandPollInterval) {
-      console.log('[SupabaseService] Stopping command polling (Realtime connected)');
-      clearInterval(this.commandPollInterval);
-      this.commandPollInterval = null;
-    }
   }
 
   /**
@@ -487,6 +444,7 @@ class SupabaseService {
 
   /**
    * Mark a command as executed or failed
+   * Also sends Broadcast acknowledgment for instant feedback to Web Admin/Kiosk
    */
   private async markCommandExecuted(
     commandId: string, 
@@ -497,6 +455,25 @@ class SupabaseService {
 
     console.log(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
 
+    // 1. Send Broadcast acknowledgment (instant feedback)
+    try {
+      const ackChannel = this.client.channel(`djamms-ack:${commandId}`);
+      await ackChannel.subscribe();
+      
+      console.log(`[SupabaseService] 📤 Sending ack via Broadcast for command ${commandId}`);
+      await ackChannel.send({
+        type: 'broadcast',
+        event: 'ack',
+        payload: { success, error: errorMessage }
+      });
+      
+      // Small delay before unsubscribing to ensure message is sent
+      setTimeout(() => ackChannel.unsubscribe(), 100);
+    } catch (ackError) {
+      console.warn('[SupabaseService] Failed to send broadcast ack:', ackError);
+    }
+
+    // 2. Update database (for persistence/audit)
     const { error } = await this.client
       .from('admin_commands')
       .update({
@@ -531,7 +508,7 @@ class SupabaseService {
 
   /**
    * Send a command to a player (for Admin Console use)
-   * Note: This inserts a command that will be picked up by the target player
+   * Inserts to database for persistence and broadcasts for instant delivery
    */
   public async sendCommand(
     targetPlayerId: string,
@@ -546,6 +523,7 @@ class SupabaseService {
 
     console.log(`[SupabaseService] 📤 Sending command: ${commandType} to player: ${targetPlayerId}`);
 
+    // 1. Insert to database for persistence/audit
     const { data, error } = await this.client
       .from('admin_commands')
       .insert({
@@ -563,8 +541,38 @@ class SupabaseService {
       return { success: false, error: error.message };
     }
 
-    console.log(`[SupabaseService] ✅ Command sent: ${commandType} (${data.id})`);
-    return { success: true, commandId: data.id };
+    // 2. Broadcast for instant delivery
+    const commandId = data.id;
+    try {
+      const commandChannel = this.client.channel(`djamms-commands:${targetPlayerId}`);
+      await commandChannel.subscribe();
+      
+      const command: SupabaseCommand = {
+        id: commandId,
+        player_id: targetPlayerId,
+        command_type: commandType,
+        command_data: payload || {},
+        issued_by: source,
+        issued_at: new Date().toISOString(),
+        executed_at: null,
+        status: 'pending',
+        execution_result: null,
+        created_at: new Date().toISOString()
+      };
+      
+      await commandChannel.send({
+        type: 'broadcast',
+        event: 'command',
+        payload: { command, timestamp: new Date().toISOString() }
+      });
+      
+      commandChannel.unsubscribe();
+    } catch (broadcastError) {
+      console.warn('[SupabaseService] Broadcast failed (command still in DB):', broadcastError);
+    }
+
+    console.log(`[SupabaseService] ✅ Command sent: ${commandType} (${commandId})`);
+    return { success: true, commandId };
   }
 
   /**
