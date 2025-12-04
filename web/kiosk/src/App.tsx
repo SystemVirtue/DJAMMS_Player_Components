@@ -22,11 +22,11 @@ import {
 } from '@shared/supabase-client';
 import type { SupabasePlayerState, QueueVideoItem } from '@shared/types';
 
-// Get UI mode from URL parameter: ?ui=jukebox or ?ui=classic (default: classic)
+// Get UI mode from URL parameter: ?ui=classic or ?ui=jukebox (default: jukebox)
 function getUIMode(): 'classic' | 'jukebox' {
   const params = new URLSearchParams(window.location.search);
   const ui = params.get('ui');
-  return ui === 'jukebox' ? 'jukebox' : 'classic';
+  return ui === 'classic' ? 'classic' : 'jukebox';
 }
 
 function App() {
