@@ -242,16 +242,6 @@ export default function App() {
     watermarkOpacity: 80
   });
 
-  // Send overlay settings to Electron when they change
-  const updateOverlaySetting = useCallback((key: string, value: number | boolean) => {
-    setOverlaySettings(prev => {
-      const updated = { ...prev, [key]: value };
-      // Send command to player with full settings object
-      sendCommand('overlay_settings_update', updated);
-      return updated;
-    });
-  }, [sendCommand]);
-
   // Kiosk settings state
   const [kioskSettings, setKioskSettings] = useState({
     mode: 'freeplay' as 'freeplay' | 'credits',
@@ -259,15 +249,6 @@ export default function App() {
     creditBalance: 0,
     searchAllMusic: true
   });
-
-  // Update kiosk setting and send command
-  const updateKioskSetting = useCallback((key: string, value: string | number | boolean) => {
-    setKioskSettings(prev => {
-      const updated = { ...prev, [key]: value };
-      sendCommand('kiosk_settings_update', updated);
-      return updated;
-    });
-  }, [sendCommand]);
 
   // Auto-collapse sidebar on small screens
   useEffect(() => {
@@ -434,6 +415,25 @@ export default function App() {
       console.error('Failed to send command:', error);
     }
   }, []);
+
+  // Send overlay settings to Electron when they change
+  const updateOverlaySetting = useCallback((key: string, value: number | boolean) => {
+    setOverlaySettings(prev => {
+      const updated = { ...prev, [key]: value };
+      // Send command to player with full settings object
+      sendCommand('overlay_settings_update', updated);
+      return updated;
+    });
+  }, [sendCommand]);
+
+  // Update kiosk setting and send command
+  const updateKioskSetting = useCallback((key: string, value: string | number | boolean) => {
+    setKioskSettings(prev => {
+      const updated = { ...prev, [key]: value };
+      sendCommand('kiosk_settings_update', updated);
+      return updated;
+    });
+  }, [sendCommand]);
 
   // Send blocking command - waits for Electron to acknowledge
   const sendBlockingCommand = useCallback(async (
