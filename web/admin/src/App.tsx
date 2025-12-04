@@ -392,15 +392,34 @@ export default function App() {
 
   const confirmPause = async () => {
     setShowPauseDialog(false);
-    await sendBlockingCommand(() => blockingCommands.pause());
+    setIsPlaying(false); // Optimistic update
+    const success = await sendBlockingCommand(() => blockingCommands.pause());
+    if (!success) setIsPlaying(true); // Rollback on failure
   };
 
   const handleResumePlayback = async () => {
-    await sendBlockingCommand(() => blockingCommands.resume());
+    setIsPlaying(true); // Optimistic update
+    const success = await sendBlockingCommand(() => blockingCommands.resume());
+    if (!success) setIsPlaying(false); // Rollback on failure
   };
 
   const skipTrack = async () => {
-    await sendBlockingCommand(() => blockingCommands.skip());
+    // Save current state for rollback
+    const prevIndex = queueIndex;
+    const prevVideo = currentVideo;
+    // Optimistic update - move to next track immediately
+    if (activeQueue.length > 0 && queueIndex < activeQueue.length - 1) {
+      const nextIndex = queueIndex + 1;
+      setQueueIndex(nextIndex);
+      setCurrentVideo(activeQueue[nextIndex] as NowPlayingVideo);
+      setIsPlaying(true);
+    }
+    const success = await sendBlockingCommand(() => blockingCommands.skip());
+    if (!success) {
+      // Rollback on failure
+      setQueueIndex(prevIndex);
+      setCurrentVideo(prevVideo);
+    }
   };
 
   const toggleShuffle = async () => {

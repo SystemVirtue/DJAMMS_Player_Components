@@ -42,7 +42,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
   const [queue, setQueue] = useState<Video[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
-  const [priorityQueue] = useState<Video[]>([]); // KIOSK requests
+  const [priorityQueue, setPriorityQueue] = useState<Video[]>([]); // KIOSK requests
 
   // Search/Browse state
   const [searchQuery, setSearchQuery] = useState('');
@@ -126,7 +126,18 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onSkip: () => {
       console.log('[PlayerWindow] Supabase skip command received');
-      // Use the same skip logic as handleSkip
+      // Check priority queue first (KIOSK requests take precedence)
+      if (priorityQueueRef.current.length > 0) {
+        const nextVideo = priorityQueueRef.current[0];
+        setPriorityQueue(prev => prev.slice(1)); // Remove from priority queue
+        setCurrentVideo(nextVideo);
+        setIsPlaying(true);
+        if (isElectron) {
+          (window as any).electronAPI.controlPlayerWindow('play', nextVideo);
+        }
+        return;
+      }
+      // Fall back to active queue
       const nextIndex = queueRef.current.length > 0 
         ? (queueIndexRef.current + 1) % queueRef.current.length 
         : 0;
@@ -167,12 +178,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         duration: video.duration
       };
       if (queueType === 'priority') {
-        // Add to priority queue (insert after current position)
-        setQueue(prev => {
-          const newQueue = [...prev];
-          newQueue.splice(queueIndexRef.current + 1, 0, videoToAdd);
-          return newQueue;
-        });
+        // Add to separate priority queue (consumed first on skip)
+        setPriorityQueue(prev => [...prev, videoToAdd]);
       } else {
         // Add to end of active queue
         setQueue(prev => [...prev, videoToAdd]);
@@ -579,12 +586,14 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Uses refs to avoid stale closure issues with IPC listener
   const queueRef = useRef(queue);
   const queueIndexRef = useRef(queueIndex);
+  const priorityQueueRef = useRef(priorityQueue);
   
   // Keep refs in sync with state
   useEffect(() => {
     queueRef.current = queue;
     queueIndexRef.current = queueIndex;
-  }, [queue, queueIndex]);
+    priorityQueueRef.current = priorityQueue;
+  }, [queue, queueIndex, priorityQueue]);
 
   const handleVideoEnd = useCallback(() => {
     const currentQueue = queueRef.current;

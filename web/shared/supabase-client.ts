@@ -88,9 +88,11 @@ const commandChannels: Map<string, ChannelState> = new Map();
 /**
  * Get or create a persistent command channel for a player
  * Reuses existing channels to avoid subscription overhead
+ * Includes retry logic with exponential backoff on failure
  */
-async function getCommandChannel(playerId: string): Promise<RealtimeChannel> {
+async function getCommandChannel(playerId: string, retryCount = 0): Promise<RealtimeChannel> {
   const channelName = `djamms-commands:${playerId}`;
+  const maxRetries = 3;
   
   let state = commandChannels.get(channelName);
   
@@ -98,10 +100,15 @@ async function getCommandChannel(playerId: string): Promise<RealtimeChannel> {
     return state.channel;
   }
   
-  if (state) {
+  if (state && !state.isReady) {
     // Channel exists but still connecting - wait for it
-    await state.readyPromise;
-    return state.channel;
+    try {
+      await state.readyPromise;
+      return state.channel;
+    } catch (err) {
+      // Connection failed, remove stale entry
+      commandChannels.delete(channelName);
+    }
   }
   
   // Create new channel
@@ -136,8 +143,19 @@ async function getCommandChannel(playerId: string): Promise<RealtimeChannel> {
   state = { channel, isReady: false, readyPromise };
   commandChannels.set(channelName, state);
   
-  await readyPromise;
-  return channel;
+  try {
+    await readyPromise;
+    return channel;
+  } catch (err) {
+    // Retry with exponential backoff
+    if (retryCount < maxRetries) {
+      const delay = Math.pow(2, retryCount) * 500; // 500ms, 1s, 2s
+      console.warn(`[SupabaseClient] Channel failed, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return getCommandChannel(playerId, retryCount + 1);
+    }
+    throw err;
+  }
 }
 
 // ==================== Player State Functions ====================

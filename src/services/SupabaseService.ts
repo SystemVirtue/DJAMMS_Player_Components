@@ -426,10 +426,10 @@ class SupabaseService {
    * This is a safety net in case Broadcast messages are missed
    */
   private startCommandPoll(): void {
-    // Poll every 5 seconds for faster fallback recovery
+    // Poll every 2 seconds for faster fallback recovery on disconnect
     this.commandPollInterval = setInterval(async () => {
       await this.processPendingCommands();
-    }, 5000);
+    }, 2000);
   }
 
   /**
