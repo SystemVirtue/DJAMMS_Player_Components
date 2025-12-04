@@ -23,6 +23,7 @@ export interface SupabasePlayerState {
   current_position: number;
   active_queue: QueueVideoItem[];
   priority_queue: QueueVideoItem[];
+  queue_index: number; // Current position in active_queue
   volume: number;
   last_heartbeat: string;
 }

@@ -636,9 +636,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       currentVideo,
       volume: volume / 100,
       activeQueue: queue,
-      priorityQueue
+      priorityQueue,
+      queueIndex
     });
-  }, [supabaseInitialized, isPlaying, currentVideo, volume, queue, priorityQueue, syncState]);
+  }, [supabaseInitialized, isPlaying, currentVideo, volume, queue, priorityQueue, queueIndex, syncState]);
 
   // Tools handlers
   const handleOpenFullscreen = useCallback(async () => {

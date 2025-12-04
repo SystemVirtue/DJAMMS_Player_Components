@@ -235,6 +235,7 @@ class SupabaseService {
     volume?: number;
     activeQueue?: Video[];
     priorityQueue?: Video[];
+    queueIndex?: number;
   }): void {
     // Debounce rapid updates
     if (this.stateSyncTimeout) {
@@ -257,6 +258,7 @@ class SupabaseService {
     volume?: number;
     activeQueue?: Video[];
     priorityQueue?: Video[];
+    queueIndex?: number;
   }): Promise<void> {
     if (!this.client || !this.playerStateId) {
       console.warn('[SupabaseService] Cannot sync state - not initialized');
@@ -301,6 +303,10 @@ class SupabaseService {
         updateData.priority_queue = state.priorityQueue.map(v => this.videoToQueueItem(v));
       }
 
+      if (state.queueIndex !== undefined) {
+        updateData.queue_index = state.queueIndex;
+      }
+
       // Only update if something changed
       if (Object.keys(updateData).length <= 1) {
         return; // Only last_updated, skip
@@ -310,6 +316,7 @@ class SupabaseService {
         now_playing: updateData.now_playing_video?.title,
         is_playing: updateData.is_playing,
         queue_length: updateData.active_queue?.length,
+        queue_index: updateData.queue_index,
         priority_length: updateData.priority_queue?.length
       });
 

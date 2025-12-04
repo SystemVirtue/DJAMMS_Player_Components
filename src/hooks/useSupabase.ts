@@ -62,6 +62,7 @@ export interface UseSupabaseReturn {
     volume?: number;
     activeQueue?: Video[];
     priorityQueue?: Video[];
+    queueIndex?: number;
   }) => void;
 }
 

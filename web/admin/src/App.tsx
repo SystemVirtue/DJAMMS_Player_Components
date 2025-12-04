@@ -126,6 +126,7 @@ export default function App() {
         now_playing: state.now_playing_video?.title,
         is_playing: state.is_playing,
         queue_length: state.active_queue?.length || 0,
+        queue_index: state.queue_index,
         priority_length: state.priority_queue?.length || 0
       });
       setPlayerState(state);
@@ -143,6 +144,9 @@ export default function App() {
       }
       if (state.priority_queue) {
         setPriorityQueue(state.priority_queue);
+      }
+      if (typeof state.queue_index === 'number') {
+        setQueueIndex(state.queue_index);
       }
       if (typeof state.volume === 'number') {
         setVolume(Math.round(state.volume * 100));
