@@ -79,18 +79,30 @@ interface JukeboxSearchModeProps {
   isFreePlay?: boolean;
 }
 
-// Clean title by removing YouTube video IDs in brackets like [dQw4w9WgXcQ]
-// Handles formats: [ID] at start, [ID] at end, or [ID] in middle
+// Clean title by removing YouTube video IDs and everything before the separator
+// Filename format: "[YouTube_ID] | Artist - Title" or "[YouTube_ID] · Artist - Title"
+// Separators: | (pipe), · (middle dot U+00B7), • (bullet U+2022)
 const cleanTitle = (title: string): string => {
   if (!title) return 'Unknown';
-  // Remove YouTube-style IDs: [11-char alphanumeric] or [any bracketed text that looks like an ID]
+  
+  // First, check if there's a separator and strip everything before and including it
+  // Handles: [ID] | Artist - Title, [ID] · Artist - Title, [ID] • Artist - Title
+  const separatorPattern = / [|·•] /;
+  const separatorMatch = title.match(separatorPattern);
+  
+  if (separatorMatch && separatorMatch.index !== undefined) {
+    // Return everything AFTER the separator (and the space after it)
+    title = title.substring(separatorMatch.index + separatorMatch[0].length);
+  }
+  
+  // Also remove any remaining bracketed IDs (fallback for edge cases)
   return title
     .replace(/\s*\[[A-Za-z0-9_-]{10,15}\]\s*/g, ' ') // YouTube IDs are 11 chars
     .replace(/\s*\[[^\]]{10,20}\]\s*/g, ' ') // Other bracketed IDs
     .replace(/^\s*-\s*/, '') // Leading dash after ID removal
     .replace(/\s*-\s*$/, '') // Trailing dash after ID removal
     .replace(/\s+/g, ' ') // Collapse multiple spaces
-    .trim();
+    .trim() || 'Unknown';
 };
 
 // Quick filter categories
