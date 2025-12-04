@@ -2,7 +2,7 @@
 // DJAMMS Web Admin Console - Exact Clone of Electron Admin UI
 // Uses Supabase for state sync instead of Electron IPC
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   supabase, 
   subscribeToPlayerState, 
@@ -13,7 +13,8 @@ import {
   blockingCommands, 
   DEFAULT_PLAYER_ID,
   onConnectionChange,
-  isConnected as getConnectionStatus
+  isConnected as getConnectionStatus,
+  localVideoToQueueItem
 } from '@shared/supabase-client';
 import type { CommandResult } from '@shared/supabase-client';
 import type { 
@@ -56,6 +57,110 @@ const navItems: { id: TabId; icon: string; label: string }[] = [
   { id: 'tools', icon: 'build', label: 'Tools' },
 ];
 
+// Popover component for Add to Priority Queue
+interface VideoPopoverProps {
+  video: SupabaseLocalVideo;
+  position: { x: number; y: number };
+  onAddToPriorityQueue: () => void;
+  onCancel: () => void;
+}
+
+const VideoPopover: React.FC<VideoPopoverProps> = ({ video, position, onAddToPriorityQueue, onCancel }) => {
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onCancel();
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [onCancel]);
+
+  // Adjust position to stay within viewport
+  const adjustedPosition = useMemo(() => {
+    const popoverWidth = 300;
+    const popoverHeight = 150;
+    const padding = 16;
+    let x = position.x;
+    let y = position.y;
+    
+    if (x + popoverWidth > window.innerWidth - padding) {
+      x = window.innerWidth - popoverWidth - padding;
+    }
+    if (y + popoverHeight > window.innerHeight - padding) {
+      y = window.innerHeight - popoverHeight - padding;
+    }
+    if (x < padding) x = padding;
+    if (y < padding) y = padding;
+    
+    return { x, y };
+  }, [position]);
+
+  const artistDisplay = getDisplayArtist(video.artist);
+
+  return (
+    <div
+      ref={popoverRef}
+      className="video-popover"
+      style={{
+        position: 'fixed',
+        left: adjustedPosition.x,
+        top: adjustedPosition.y,
+        zIndex: 9999,
+        background: '#282828',
+        border: '1px solid #3f3f3f',
+        borderRadius: '12px',
+        padding: '16px',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+        minWidth: '280px',
+        maxWidth: '360px'
+      }}
+    >
+      <div style={{ marginBottom: '16px' }}>
+        <div style={{ 
+          fontSize: '16px', 
+          fontWeight: 600, 
+          color: '#fff',
+          marginBottom: '4px',
+          wordBreak: 'break-word'
+        }}>
+          {artistDisplay ? `${artistDisplay} - ${video.title}` : video.title}
+        </div>
+        <div style={{ 
+          fontSize: '14px', 
+          color: '#aaa',
+          marginTop: '8px'
+        }}>
+          Add to Priority Queue?
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+        <button
+          onClick={onCancel}
+          className="popover-btn popover-btn-cancel"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onAddToPriorityQueue}
+          className="popover-btn popover-btn-primary"
+        >
+          Add Video
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   // Player state (synced from Supabase)
   const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
@@ -93,6 +198,10 @@ export default function App() {
   const [showLoadDialog, setShowLoadDialog] = useState(false);
   const [playlistToLoad, setPlaylistToLoad] = useState<string | null>(null);
   const [showPauseDialog, setShowPauseDialog] = useState(false);
+
+  // Priority Queue Popover state
+  const [popoverVideo, setPopoverVideo] = useState<SupabaseLocalVideo | null>(null);
+  const [popoverPosition, setPopoverPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Blocking command state - prevents multiple simultaneous commands
   const [isCommandPending, setIsCommandPending] = useState(false);
@@ -426,6 +535,28 @@ export default function App() {
     });
   };
 
+  // Video click handler - opens popover to add to priority queue
+  const handleVideoClick = useCallback((video: SupabaseLocalVideo, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setPopoverVideo(video);
+    setPopoverPosition({ x: event.clientX, y: event.clientY });
+  }, []);
+
+  // Add video to priority queue via Supabase command
+  const handleAddToPriorityQueue = useCallback(async () => {
+    if (!popoverVideo) return;
+    
+    const queueItem = localVideoToQueueItem(popoverVideo);
+    await sendBlockingCommand(() => 
+      blockingCommands.queueAdd(queueItem, 'priority', 'web-admin')
+    );
+    setPopoverVideo(null);
+  }, [popoverVideo, sendBlockingCommand]);
+
+  const handleClosePopover = useCallback(() => {
+    setPopoverVideo(null);
+  }, []);
+
   // Get playlist counts with display names
   const getPlaylistList = () => {
     return Object.entries(playlists).map(([name, videos]) => ({
@@ -715,7 +846,7 @@ export default function App() {
                       </tr>
                     ) : (
                       getSearchResults().map((track, index) => (
-                        <tr key={`${track.id}-${index}`} onClick={() => handleAddToQueue(track)}>
+                        <tr key={`${track.id}-${index}`} onClick={(e) => handleVideoClick(track, e)} style={{ cursor: 'pointer' }}>
                           <td>{index + 1}</td>
                           <td className="col-title">{track.title}</td>
                           <td>{getDisplayArtist(track.artist)}</td>
@@ -778,7 +909,7 @@ export default function App() {
                       </tr>
                     ) : (
                       getBrowseResults().map((track, index) => (
-                        <tr key={`${track.id}-${index}`} onClick={() => handleAddToQueue(track)}>
+                        <tr key={`${track.id}-${index}`} onClick={(e) => handleVideoClick(track, e)} style={{ cursor: 'pointer' }}>
                           <td>{index + 1}</td>
                           <td className="col-title">{track.title}</td>
                           <td>{getDisplayArtist(track.artist)}</td>
@@ -898,6 +1029,16 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Priority Queue Popover */}
+      {popoverVideo && (
+        <VideoPopover
+          video={popoverVideo}
+          position={popoverPosition}
+          onAddToPriorityQueue={handleAddToPriorityQueue}
+          onCancel={handleClosePopover}
+        />
+      )}
     </div>
   );
 }

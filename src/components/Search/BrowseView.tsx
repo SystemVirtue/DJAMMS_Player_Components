@@ -1,11 +1,12 @@
 // src/components/Search/BrowseView.tsx
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Video } from '../../types';
 
 interface BrowseViewProps {
   playlists: Record<string, Video[]>;
   onPlayVideo: (video: Video) => void;
   onAddToQueue: (video: Video) => void;
+  onAddToPriorityQueue?: (video: Video) => void;
   onPlayPlaylist: (playlistName: string, videos: Video[]) => void;
   currentPlaylist?: string;
   className?: string;
@@ -13,16 +14,166 @@ interface BrowseViewProps {
 
 type SortOption = 'title' | 'artist' | 'playlist';
 
+// Popover component for Add to Priority Queue
+interface VideoPopoverProps {
+  video: Video;
+  position: { x: number; y: number };
+  onAddToPriorityQueue: () => void;
+  onCancel: () => void;
+}
+
+const VideoPopover: React.FC<VideoPopoverProps> = ({ video, position, onAddToPriorityQueue, onCancel }) => {
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onCancel();
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [onCancel]);
+
+  // Adjust position to stay within viewport
+  const adjustedPosition = useMemo(() => {
+    const popoverWidth = 300;
+    const popoverHeight = 150;
+    const padding = 16;
+    let x = position.x;
+    let y = position.y;
+    
+    if (x + popoverWidth > window.innerWidth - padding) {
+      x = window.innerWidth - popoverWidth - padding;
+    }
+    if (y + popoverHeight > window.innerHeight - padding) {
+      y = window.innerHeight - popoverHeight - padding;
+    }
+    if (x < padding) x = padding;
+    if (y < padding) y = padding;
+    
+    return { x, y };
+  }, [position]);
+
+  const artistDisplay = video.artist && video.artist !== 'Unknown' && video.artist.toLowerCase() !== 'unknown artist' 
+    ? video.artist 
+    : '';
+
+  return (
+    <div
+      ref={popoverRef}
+      className="video-popover"
+      style={{
+        position: 'fixed',
+        left: adjustedPosition.x,
+        top: adjustedPosition.y,
+        zIndex: 9999,
+        background: 'var(--yt-bg-elevated, #282828)',
+        border: '1px solid var(--yt-border-subtle, #3f3f3f)',
+        borderRadius: '12px',
+        padding: '16px',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+        minWidth: '280px',
+        maxWidth: '360px'
+      }}
+    >
+      <div style={{ marginBottom: '16px' }}>
+        <div style={{ 
+          fontSize: '16px', 
+          fontWeight: 600, 
+          color: 'var(--yt-text-primary, #fff)',
+          marginBottom: '4px',
+          wordBreak: 'break-word'
+        }}>
+          {artistDisplay ? `${artistDisplay} - ${video.title}` : video.title}
+        </div>
+        <div style={{ 
+          fontSize: '14px', 
+          color: 'var(--yt-text-secondary, #aaa)',
+          marginTop: '8px'
+        }}>
+          Add to Priority Queue?
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: '10px 20px',
+            background: 'var(--yt-bg-tertiary, #3f3f3f)',
+            border: 'none',
+            borderRadius: '8px',
+            color: 'var(--yt-text-primary, #fff)',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            transition: 'background 0.2s'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--yt-bg-hover, #4f4f4f)'}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'var(--yt-bg-tertiary, #3f3f3f)'}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onAddToPriorityQueue}
+          style={{
+            padding: '10px 20px',
+            background: 'var(--yt-accent-primary, #3ea6ff)',
+            border: 'none',
+            borderRadius: '8px',
+            color: '#000',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'background 0.2s'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--yt-accent-hover, #65b8ff)'}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'var(--yt-accent-primary, #3ea6ff)'}
+        >
+          Add Video
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const BrowseView: React.FC<BrowseViewProps> = ({
   playlists,
   onPlayVideo,
   onAddToQueue,
+  onAddToPriorityQueue,
   onPlayPlaylist,
   currentPlaylist,
   className = ''
 }) => {
   const [sortBy, setSortBy] = useState<SortOption>('title');
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(currentPlaylist || null);
+  const [popoverVideo, setPopoverVideo] = useState<Video | null>(null);
+  const [popoverPosition, setPopoverPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const handleVideoClick = useCallback((video: Video, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setPopoverVideo(video);
+    setPopoverPosition({ x: event.clientX, y: event.clientY });
+  }, []);
+
+  const handleAddToPriorityQueue = useCallback(() => {
+    if (popoverVideo && onAddToPriorityQueue) {
+      onAddToPriorityQueue(popoverVideo);
+    }
+    setPopoverVideo(null);
+  }, [popoverVideo, onAddToPriorityQueue]);
+
+  const handleClosePopover = useCallback(() => {
+    setPopoverVideo(null);
+  }, []);
 
   const playlistNames = useMemo(() => {
     return Object.keys(playlists).sort();
@@ -243,7 +394,8 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
           <div
             key={video.id || index}
             className="queue-item"
-            onClick={() => onPlayVideo(video)}
+            onClick={(e) => handleVideoClick(video, e)}
+            style={{ cursor: 'pointer' }}
           >
             <span className="queue-item-index">{index + 1}</span>
             
@@ -275,6 +427,16 @@ export const BrowseView: React.FC<BrowseViewProps> = ({
           </div>
         ))}
       </div>
+
+      {/* Priority Queue Popover */}
+      {popoverVideo && (
+        <VideoPopover
+          video={popoverVideo}
+          position={popoverPosition}
+          onAddToPriorityQueue={handleAddToPriorityQueue}
+          onCancel={handleClosePopover}
+        />
+      )}
     </div>
   );
 };

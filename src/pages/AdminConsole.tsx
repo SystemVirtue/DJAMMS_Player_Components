@@ -275,6 +275,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({ className = '' }) =>
             onAddToQueue={(video) => {
               console.log('Admin: Add to queue', video);
             }}
+            onAddToPriorityQueue={(video) => {
+              console.log('Admin: Add to priority queue', video);
+              // TODO: Send command via IPC to add to priority queue
+              if (isElectron) {
+                (window as any).electronAPI?.addToPriorityQueue?.(video);
+              }
+            }}
             onPlayPlaylist={(name, videos) => {
               console.log('Admin: Play playlist', name, videos.length);
             }}
@@ -306,6 +313,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({ className = '' }) =>
                   }}
                   onAddToQueue={(video) => {
                     console.log('Admin: Add to queue', video);
+                  }}
+                  onAddToPriorityQueue={(video) => {
+                    console.log('Admin: Add to priority queue', video);
+                    // TODO: Send command via IPC to add to priority queue
+                    if (isElectron) {
+                      (window as any).electronAPI?.addToPriorityQueue?.(video);
+                    }
                   }}
                 />
               </div>
