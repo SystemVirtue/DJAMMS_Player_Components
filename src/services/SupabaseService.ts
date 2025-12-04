@@ -56,6 +56,10 @@ class SupabaseService {
   // Command handlers
   private commandHandlers: Map<CommandType, CommandHandler[]> = new Map();
   
+  // Command deduplication - track processed command IDs to prevent double execution
+  private processedCommandIds: Set<string> = new Set();
+  private processingCommandIds: Set<string> = new Set(); // Commands currently being processed
+  
   // State tracking
   private isInitialized = false;
   private isOnline = false;
@@ -391,11 +395,15 @@ class SupabaseService {
         }
       });
 
-    // Check for any pending commands that arrived while offline
-    await this.processPendingCommands();
+    // Delay initial pending commands check to let Broadcast handle immediate delivery
+    // This prevents race condition where both Broadcast and poll process the same command
+    setTimeout(async () => {
+      await this.processPendingCommands();
+    }, 3000);
     
-    // Start periodic poll as fallback (every 10 seconds) in case Broadcast misses messages
-    this.startCommandPoll();
+    // Start periodic poll as fallback (every 10 seconds) with initial delay
+    // This is a safety net in case Broadcast misses messages
+    setTimeout(() => this.startCommandPoll(), 5000);
   }
 
   /**
@@ -439,27 +447,52 @@ class SupabaseService {
   }
 
   /**
-   * Process a single command
+   * Process a single command with deduplication
+   * Ensures each command is only processed ONCE, even if received via both Broadcast and polling
    */
   private async processCommand(command: SupabaseCommand): Promise<void> {
+    // CRITICAL: Check if command was already processed to prevent duplicate execution
+    if (this.processedCommandIds.has(command.id)) {
+      console.log(`[SupabaseService] ⏭️ Command ${command.id} already processed, skipping duplicate`);
+      return;
+    }
+    
+    // Check if command is currently being processed (prevent concurrent execution)
+    if (this.processingCommandIds.has(command.id)) {
+      console.log(`[SupabaseService] ⏳ Command ${command.id} is currently being processed, skipping`);
+      return;
+    }
+    
+    // Mark as being processed BEFORE executing to prevent race conditions
+    this.processingCommandIds.add(command.id);
+    this.processedCommandIds.add(command.id);
+    
+    // Prevent memory leak - keep only last 500 command IDs
+    if (this.processedCommandIds.size > 1000) {
+      const idsArray = Array.from(this.processedCommandIds);
+      this.processedCommandIds = new Set(idsArray.slice(-500));
+    }
+    
     const handlers = this.commandHandlers.get(command.command_type as CommandType);
     
     try {
       if (handlers && handlers.length > 0) {
         console.log(`[SupabaseService] ⚙️ Executing command: ${command.command_type} (${command.id})`);
-        for (const handler of handlers) {
-          await handler(command);
-        }
+        // Execute only the FIRST handler to prevent duplicate actions from multiple registrations
+        await handlers[0](command);
         console.log(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
       } else {
         console.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
       }
 
-      // Mark command as executed
+      // Mark command as executed in database
       await this.markCommandExecuted(command.id, true);
     } catch (error) {
       console.error(`[SupabaseService] ❌ Error processing command ${command.id}:`, error);
       await this.markCommandExecuted(command.id, false, String(error));
+    } finally {
+      // Remove from processing set (but keep in processed set to prevent re-execution)
+      this.processingCommandIds.delete(command.id);
     }
   }
 
