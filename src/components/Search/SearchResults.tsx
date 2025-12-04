@@ -2,6 +2,7 @@
 import React, { useCallback, useState, useMemo, useRef, useEffect } from 'react';
 import { Video } from '../../types';
 import { SearchResult } from '../../services/LocalSearchService';
+import { cleanVideoTitle } from '../../utils/playlistHelpers';
 
 interface SearchResultsProps {
   results: SearchResult[];
@@ -91,7 +92,7 @@ const VideoPopover: React.FC<VideoPopoverProps> = ({ video, position, onAddToPri
           marginBottom: '4px',
           wordBreak: 'break-word'
         }}>
-          {artistDisplay ? `${artistDisplay} - ${video.title}` : video.title}
+          {artistDisplay ? `${artistDisplay} - ${cleanVideoTitle(video.title)}` : cleanVideoTitle(video.title)}
         </div>
         <div style={{ 
           fontSize: '14px', 

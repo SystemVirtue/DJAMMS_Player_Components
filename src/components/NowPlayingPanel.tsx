@@ -1,6 +1,7 @@
 // components/NowPlayingPanel.tsx
 import React from 'react';
 import { Video } from '../types';
+import { cleanVideoTitle } from '../utils/playlistHelpers';
 
 interface NowPlayingPanelProps {
   currentVideo: Video | null;
@@ -50,7 +51,7 @@ export const NowPlayingPanel: React.FC<NowPlayingPanelProps> = ({
       {/* Now Playing Display */}
       <div style={{ marginBottom: '20px' }}>
         <div style={{ fontSize: '16px', marginBottom: '10px', fontWeight: 'bold' }}>
-          Now Playing: {currentVideo ? `${currentVideo.title}${currentVideo.artist !== 'Unknown Artist' ? ` by ${currentVideo.artist}` : ''}` : 'None'}
+          Now Playing: {currentVideo ? `${cleanVideoTitle(currentVideo.title)}${currentVideo.artist !== 'Unknown Artist' ? ` by ${currentVideo.artist}` : ''}` : 'None'}
         </div>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <div style={{ flex: 1, height: '10px', background: '#ddd', borderRadius: '5px', marginRight: '10px' }}>
@@ -93,7 +94,7 @@ export const NowPlayingPanel: React.FC<NowPlayingPanelProps> = ({
         </select>
         {playlist.length > 0 && (
           <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
-            {playlist.length} videos | Current: {playlist[currentIndex] ? `${playlist[currentIndex].title}${playlist[currentIndex].artist !== 'Unknown Artist' ? ` by ${playlist[currentIndex].artist}` : ''}` : 'None'}
+            {playlist.length} videos | Current: {playlist[currentIndex] ? `${cleanVideoTitle(playlist[currentIndex].title)}${playlist[currentIndex].artist !== 'Unknown Artist' ? ` by ${playlist[currentIndex].artist}` : ''}` : 'None'}
           </div>
         )}
       </div>

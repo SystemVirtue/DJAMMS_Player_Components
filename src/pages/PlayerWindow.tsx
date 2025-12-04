@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Video } from '../types';
 import { localSearchService, SearchResult, getSupabaseService } from '../services';
-import { getPlaylistDisplayName, getDisplayArtist } from '../utils/playlistHelpers';
+import { getPlaylistDisplayName, getDisplayArtist, cleanVideoTitle } from '../utils/playlistHelpers';
 import { useSupabase } from '../hooks/useSupabase';
 import { QueueVideoItem } from '../types/supabase';
 
@@ -1305,7 +1305,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       {showQueuePlayDialog && queueVideoToPlay && (
         <div className="dialog-overlay" onClick={() => { setShowQueuePlayDialog(false); setQueueVideoToPlay(null); }}>
           <div className="dialog-box dialog-box-wide" onClick={(e) => e.stopPropagation()}>
-            <h3>{queueVideoToPlay.video.title}{queueVideoToPlay.video.artist ? ` - ${getDisplayArtist(queueVideoToPlay.video.artist)}` : ''}</h3>
+            <h3>{cleanVideoTitle(queueVideoToPlay.video.title)}{queueVideoToPlay.video.artist ? ` - ${getDisplayArtist(queueVideoToPlay.video.artist)}` : ''}</h3>
             <div className="dialog-actions dialog-actions-grid">
               <button className="dialog-btn dialog-btn-primary" onClick={confirmQueuePlay}>▶ PLAY NOW</button>
               <button className="dialog-btn dialog-btn-secondary" onClick={moveQueueVideoToNext}>⏭ PLAY NEXT</button>
@@ -1345,8 +1345,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           <div className="popover-content">
             <div className="popover-title">
               {getDisplayArtist(popoverVideo.artist) 
-                ? `${getDisplayArtist(popoverVideo.artist)} - ${popoverVideo.title}` 
-                : popoverVideo.title}
+                ? `${getDisplayArtist(popoverVideo.artist)} - ${cleanVideoTitle(popoverVideo.title)}` 
+                : cleanVideoTitle(popoverVideo.title)}
             </div>
             <div className="popover-subtitle">Add to Priority Queue?</div>
           </div>
@@ -1423,7 +1423,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             <div className="priority-queue-ticker">
               {priorityQueue.map((item, idx) => (
                 <span key={`${item.id}-${idx}`} className="priority-queue-item">
-                  {item.title}{getDisplayArtist(item.artist) ? ` - ${getDisplayArtist(item.artist)}` : ''}
+                  {cleanVideoTitle(item.title)}{getDisplayArtist(item.artist) ? ` - ${getDisplayArtist(item.artist)}` : ''}
                 </span>
               ))}
             </div>
@@ -1510,7 +1510,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     </div>
                     <div className="now-playing-content">
                       <div className="now-playing-info">
-                        <div className="now-playing-title">{currentVideo.title}</div>
+                        <div className="now-playing-title">{cleanVideoTitle(currentVideo.title)}</div>
                         <div className="now-playing-artist">{getDisplayArtist(currentVideo.artist)}</div>
                         <div className="now-playing-playlist">{currentVideo.playlistDisplayName || getPlaylistDisplayName(currentVideo.playlist || '')}</div>
                       </div>
@@ -1547,7 +1547,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                             className="priority-item"
                           >
                             <td className="col-index">P{index + 1}</td>
-                            <td className="col-title">{track.title}</td>
+                            <td className="col-title">{cleanVideoTitle(track.title)}</td>
                             <td>{getDisplayArtist(track.artist)}</td>
                             <td>{track.duration || '—'}</td>
                             <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
@@ -1608,7 +1608,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                             onClick={() => handleQueueItemClick(originalIndex)}
                           >
                             <td>{displayIndex + 1}</td>
-                            <td className="col-title">{track.title}</td>
+                            <td className="col-title">{cleanVideoTitle(track.title)}</td>
                             <td>{getDisplayArtist(track.artist)}</td>
                             <td>{track.duration || '—'}</td>
                             <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
@@ -1718,7 +1718,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                       searchResults.map((track, index) => (
                         <tr key={`${track.id}-${index}`} onClick={(e) => handleVideoClick(track, e)} style={{ cursor: 'pointer' }}>
                           <td>{index + 1}</td>
-                          <td className="col-title">{track.title}</td>
+                          <td className="col-title">{cleanVideoTitle(track.title)}</td>
                           <td>{getDisplayArtist(track.artist)}</td>
                           <td>{track.duration || '—'}</td>
                           <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>

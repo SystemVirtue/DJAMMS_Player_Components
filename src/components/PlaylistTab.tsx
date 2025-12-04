@@ -1,6 +1,7 @@
 // components/PlaylistTab.tsx
 import React from 'react';
 import { Video } from '../types';
+import { cleanVideoTitle } from '../utils/playlistHelpers';
 
 interface PlaylistTabProps {
   playlist: Video[];
@@ -62,7 +63,7 @@ export const PlaylistTab: React.FC<PlaylistTabProps> = ({
             }}
           >
             <span style={{ flex: 1 }}>
-              {originalIndex + 1}. {video.title}{video.artist !== 'Unknown Artist' ? ` by ${video.artist}` : ''}
+              {originalIndex + 1}. {cleanVideoTitle(video.title)}{video.artist !== 'Unknown Artist' ? ` by ${video.artist}` : ''}
               {currentVideo && video.id === currentVideo.id && (
                 <span style={{ color: '#1976d2', fontWeight: 'bold', marginLeft: '8px' }}>
                   (NOW PLAYING)

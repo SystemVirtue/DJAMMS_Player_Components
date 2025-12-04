@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { DJAMMSPlayer } from './DJAMMSPlayer';
 import { Video } from '../types';
+import { cleanVideoTitle } from '../utils/playlistHelpers';
 
 // Overlay settings type
 interface OverlaySettings {
@@ -242,7 +243,7 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
             marginBottom: '6px',
             textShadow: '0 2px 4px rgba(0,0,0,0.3)'
           }}>
-            {video.title || 'Unknown Title'}
+            {cleanVideoTitle(video.title)}
           </div>
           {video.artist && video.artist !== 'Unknown Artist' && (
             <div style={{ 
@@ -303,7 +304,7 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
             fontSize: '14px',
             color: '#ddd'
           }}>
-            {nextVideo.title}
+            {cleanVideoTitle(nextVideo.title)}
             {nextVideo.artist && nextVideo.artist !== 'Unknown Artist' && (
               <span style={{ color: '#888' }}> — {nextVideo.artist}</span>
             )}

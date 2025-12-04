@@ -1,6 +1,7 @@
 // components/NowPlayingOverlay.tsx
 import React from 'react';
 import { Video } from '../types';
+import { cleanVideoTitle } from '../utils/playlistHelpers';
 
 interface NowPlayingOverlayProps {
   video: Video | null;
@@ -40,7 +41,7 @@ export const NowPlayingOverlay: React.FC<NowPlayingOverlayProps> = ({
       }}
     >
       <div className="now-playing-title" style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '5px' }}>
-        {video.title || 'Unknown Title'}
+        {cleanVideoTitle(video.title)}
       </div>
       {video.artist && video.artist !== 'Unknown Artist' && (
         <div className="now-playing-artist" style={{ fontSize: '14px', color: '#ccc', marginBottom: '10px' }}>

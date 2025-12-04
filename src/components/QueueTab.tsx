@@ -2,6 +2,7 @@
 import React from 'react';
 import { Video } from '../types';
 import { formatTime } from '../utils/time';
+import { cleanVideoTitle } from '../utils/playlistHelpers';
 
 interface QueueTabProps {
   queue: Video[];
@@ -77,7 +78,7 @@ export const QueueTab: React.FC<QueueTabProps> = ({
               </div>
               
               <div className="queue-item-info">
-                <div className="queue-item-title">{video.title}</div>
+                <div className="queue-item-title">{cleanVideoTitle(video.title)}</div>
                 <div className="queue-item-artist">{video.artist || 'Unknown Artist'}</div>
               </div>
               
