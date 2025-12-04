@@ -47,13 +47,12 @@ const getVideoPlaylist = (video: SupabaseLocalVideo): string => {
   return metadata?.playlist || '';
 };
 
-type TabId = 'queue' | 'search' | 'browse' | 'settings' | 'tools';
+type TabId = 'queue' | 'search' | 'settings' | 'tools';
 
 // Navigation items configuration
 const navItems: { id: TabId; icon: string; label: string }[] = [
   { id: 'queue', icon: 'queue_music', label: 'Queue' },
   { id: 'search', icon: 'search', label: 'Search' },
-  { id: 'browse', icon: 'library_music', label: 'Browse' },
   { id: 'settings', icon: 'settings', label: 'Settings' },
   { id: 'tools', icon: 'build', label: 'Tools' },
 ];
@@ -189,10 +188,7 @@ export default function App() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchLimit, setSearchLimit] = useState(100);
   const [searchTotalCount, setSearchTotalCount] = useState(0);
-  const [browseQuery, setBrowseQuery] = useState('');
-  const [browseScope, setBrowseScope] = useState('all');
-  const [browseSort, setBrowseSort] = useState('az');
-  const [allVideos, setAllVideos] = useState<SupabaseLocalVideo[]>([]);
+  const [allVideos, setAllVideos] = useState<SupabaseLocalVideo[]>();
 
   // UI state
   const [currentTab, setCurrentTab] = useState<TabId>('queue');
@@ -370,20 +366,29 @@ export default function App() {
     };
   }, []);
 
-  // Search videos when query changes
+  // Search videos when query changes, or show all videos when empty
   useEffect(() => {
     const performSearch = async () => {
-      if (!searchQuery.trim()) {
-        setSearchResults([]);
-        setSearchTotalCount(0);
-        return;
-      }
       setSearchLoading(true);
       try {
-        const results = await searchLocalVideos(searchQuery, DEFAULT_PLAYER_ID, searchLimit);
-        setSearchResults(results);
-        // If we got exactly searchLimit results, there may be more
-        setSearchTotalCount(results.length >= searchLimit ? results.length + 1 : results.length);
+        if (!searchQuery.trim()) {
+          // When no query, show all videos (browse mode)
+          if (allVideos && allVideos.length > 0) {
+            setSearchResults(allVideos);
+            setSearchTotalCount(allVideos.length);
+          } else {
+            // Fetch all videos if not loaded yet
+            const videos = await getAllLocalVideos();
+            setSearchResults(videos);
+            setSearchTotalCount(videos.length);
+          }
+        } else {
+          // Search mode
+          const results = await searchLocalVideos(searchQuery, DEFAULT_PLAYER_ID, searchLimit);
+          setSearchResults(results);
+          // If we got exactly searchLimit results, there may be more
+          setSearchTotalCount(results.length >= searchLimit ? results.length + 1 : results.length);
+        }
       } catch (error) {
         console.error('Search failed:', error);
         setSearchResults([]);
@@ -395,7 +400,7 @@ export default function App() {
     
     const debounce = setTimeout(performSearch, 300);
     return () => clearTimeout(debounce);
-  }, [searchQuery, searchLimit]);
+  }, [searchQuery, searchLimit, allVideos]);
 
   // Shuffle helper
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -572,8 +577,8 @@ export default function App() {
   // Playlist functions
   const handlePlaylistClick = (playlistName: string) => {
     setSelectedPlaylist(playlistName);
-    setCurrentTab('browse');
-    setBrowseScope('playlist');
+    setCurrentTab('search');
+    setSearchScope('playlist');
   };
 
   const handlePlayButtonClick = (e: React.MouseEvent, playlistName: string) => {
@@ -594,22 +599,14 @@ export default function App() {
 
   const handleTabChange = (tab: TabId) => {
     setCurrentTab(tab);
-    if (tab === 'browse') {
-      setBrowseScope('all');
-      setSelectedPlaylist(null);
-    } else {
+    if (tab !== 'search') {
       setSelectedPlaylist(null);
     }
   };
 
-  const handleScopeChange = (scope: string, isBrowse: boolean) => {
-    if (isBrowse) {
-      setBrowseScope(scope);
-      if (scope !== 'playlist') setSelectedPlaylist(null);
-    } else {
-      setSearchScope(scope);
-      if (scope !== 'playlist') setSelectedPlaylist(null);
-    }
+  const handleScopeChange = (scope: string) => {
+    setSearchScope(scope);
+    if (scope !== 'playlist') setSelectedPlaylist(null);
   };
 
   // Filtering and sorting
@@ -658,20 +655,8 @@ export default function App() {
   };
 
   const getSearchResults = (): SupabaseLocalVideo[] => {
-    if (!searchQuery.trim()) return [];
     let results = filterByScope(searchResults, searchScope);
     return sortResults(results, searchSort);
-  };
-
-  const getBrowseResults = (): SupabaseLocalVideo[] => {
-    let results = filterByScope(allVideos, browseScope);
-    if (browseQuery.trim()) {
-      results = results.filter(video =>
-        video.title?.toLowerCase().includes(browseQuery.toLowerCase()) ||
-        video.artist?.toLowerCase().includes(browseQuery.toLowerCase())
-      );
-    }
-    return sortResults(results, browseSort);
   };
 
   // Queue management
@@ -1075,18 +1060,16 @@ export default function App() {
                   )}
                 </div>
                 <div className="search-filters">
-                  <select className="filter-select" value={searchScope} onChange={(e) => handleScopeChange(e.target.value, false)}>
+                  <select className="filter-select" value={searchScope} onChange={(e) => handleScopeChange(e.target.value)}>
                     <option value="all">All Music</option>
+                    {selectedPlaylist && <option value="playlist">Selected Playlist: {getPlaylistDisplayName(selectedPlaylist)}</option>}
                     <option value="no-karaoke">Exclude Karaoke</option>
                     <option value="karaoke">Karaoke Only</option>
-                    <option value="queue">Current Queue</option>
-                    <option value="playlist">Selected Playlist</option>
                   </select>
                   <select className="filter-select" value={searchSort} onChange={(e) => setSearchSort(e.target.value)}>
-                    <option value="relevance">Relevance</option>
+                    <option value="az">A-Z</option>
                     <option value="artist">Artist</option>
                     <option value="title">Title</option>
-                    <option value="az">A-Z</option>
                   </select>
                 </div>
               </div>
@@ -1105,10 +1088,6 @@ export default function App() {
                     {searchLoading && searchResults.length === 0 ? (
                       <tr className="empty-state">
                         <td colSpan={5}>Loading...</td>
-                      </tr>
-                    ) : !searchQuery.trim() ? (
-                      <tr className="empty-state">
-                        <td colSpan={5}>Start typing to search...</td>
                       </tr>
                     ) : getSearchResults().length === 0 ? (
                       <tr className="empty-state">
@@ -1142,69 +1121,6 @@ export default function App() {
                     </span>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {/* Browse Tab */}
-          {currentTab === 'browse' && (
-            <div className="tab-content active">
-              <div className="search-header">
-                <div className="search-input-container">
-                  <span className="material-symbols-rounded search-icon">search</span>
-                  <input
-                    type="text"
-                    placeholder="Filter current playlist…"
-                    className="search-input"
-                    value={browseQuery}
-                    onChange={(e) => setBrowseQuery(e.target.value)}
-                  />
-                </div>
-                <div className="search-filters">
-                  <select className="filter-select" value={browseScope} onChange={(e) => handleScopeChange(e.target.value, true)}>
-                    <option value="all">All Music</option>
-                    {selectedPlaylist && <option value="playlist">Selected Playlist: {getPlaylistDisplayName(selectedPlaylist)}</option>}
-                    <option value="no-karaoke">Exclude Karaoke</option>
-                    <option value="karaoke">Karaoke Only</option>
-                  </select>
-                  <select className="filter-select" value={browseSort} onChange={(e) => setBrowseSort(e.target.value)}>
-                    <option value="az">A-Z</option>
-                    <option value="artist">Artist</option>
-                    <option value="title">Title</option>
-                  </select>
-                </div>
-              </div>
-              <div className="table-container">
-                <table className="media-table">
-                  <thead>
-                    <tr>
-                      <th className="col-index">#</th>
-                      <th className="col-title">Title</th>
-                      <th className="col-artist">Artist</th>
-                      <th className="col-duration">Duration</th>
-                      <th className="col-playlist">Playlist</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {getBrowseResults().length === 0 ? (
-                      <tr className="empty-state">
-                        <td colSpan={5}>
-                          {browseScope === 'playlist' && selectedPlaylist ? 'No tracks in this playlist' : 'No tracks found'}
-                        </td>
-                      </tr>
-                    ) : (
-                      getBrowseResults().map((track, index) => (
-                        <tr key={`${track.id}-${index}`} onClick={(e) => handleVideoClick(track, e)} style={{ cursor: 'pointer' }}>
-                          <td>{index + 1}</td>
-                          <td className="col-title">{track.title}</td>
-                          <td>{getDisplayArtist(track.artist)}</td>
-                          <td>{track.duration || '—'}</td>
-                          <td>{getPlaylistDisplayName(getVideoPlaylist(track))}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
               </div>
             </div>
           )}
