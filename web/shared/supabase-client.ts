@@ -74,6 +74,72 @@ connectionMonitor.subscribe((status) => {
   }
 });
 
+// ==================== Persistent Command Channel ====================
+// Reuse channels to avoid subscription overhead per command
+
+interface ChannelState {
+  channel: RealtimeChannel;
+  isReady: boolean;
+  readyPromise: Promise<void>;
+}
+
+const commandChannels: Map<string, ChannelState> = new Map();
+
+/**
+ * Get or create a persistent command channel for a player
+ * Reuses existing channels to avoid subscription overhead
+ */
+async function getCommandChannel(playerId: string): Promise<RealtimeChannel> {
+  const channelName = `djamms-commands:${playerId}`;
+  
+  let state = commandChannels.get(channelName);
+  
+  if (state && state.isReady) {
+    return state.channel;
+  }
+  
+  if (state) {
+    // Channel exists but still connecting - wait for it
+    await state.readyPromise;
+    return state.channel;
+  }
+  
+  // Create new channel
+  const channel = supabase.channel(channelName);
+  
+  const readyPromise = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      commandChannels.delete(channelName);
+      reject(new Error('Channel subscribe timeout'));
+    }, 3000);
+    
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        clearTimeout(timeout);
+        const existingState = commandChannels.get(channelName);
+        if (existingState) {
+          existingState.isReady = true;
+        }
+        console.log(`[SupabaseClient] ✅ Command channel ready: ${channelName}`);
+        resolve();
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        clearTimeout(timeout);
+        commandChannels.delete(channelName);
+        reject(new Error(`Channel error: ${status}`));
+      } else if (status === 'CLOSED') {
+        // Channel was closed - remove from cache so it can be recreated
+        commandChannels.delete(channelName);
+      }
+    });
+  });
+  
+  state = { channel, isReady: false, readyPromise };
+  commandChannels.set(channelName, state);
+  
+  await readyPromise;
+  return channel;
+}
+
 // ==================== Player State Functions ====================
 
 /**
@@ -157,36 +223,10 @@ export async function sendCommandAndWait(
   timeoutMs: number = 5000
 ): Promise<CommandResult> {
   try {
-    // 1. Insert command and get the ID (for persistence/audit)
-    const { data, error: insertError } = await supabase
-      .from('admin_commands')
-      .insert({
-        player_id: playerId,
-        command_type: commandType,
-        command_data: commandData,
-        issued_by: issuedBy,
-        status: 'pending',
-        issued_at: new Date().toISOString()
-      })
-      .select('id')
-      .single();
-
-    if (insertError) {
-      // Handle case where table doesn't exist yet
-      if (insertError.code === '42P01' || insertError.message?.includes('does not exist')) {
-        console.warn('[SupabaseClient] Commands table not yet created - using local fallback');
-        window.dispatchEvent(new CustomEvent('djamms-command', {
-          detail: { commandType, commandData, issuedBy, playerId }
-        }));
-        return { success: true, error: 'Using local fallback (no table)' };
-      }
-      console.error('[SupabaseClient] Error inserting command:', insertError);
-      return { success: false, error: insertError.message };
-    }
-
-    const commandId = data.id;
-
-    // 2. Build the command object
+    // Generate command ID upfront so we can broadcast immediately
+    const commandId = crypto.randomUUID();
+    
+    // 1. Build the command object FIRST
     const command: SupabaseCommand = {
       id: commandId,
       player_id: playerId,
@@ -200,44 +240,37 @@ export async function sendCommandAndWait(
       created_at: new Date().toISOString()
     };
 
-    // 3. Broadcast the command immediately
-    // Use a unique channel name with timestamp to avoid conflicts
-    const channelName = `djamms-commands:${playerId}`;
-    const commandChannel = supabase.channel(channelName);
-    
-    console.log(`[SupabaseClient] 📤 Subscribing to command channel: ${channelName}`);
-    
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Channel subscribe timeout')), 3000);
-      commandChannel.subscribe((status) => {
-        console.log(`[SupabaseClient] Command channel status: ${status}`);
-        if (status === 'SUBSCRIBED') {
-          clearTimeout(timeout);
-          resolve();
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          clearTimeout(timeout);
-          reject(new Error(`Channel error: ${status}`));
-        }
-      });
-    });
-
+    // 2. Broadcast using persistent channel (no subscription overhead)
     console.log(`[SupabaseClient] 📤 Broadcasting command: ${commandType} to player: ${playerId}`);
     
-    const sendResult = await commandChannel.send({
+    const commandChannel = await getCommandChannel(playerId);
+    
+    await commandChannel.send({
       type: 'broadcast',
       event: 'command',
       payload: { command, timestamp: new Date().toISOString() }
     });
     
-    console.log(`[SupabaseClient] Broadcast send result:`, sendResult);
+    console.log(`[SupabaseClient] ✅ Command ${commandType} broadcast sent (${commandId})`);
 
-    // Wait a moment before unsubscribing to ensure message is delivered
-    await new Promise(resolve => setTimeout(resolve, 200));
-    await commandChannel.unsubscribe();
+    // 3. Insert to database for persistence/audit (fire-and-forget, don't block)
+    supabase
+      .from('admin_commands')
+      .insert({
+        id: commandId,
+        player_id: playerId,
+        command_type: commandType,
+        command_data: commandData,
+        issued_by: issuedBy,
+        status: 'pending',
+        issued_at: new Date().toISOString()
+      })
+      .then(({ error }) => {
+        if (error && error.code !== '42P01') {
+          console.warn('[SupabaseClient] DB insert failed (command already broadcast):', error.message);
+        }
+      });
 
-    // 4. For now, assume success after broadcast (we can add ack later if needed)
-    // The command was inserted to DB and broadcast - Electron will pick it up
-    console.log(`[SupabaseClient] ✅ Command ${commandType} sent successfully (${commandId})`);
     return { success: true, commandId };
 
   } catch (err) {
@@ -266,7 +299,7 @@ export const blockingCommands = {
 
 /**
  * Insert a command to be executed by the Electron player (fire-and-forget)
- * Inserts to database for persistence and broadcasts for instant delivery
+ * Broadcasts using persistent channel for instant delivery, then persists to database
  */
 export async function insertCommand(
   commandType: CommandType,
@@ -275,53 +308,10 @@ export async function insertCommand(
   playerId: string = DEFAULT_PLAYER_ID
 ): Promise<boolean> {
   try {
-    // 1. Insert to database for persistence/audit
-    const { data, error } = await supabase
-      .from('admin_commands')
-      .insert({
-        player_id: playerId,
-        command_type: commandType,
-        command_data: commandData,
-        issued_by: issuedBy,
-        status: 'pending',
-        issued_at: new Date().toISOString()
-      })
-      .select('id')
-      .single();
-
-    if (error) {
-      // Handle case where table doesn't exist yet
-      if (error.code === '42P01' || error.message?.includes('does not exist')) {
-        console.warn('[SupabaseClient] Commands table not yet created in Supabase');
-        // Fallback: store command locally for Electron to pick up
-        window.dispatchEvent(new CustomEvent('djamms-command', {
-          detail: { commandType, commandData, issuedBy, playerId }
-        }));
-        return true;
-      }
-      console.error('[SupabaseClient] Error inserting command:', error);
-      return false;
-    }
-
-    // 2. Broadcast for instant delivery
-    const commandId = data?.id || crypto.randomUUID();
-    const channelName = `djamms-commands:${playerId}`;
-    const commandChannel = supabase.channel(channelName);
+    // Generate ID upfront for broadcast
+    const commandId = crypto.randomUUID();
     
-    // Wait for subscription to be ready
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Channel subscribe timeout')), 3000);
-      commandChannel.subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          clearTimeout(timeout);
-          resolve();
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          clearTimeout(timeout);
-          reject(new Error(`Channel error: ${status}`));
-        }
-      });
-    });
-    
+    // 1. Build command object
     const command: SupabaseCommand = {
       id: commandId,
       player_id: playerId,
@@ -335,18 +325,37 @@ export async function insertCommand(
       created_at: new Date().toISOString()
     };
     
+    // 2. Broadcast using persistent channel (no subscription overhead)
     console.log(`[SupabaseClient] 📤 Broadcasting command: ${commandType} to player: ${playerId}`);
-    const sendResult = await commandChannel.send({
+    
+    const commandChannel = await getCommandChannel(playerId);
+    
+    await commandChannel.send({
       type: 'broadcast',
       event: 'command',
       payload: { command, timestamp: new Date().toISOString() }
     });
     
-    console.log(`[SupabaseClient] Broadcast send result:`, sendResult);
-    
-    // Wait a moment before unsubscribing to ensure message is delivered
-    await new Promise(resolve => setTimeout(resolve, 200));
-    await commandChannel.unsubscribe();
+    console.log(`[SupabaseClient] ✅ Command ${commandType} broadcast sent`);
+
+    // 3. Insert to database for persistence (fire-and-forget, don't block)
+    supabase
+      .from('admin_commands')
+      .insert({
+        id: commandId,
+        player_id: playerId,
+        command_type: commandType,
+        command_data: commandData,
+        issued_by: issuedBy,
+        status: 'pending',
+        issued_at: new Date().toISOString()
+      })
+      .then(({ error }) => {
+        if (error && error.code !== '42P01') {
+          console.warn('[SupabaseClient] DB insert failed:', error.message);
+        }
+      });
+
     return true;
   } catch (err) {
     console.error('[SupabaseClient] Exception inserting command:', err);

@@ -411,14 +411,14 @@ class SupabaseService {
       });
 
     // Delay initial pending commands check to let Broadcast handle immediate delivery
-    // This prevents race condition where both Broadcast and poll process the same command
+    // Reduced from 3s to 500ms - deduplication prevents race conditions
     setTimeout(async () => {
       await this.processPendingCommands();
-    }, 3000);
+    }, 500);
     
-    // Start periodic poll as fallback (every 10 seconds) with initial delay
+    // Start periodic poll as fallback with minimal delay
     // This is a safety net in case Broadcast misses messages
-    setTimeout(() => this.startCommandPoll(), 5000);
+    setTimeout(() => this.startCommandPoll(), 1000);
   }
 
   /**
@@ -426,10 +426,10 @@ class SupabaseService {
    * This is a safety net in case Broadcast messages are missed
    */
   private startCommandPoll(): void {
-    // Poll every 10 seconds (not aggressive, just a safety net)
+    // Poll every 5 seconds for faster fallback recovery
     this.commandPollInterval = setInterval(async () => {
       await this.processPendingCommands();
-    }, 10000);
+    }, 5000);
   }
 
   /**
@@ -500,11 +500,11 @@ class SupabaseService {
         console.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
       }
 
-      // Mark command as executed in database
-      await this.markCommandExecuted(command.id, true);
+      // Mark command as executed in database (fire-and-forget)
+      this.markCommandExecuted(command.id, true);
     } catch (error) {
       console.error(`[SupabaseService] ❌ Error processing command ${command.id}:`, error);
-      await this.markCommandExecuted(command.id, false, String(error));
+      this.markCommandExecuted(command.id, false, String(error));
     } finally {
       // Remove from processing set (but keep in processed set to prevent re-execution)
       this.processingCommandIds.delete(command.id);
@@ -513,50 +513,31 @@ class SupabaseService {
 
   /**
    * Mark a command as executed or failed
-   * Also sends Broadcast acknowledgment for instant feedback to Web Admin/Kiosk
+   * Updates database status for audit trail (fire-and-forget, non-blocking)
    */
-  private async markCommandExecuted(
+  private markCommandExecuted(
     commandId: string, 
     success: boolean, 
     errorMessage?: string
-  ): Promise<void> {
+  ): void {
     if (!this.client) return;
 
     console.log(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
 
-    // 1. Send Broadcast acknowledgment (instant feedback)
-    try {
-      const ackChannel = this.client.channel(`djamms-ack:${commandId}`);
-      await ackChannel.subscribe();
-      
-      console.log(`[SupabaseService] 📤 Sending ack via Broadcast for command ${commandId}`);
-      await ackChannel.send({
-        type: 'broadcast',
-        event: 'ack',
-        payload: { success, error: errorMessage }
-      });
-      
-      // Small delay before unsubscribing to ensure message is sent
-      setTimeout(() => ackChannel.unsubscribe(), 100);
-    } catch (ackError) {
-      console.warn('[SupabaseService] Failed to send broadcast ack:', ackError);
-    }
-
-    // 2. Update database (for persistence/audit)
-    const { error } = await this.client
+    // Update database (fire-and-forget for minimal latency)
+    this.client
       .from('admin_commands')
       .update({
         status: success ? 'executed' : 'failed',
         executed_at: new Date().toISOString(),
         execution_result: success ? { success: true } : { error: errorMessage }
       })
-      .eq('id', commandId);
-
-    if (error) {
-      console.error('[SupabaseService] Error marking command as executed:', error);
-    } else {
-      console.log(`[SupabaseService] ✅ Command ${commandId} marked as ${success ? 'executed' : 'failed'}`);
-    }
+      .eq('id', commandId)
+      .then(({ error }) => {
+        if (error) {
+          console.warn('[SupabaseService] Error marking command as executed:', error.message);
+        }
+      });
   }
 
   /**
