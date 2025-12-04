@@ -64,6 +64,7 @@ class SupabaseService {
   private isInitialized = false;
   private isOnline = false;
   private lastSyncedState: Partial<SupabasePlayerState> | null = null;
+  private lastSyncKey: string | null = null; // For deduplication of identical syncs
 
   private constructor() {
     // Private constructor for singleton
@@ -322,6 +323,20 @@ class SupabaseService {
       if (Object.keys(updateData).length <= 1) {
         return; // Only last_updated, skip
       }
+
+      // Check if this update is identical to the last one (skip duplicate syncs)
+      const updateKey = JSON.stringify({
+        now_playing: updateData.now_playing_video?.title,
+        is_playing: updateData.is_playing,
+        queue_length: updateData.active_queue?.length,
+        queue_index: updateData.queue_index,
+        priority_length: updateData.priority_queue?.length
+      });
+      
+      if (this.lastSyncKey === updateKey) {
+        return; // Skip duplicate update
+      }
+      this.lastSyncKey = updateKey;
 
       console.log('[SupabaseService] Syncing state to Supabase:', {
         now_playing: updateData.now_playing_video?.title,

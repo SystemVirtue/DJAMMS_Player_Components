@@ -200,7 +200,8 @@ function FullscreenApp() {
     }
   }, [isElectron])
 
-  // Sync state to Supabase when key values change
+  // Sync playback state to Supabase when key values change
+  // NOTE: Queue data is synced by PlayerWindow (source of truth) - don't sync here to avoid overwrites
   useEffect(() => {
     if (supabaseReady) {
       syncState({
@@ -208,12 +209,11 @@ function FullscreenApp() {
         isPlaying,
         currentVideo: video,
         currentPosition: currentTime,
-        volume,
-        activeQueue,
-        priorityQueue
+        volume
+        // activeQueue and priorityQueue intentionally omitted - PlayerWindow is source of truth
       })
     }
-  }, [supabaseReady, isPlaying, video, volume, activeQueue, priorityQueue, syncState])
+  }, [supabaseReady, isPlaying, video, volume, syncState])
 
   // Handle video end - notify Main Window to play next track
   const handleVideoEnd = () => {
@@ -234,15 +234,8 @@ function FullscreenApp() {
 
   // Handle state changes - sync back to Main Window for UI display
   const handleStateChange = (state: { currentVideo: Video | null, currentTime: number, duration: number, isPlaying: boolean }) => {
-    // Sync to Supabase (debounced internally)
-    if (supabaseReady) {
-      syncState({
-        currentVideo: state.currentVideo,
-        currentPosition: state.currentTime,
-        isPlaying: state.isPlaying,
-        status: state.isPlaying ? 'playing' : (state.currentVideo ? 'paused' : 'idle')
-      })
-    }
+    // Note: Don't sync to Supabase here - PlayerWindow handles Supabase sync
+    // This prevents partial updates that overwrite queue data
     
     // Send state to Main Window via IPC
     if (isElectron) {
