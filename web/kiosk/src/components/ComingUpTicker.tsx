@@ -35,36 +35,42 @@ export function ComingUpTicker({
   return (
     <div className="fixed bottom-0 left-0 right-0 z-20 bg-black/80 border-t-2 border-yellow-400/50 py-3 overflow-hidden">
       <div className="flex items-center px-4">
-        <span className="text-amber-400 font-bold text-sm uppercase tracking-wide mr-4 flex-shrink-0">
-          Coming Up:
+        <span className="text-amber-400 font-bold text-sm tracking-wide mr-4 flex-shrink-0">
+          Coming up next ...
         </span>
         
         <div className="ticker-container flex-1">
           <div className="ticker-content">
-            {/* Duplicate items for seamless loop */}
-            {[...displayItems, ...displayItems].map((item, index) => {
-              const artist = getDisplayArtist(item.artist);
-              return (
-                <div 
-                  key={`${item.id}-${index}`}
-                  className={`ticker-item ${item.isPriority ? 'ticker-item-priority' : ''}`}
-                >
-                  {item.isPriority ? (
-                    <Star size={14} className="text-amber-400 fill-amber-400" />
-                  ) : (
-                    <Music size={14} className="text-gray-400" />
-                  )}
-                  <span className="text-white text-sm font-medium">
-                    {item.title}
-                  </span>
-                  {artist && (
-                    <span className="text-gray-400 text-sm">
-                      — {artist}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+            {/* Duplicate items for seamless loop, with spacer between sets */}
+            {[0, 1].map((setIndex) => (
+              <div key={setIndex} className="inline-flex items-center gap-8">
+                {displayItems.map((item, index) => {
+                  const artist = getDisplayArtist(item.artist);
+                  return (
+                    <div 
+                      key={`${item.id}-${setIndex}-${index}`}
+                      className={`ticker-item ${item.isPriority ? 'ticker-item-priority' : ''}`}
+                    >
+                      {item.isPriority ? (
+                        <Star size={14} className="text-amber-400 fill-amber-400" />
+                      ) : (
+                        <Music size={14} className="text-gray-400" />
+                      )}
+                      <span className="text-white text-sm font-medium">
+                        {item.title}
+                      </span>
+                      {artist && (
+                        <span className="text-gray-400 text-sm">
+                          — {artist}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                {/* Spacer after each set to show clear separation */}
+                <div className="w-32 flex-shrink-0" />
+              </div>
+            ))}
           </div>
         </div>
       </div>

@@ -223,13 +223,16 @@ export async function sendCommandAndWait(
 
     console.log(`[SupabaseClient] 📤 Broadcasting command: ${commandType} to player: ${playerId}`);
     
-    await commandChannel.send({
+    const sendResult = await commandChannel.send({
       type: 'broadcast',
       event: 'command',
       payload: { command, timestamp: new Date().toISOString() }
     });
+    
+    console.log(`[SupabaseClient] Broadcast send result:`, sendResult);
 
-    // Cleanup immediately after sending
+    // Wait a moment before unsubscribing to ensure message is delivered
+    await new Promise(resolve => setTimeout(resolve, 200));
     await commandChannel.unsubscribe();
 
     // 4. For now, assume success after broadcast (we can add ack later if needed)
@@ -333,12 +336,16 @@ export async function insertCommand(
     };
     
     console.log(`[SupabaseClient] 📤 Broadcasting command: ${commandType} to player: ${playerId}`);
-    await commandChannel.send({
+    const sendResult = await commandChannel.send({
       type: 'broadcast',
       event: 'command',
       payload: { command, timestamp: new Date().toISOString() }
     });
     
+    console.log(`[SupabaseClient] Broadcast send result:`, sendResult);
+    
+    // Wait a moment before unsubscribing to ensure message is delivered
+    await new Promise(resolve => setTimeout(resolve, 200));
     await commandChannel.unsubscribe();
     return true;
   } catch (err) {

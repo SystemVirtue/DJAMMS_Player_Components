@@ -51,6 +51,7 @@ class SupabaseService {
   private commandChannel: RealtimeChannel | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private stateSyncTimeout: ReturnType<typeof setTimeout> | null = null;
+  private commandPollInterval: ReturnType<typeof setInterval> | null = null;
   
   // Command handlers
   private commandHandlers: Map<CommandType, CommandHandler[]> = new Map();
@@ -129,6 +130,12 @@ class SupabaseService {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
+    }
+
+    // Stop command polling
+    if (this.commandPollInterval) {
+      clearInterval(this.commandPollInterval);
+      this.commandPollInterval = null;
     }
 
     // Cancel pending state sync
@@ -384,8 +391,22 @@ class SupabaseService {
         }
       });
 
-    // Also check for any pending commands that arrived while offline
+    // Check for any pending commands that arrived while offline
     await this.processPendingCommands();
+    
+    // Start periodic poll as fallback (every 10 seconds) in case Broadcast misses messages
+    this.startCommandPoll();
+  }
+
+  /**
+   * Start periodic polling for pending commands as a fallback mechanism
+   * This is a safety net in case Broadcast messages are missed
+   */
+  private startCommandPoll(): void {
+    // Poll every 10 seconds (not aggressive, just a safety net)
+    this.commandPollInterval = setInterval(async () => {
+      await this.processPendingCommands();
+    }, 10000);
   }
 
   /**
