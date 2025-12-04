@@ -3,6 +3,7 @@
 
 import type { QueueVideoItem } from '@shared/types';
 import { getDisplayArtist } from '@shared/supabase-client';
+import { cleanVideoTitle } from '@shared/video-utils';
 import { Star, Music } from 'lucide-react';
 
 interface ComingUpTickerProps {
@@ -57,7 +58,7 @@ export function ComingUpTicker({
                         <Music size={14} className="text-gray-400" />
                       )}
                       <span className="text-white text-sm font-medium">
-                        {item.title}
+                        {cleanVideoTitle(item.title)}
                       </span>
                       {artist && (
                         <span className="text-gray-400 text-sm">

@@ -4,6 +4,7 @@
 import { Music } from 'lucide-react';
 import type { NowPlayingVideo } from '@shared/types';
 import { getDisplayArtist } from '@shared/supabase-client';
+import { cleanVideoTitle } from '@shared/video-utils';
 
 interface NowPlayingProps {
   video: NowPlayingVideo | null;
@@ -27,7 +28,7 @@ export function NowPlaying({ video, isOnline }: NowPlayingProps) {
             {video ? (
               <>
                 <p className="text-white text-sm font-semibold truncate">
-                  {video.title}
+                  {cleanVideoTitle(video.title)}
                 </p>
                 {artist && (
                   <p className="text-gray-300 text-xs truncate">

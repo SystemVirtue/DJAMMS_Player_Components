@@ -10,6 +10,7 @@ import {
   blockingCommands,
   localVideoToQueueItem 
 } from '@shared/supabase-client';
+import { cleanVideoTitle } from '@shared/video-utils';
 import type { SupabaseLocalVideo, QueueVideoItem } from '@shared/types';
 
 interface SearchInterfaceProps {
@@ -175,7 +176,7 @@ export function SearchInterface({ onSongRequested, credits = 999 }: SearchInterf
             </h2>
             <div className="bg-slate-800/60 rounded-lg p-4 mb-6">
               <h3 className="text-lg font-semibold text-white">
-                {selectedVideo.title}
+                {cleanVideoTitle(selectedVideo.title)}
               </h3>
               {selectedVideo.artist && (
                 <p className="text-gray-400">{selectedVideo.artist}</p>

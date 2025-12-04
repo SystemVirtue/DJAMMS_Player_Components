@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { QueueVideoItem, SupabaseLocalVideo } from '@shared/types';
 import { searchLocalVideos, blockingCommands, localVideoToQueueItem } from '@shared/supabase-client';
+import { cleanVideoTitle } from '@shared/video-utils';
 import './JukeboxSearchMode.css';
 
 // Video background component with ping-pong looping
@@ -78,32 +79,6 @@ interface JukeboxSearchModeProps {
   creditCostPlayNow?: number;
   isFreePlay?: boolean;
 }
-
-// Clean title by removing YouTube video IDs and everything before the separator
-// Filename format: "[YouTube_ID] | Artist - Title" or "[YouTube_ID] · Artist - Title"
-// Separators: | (pipe), · (middle dot U+00B7), • (bullet U+2022)
-const cleanTitle = (title: string): string => {
-  if (!title) return 'Unknown';
-  
-  // First, check if there's a separator and strip everything before and including it
-  // Handles: [ID] | Artist - Title, [ID] · Artist - Title, [ID] • Artist - Title
-  const separatorPattern = / [|·•] /;
-  const separatorMatch = title.match(separatorPattern);
-  
-  if (separatorMatch && separatorMatch.index !== undefined) {
-    // Return everything AFTER the separator (and the space after it)
-    title = title.substring(separatorMatch.index + separatorMatch[0].length);
-  }
-  
-  // Also remove any remaining bracketed IDs (fallback for edge cases)
-  return title
-    .replace(/\s*\[[A-Za-z0-9_-]{10,15}\]\s*/g, ' ') // YouTube IDs are 11 chars
-    .replace(/\s*\[[^\]]{10,20}\]\s*/g, ' ') // Other bracketed IDs
-    .replace(/^\s*-\s*/, '') // Leading dash after ID removal
-    .replace(/\s*-\s*$/, '') // Trailing dash after ID removal
-    .replace(/\s+/g, ' ') // Collapse multiple spaces
-    .trim() || 'Unknown';
-};
 
 // Quick filter categories
 const QUICK_FILTERS = [
@@ -330,7 +305,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
               </div>
               <div className="now-playing-info">
                 <div className="now-playing-label">NOW PLAYING</div>
-                <div className="now-playing-title">{nowPlaying.title}</div>
+                <div className="now-playing-title">{cleanVideoTitle(nowPlaying.title)}</div>
                 <div className="now-playing-artist">{nowPlaying.artist || 'Unknown Artist'}</div>
               </div>
             </>
@@ -434,7 +409,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
                 </div>
                 
                 <div className="song-card-info">
-                  <h3 className="song-title">{cleanTitle(video.title)}</h3>
+                  <h3 className="song-title">{cleanVideoTitle(video.title)}</h3>
                   <p className="song-artist">{video.artist || 'Unknown Artist'}</p>
                   <span className="song-duration">{formatDuration(video.duration)}</span>
                 </div>
@@ -550,7 +525,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
               <span className="art-initial">{getInitial(selectedVideo.title)}</span>
             </div>
             <div className="modal-info">
-              <h2 className="modal-title">{cleanTitle(selectedVideo.title)}</h2>
+              <h2 className="modal-title">{cleanVideoTitle(selectedVideo.title)}</h2>
               <p className="modal-artist">{selectedVideo.artist || 'Unknown Artist'}</p>
             </div>
             <div className="modal-action">

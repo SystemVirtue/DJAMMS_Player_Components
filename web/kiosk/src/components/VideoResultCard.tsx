@@ -4,6 +4,7 @@
 import { Music, Clock } from 'lucide-react';
 import type { SupabaseLocalVideo } from '@shared/types';
 import { getDisplayArtist, getPlaylistDisplayName } from '@shared/supabase-client';
+import { cleanVideoTitle } from '@shared/video-utils';
 
 interface VideoResultCardProps {
   video: SupabaseLocalVideo;
@@ -35,8 +36,8 @@ export function VideoResultCard({ video, isSelected, onClick }: VideoResultCardP
       
       {/* Video info */}
       <div className="space-y-1">
-        <h3 className="font-semibold text-white truncate" title={video.title}>
-          {video.title}
+        <h3 className="font-semibold text-white truncate" title={cleanVideoTitle(video.title)}>
+          {cleanVideoTitle(video.title)}
         </h3>
         {artist && (
           <p className="text-sm text-gray-400 truncate" title={artist}>
