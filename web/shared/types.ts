@@ -63,8 +63,14 @@ export type CommandType =
   | 'queue_remove'
   | 'queue_clear'
   | 'queue_shuffle'
+  | 'queue_move'
   | 'settings_update'
-  | 'load_playlist';
+  | 'load_playlist'
+  | 'player_window_toggle'
+  | 'player_fullscreen_toggle'
+  | 'player_refresh'
+  | 'overlay_settings_update'
+  | 'kiosk_settings_update';
 
 export interface SupabaseCommand {
   id: string;

@@ -385,6 +385,44 @@ body {
   background-color: var(--accent-hover);
 }
 
+.dialog-btn-secondary {
+  background-color: #3ea6ff;
+  color: #000;
+}
+
+.dialog-btn-secondary:hover {
+  background-color: #65b8ff;
+}
+
+.dialog-btn-danger {
+  background-color: #dc3545;
+  color: #fff;
+}
+
+.dialog-btn-danger:hover {
+  background-color: #c82333;
+}
+
+.dialog-btn-warning {
+  background-color: #ff9500;
+  color: #000;
+}
+
+.dialog-btn-warning:hover {
+  background-color: #ffaa33;
+}
+
+.dialog-box-wide {
+  min-width: 360px;
+  max-width: 480px;
+}
+
+.dialog-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
 /* ==========================================
    QUEUE SECTIONS
    ========================================== */
@@ -436,6 +474,68 @@ body {
 .now-playing-section .media-table tbody tr.playing::before {
   background-color: var(--accent);
   width: 4px;
+}
+
+/* Now Playing Card with Progress Bar */
+.now-playing-content {
+  padding: 16px 20px;
+  background: rgba(29, 185, 84, 0.08);
+  border-radius: 0 0 8px 8px;
+}
+
+.now-playing-info {
+  margin-bottom: 12px;
+}
+
+.now-playing-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.now-playing-artist {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.now-playing-playlist {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.now-playing-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.time-elapsed,
+.time-remaining {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 45px;
+}
+
+.time-remaining {
+  text-align: right;
+}
+
+.progress-bar-container {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #22c55e);
+  border-radius: 3px;
+  transition: width 0.3s linear;
 }
 
 .priority-queue-section .media-table tbody tr.priority-item {
@@ -941,6 +1041,16 @@ body {
   color: var(--text-primary);
 }
 
+.settings-section .section-icon {
+  margin-right: 8px;
+}
+
+.settings-section .section-description {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: -8px 0 16px 0;
+}
+
 .setting-item {
   display: flex;
   justify-content: space-between;
@@ -956,6 +1066,26 @@ body {
 .setting-item label {
   font-size: 14px;
   color: var(--text-secondary);
+}
+
+.setting-item .button-group {
+  display: flex;
+  gap: 8px;
+}
+
+.setting-item .button-group .action-btn {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.setting-item .action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.setting-item .action-btn .material-symbols-rounded {
+  font-size: 18px;
 }
 
 .setting-item input[type="checkbox"] {
@@ -1173,4 +1303,114 @@ body {
 
 .popover-btn-primary:hover {
   background: #65b8ff;
+}
+
+/* ==========================================
+   LOADING SPINNER
+   ========================================== */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-icon {
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.load-more-container {
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+/* ==========================================
+   OVERLAY SETTINGS
+   ========================================== */
+.toggle-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.toggle-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.toggle-btn.active {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
+.overlay-position-settings {
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 8px;
+}
+
+.overlay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.overlay-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.overlay-control input[type="number"] {
+  width: 55px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.overlay-control input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ==========================================
+   KIOSK SETTINGS
+   ========================================== */
+.setting-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 12px;
+}
+
+.kiosk-balance-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.kiosk-balance-display {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 100px;
+}
+
+.action-btn-danger {
+  background-color: #dc3545 !important;
+  color: #fff !important;
+}
+
+.action-btn-danger:hover {
+  background-color: #c82333 !important;
 }

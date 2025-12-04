@@ -44,6 +44,20 @@ export interface UseSupabaseOptions {
   onQueueShuffle?: () => void;
   /** Callback when a load playlist command is received */
   onLoadPlaylist?: (playlistName: string, shuffle?: boolean) => void;
+  /** Callback when a queue move command is received */
+  onQueueMove?: (fromIndex: number, toIndex: number) => void;
+  /** Callback when a queue remove command is received */
+  onQueueRemove?: (videoId: string, queueType: 'active' | 'priority') => void;
+  /** Callback when a player window toggle command is received */
+  onPlayerWindowToggle?: (show: boolean) => void;
+  /** Callback when a fullscreen toggle command is received */
+  onPlayerFullscreenToggle?: (fullscreen: boolean) => void;
+  /** Callback when a player refresh command is received */
+  onPlayerRefresh?: () => void;
+  /** Callback when overlay settings update command is received */
+  onOverlaySettingsUpdate?: (settings: Record<string, unknown>) => void;
+  /** Callback when kiosk settings update command is received */
+  onKioskSettingsUpdate?: (settings: Record<string, unknown>) => void;
 }
 
 export interface UseSupabaseReturn {
@@ -80,7 +94,14 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     onSeekTo,
     onQueueAdd,
     onQueueShuffle,
-    onLoadPlaylist
+    onLoadPlaylist,
+    onQueueMove,
+    onQueueRemove,
+    onPlayerWindowToggle,
+    onPlayerFullscreenToggle,
+    onPlayerRefresh,
+    onOverlaySettingsUpdate,
+    onKioskSettingsUpdate
   } = options;
 
   const [isInitialized, setIsInitialized] = useState(false);
@@ -191,8 +212,61 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
       });
     }
 
+    // Queue move command
+    if (onQueueMove) {
+      service.onCommand('queue_move', (cmd) => {
+        const payload = cmd.command_data as { fromIndex: number; toIndex: number };
+        onQueueMove(payload.fromIndex, payload.toIndex);
+      });
+    }
+
+    // Queue remove command
+    if (onQueueRemove) {
+      service.onCommand('queue_remove', (cmd) => {
+        const payload = cmd.command_data as { videoId: string; queueType: 'active' | 'priority' };
+        onQueueRemove(payload.videoId, payload.queueType);
+      });
+    }
+
+    // Player window toggle command
+    if (onPlayerWindowToggle) {
+      service.onCommand('player_window_toggle', (cmd) => {
+        const payload = cmd.command_data as { show: boolean };
+        onPlayerWindowToggle(payload.show);
+      });
+    }
+
+    // Player fullscreen toggle command
+    if (onPlayerFullscreenToggle) {
+      service.onCommand('player_fullscreen_toggle', (cmd) => {
+        const payload = cmd.command_data as { fullscreen: boolean };
+        onPlayerFullscreenToggle(payload.fullscreen);
+      });
+    }
+
+    // Player refresh command
+    if (onPlayerRefresh) {
+      service.onCommand('player_refresh', () => onPlayerRefresh());
+    }
+
+    // Overlay settings update command
+    if (onOverlaySettingsUpdate) {
+      service.onCommand('overlay_settings_update', (cmd) => {
+        const payload = cmd.command_data as { settings: Record<string, unknown> };
+        onOverlaySettingsUpdate(payload.settings);
+      });
+    }
+
+    // Kiosk settings update command
+    if (onKioskSettingsUpdate) {
+      service.onCommand('kiosk_settings_update', (cmd) => {
+        const payload = cmd.command_data as { settings: Record<string, unknown> };
+        onKioskSettingsUpdate(payload.settings);
+      });
+    }
+
     handlersRegisteredRef.current = true;
-  }, [isInitialized, onPlay, onPause, onResume, onSkip, onSetVolume, onSeekTo, onQueueAdd, onQueueShuffle, onLoadPlaylist]);
+  }, [isInitialized, onPlay, onPause, onResume, onSkip, onSetVolume, onSeekTo, onQueueAdd, onQueueShuffle, onLoadPlaylist, onQueueMove, onQueueRemove, onPlayerWindowToggle, onPlayerFullscreenToggle, onPlayerRefresh, onOverlaySettingsUpdate, onKioskSettingsUpdate]);
 
   // Auto-initialize on mount
   useEffect(() => {
