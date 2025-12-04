@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlaylists: () => ipcRenderer.invoke('get-playlists'),
   getVideoMetadata: (filePath) => ipcRenderer.invoke('get-video-metadata', filePath),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
+  selectPlaylistsDirectory: () => ipcRenderer.invoke('select-playlists-directory'),
+  getPlaylistsDirectory: () => ipcRenderer.invoke('get-playlists-directory'),
+  setPlaylistsDirectory: (path) => ipcRenderer.invoke('set-playlists-directory', path),
 
   // Display Management
   getDisplays: () => ipcRenderer.invoke('get-displays'),

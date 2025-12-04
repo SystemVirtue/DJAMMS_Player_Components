@@ -69,7 +69,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     enableFullscreenPlayer: true,
     fadeDuration: 2.0,
     playerDisplayId: null as number | null,
-    playerFullscreen: false
+    playerFullscreen: false,
+    playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
   });
 
   // Display management state
@@ -267,6 +268,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           const savedNormalize = await (window as any).electronAPI.getSetting('normalizeAudioLevels');
           const savedEnablePlayer = await (window as any).electronAPI.getSetting('enableFullscreenPlayer');
           const savedFadeDuration = await (window as any).electronAPI.getSetting('fadeDuration');
+          const savedPlaylistsDir = await (window as any).electronAPI.getPlaylistsDirectory();
           
           setSettings(s => ({
             ...s,
@@ -275,7 +277,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             autoShufflePlaylists: savedAutoShuffle ?? s.autoShufflePlaylists,
             normalizeAudioLevels: savedNormalize ?? s.normalizeAudioLevels,
             enableFullscreenPlayer: savedEnablePlayer ?? s.enableFullscreenPlayer,
-            fadeDuration: savedFadeDuration ?? s.fadeDuration
+            fadeDuration: savedFadeDuration ?? s.fadeDuration,
+            playlistsDirectory: savedPlaylistsDir ?? s.playlistsDirectory
           }));
           
           // Load last active playlist and auto-play
@@ -1056,6 +1059,45 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               <div className="settings-container">
                 <h1>Settings</h1>
                 
+                {/* Library Settings Section */}
+                <div className="settings-section">
+                  <h2><span className="section-icon">📁</span> Library</h2>
+                  <div className="setting-item playlists-path-setting">
+                    <label>Playlists Folder</label>
+                    <div className="path-input-container">
+                      <input 
+                        type="text"
+                        className="path-input"
+                        value={settings.playlistsDirectory}
+                        readOnly
+                        title={settings.playlistsDirectory}
+                      />
+                      <button 
+                        className="action-btn select-folder-btn"
+                        onClick={async () => {
+                          if (isElectron) {
+                            try {
+                              const result = await (window as any).electronAPI.selectPlaylistsDirectory();
+                              if (result.success) {
+                                setSettings(s => ({ ...s, playlistsDirectory: result.path }));
+                                // Refresh playlists with new directory
+                                const { playlists: newPlaylists } = await (window as any).electronAPI.getPlaylists();
+                                setPlaylists(newPlaylists || {});
+                                localSearchService.indexVideos(newPlaylists || {});
+                              }
+                            } catch (error) {
+                              console.error('Failed to select playlists directory:', error);
+                            }
+                          }
+                        }}
+                      >
+                        <span className="material-symbols-rounded">folder_open</span>
+                        Select Folder
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="settings-section">
                   <h2>Playback</h2>
                   <div className="setting-item">

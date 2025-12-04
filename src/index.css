@@ -1104,6 +1104,39 @@ html, body, #root {
   font-style: italic;
 }
 
+/* Playlists Path Setting */
+.playlists-path-setting {
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 8px;
+}
+
+.path-input-container {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  align-items: center;
+}
+
+.path-input {
+  flex: 1;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-folder-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .setting-item .action-btn {
   background-color: var(--bg-elevated);
   border: 1px solid var(--border);

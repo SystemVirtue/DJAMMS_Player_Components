@@ -14,9 +14,12 @@ export function getPlaylistDisplayName(folderName: string): string {
   if (!folderName) return '';
   
   // Check if folder name starts with YouTube playlist ID pattern
-  // YouTube playlist IDs are typically 34 characters: letters, numbers, underscores, hyphens
-  // Pattern: starts with PL (playlist) or other valid chars, followed by a dot
-  const youtubeIdMatch = folderName.match(/^[A-Za-z0-9_-]+\.(.+)$/);
+  // YouTube playlist IDs typically start with "PL" and are 34 characters
+  // Pattern: PLxxxxxx followed by dot or underscore, then the display name
+  // Examples:
+  //   "PLN9QqCogPsXIoSObV0F39OZ_MlRZ9tRT9.Obie Nights" -> "Obie Nights"
+  //   "PLJ7vMjpVbhBWLWJpweVDki43Wlcqzsqdu_DJAMMS_Default" -> "DJAMMS_Default"
+  const youtubeIdMatch = folderName.match(/^PL[A-Za-z0-9_-]+[._](.+)$/);
   if (youtubeIdMatch) {
     return youtubeIdMatch[1];
   }

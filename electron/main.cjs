@@ -10,7 +10,7 @@ const store = new Store({
   defaults: {
     volume: 0.7,
     muted: false,
-    playlistsDirectory: path.join(app.getPath('music'), 'DJAMMS', 'PLAYLISTS'),
+    playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS',
     recentSearches: [],
     windowBounds: { width: 1200, height: 800 }
   }
@@ -303,6 +303,43 @@ function createApplicationMenu() {
 // ==================== IPC Handlers ====================
 
 // File System Operations
+// Select playlists directory via dialog
+ipcMain.handle('select-playlists-directory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Playlists Folder',
+    properties: ['openDirectory'],
+    defaultPath: store.get('playlistsDirectory')
+  });
+  
+  if (!result.canceled && result.filePaths.length > 0) {
+    const newPath = result.filePaths[0];
+    store.set('playlistsDirectory', newPath);
+    // Notify renderer of the change
+    if (mainWindow) {
+      mainWindow.webContents.send('playlists-directory-changed', newPath);
+    }
+    return { success: true, path: newPath };
+  }
+  return { success: false, path: store.get('playlistsDirectory') };
+});
+
+// Get current playlists directory path
+ipcMain.handle('get-playlists-directory', async () => {
+  return store.get('playlistsDirectory');
+});
+
+// Set playlists directory path
+ipcMain.handle('set-playlists-directory', async (event, newPath) => {
+  if (newPath && typeof newPath === 'string') {
+    store.set('playlistsDirectory', newPath);
+    if (mainWindow) {
+      mainWindow.webContents.send('playlists-directory-changed', newPath);
+    }
+    return { success: true, path: newPath };
+  }
+  return { success: false, path: store.get('playlistsDirectory') };
+});
+
 ipcMain.handle('get-playlists', async () => {
   const playlistsDir = store.get('playlistsDirectory');
   const playlists = {};
