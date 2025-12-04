@@ -48,6 +48,7 @@ try {
 }
 
 export default defineConfig({
+  base: './',  // Use relative paths for Electron file:// protocol
   plugins: [
     react(),
     {

@@ -27,7 +27,34 @@ const store = new Store({
     autoShufflePlaylists: true,
     normalizeAudioLevels: false,
     enableFullscreenPlayer: true,
-    fadeDuration: 2.0
+    fadeDuration: 2.0,
+    // Player overlay settings
+    overlaySettings: {
+      showNowPlaying: true,
+      nowPlayingSize: 100,
+      nowPlayingX: 5,
+      nowPlayingY: 85,
+      nowPlayingOpacity: 100,
+      showComingUp: true,
+      comingUpSize: 100,
+      comingUpX: 5,
+      comingUpY: 95,
+      comingUpOpacity: 100,
+      showWatermark: true,
+      watermarkImage: './Obie_neon_no_BG.png',
+      watermarkSize: 100,
+      watermarkX: 90,
+      watermarkY: 10,
+      watermarkOpacity: 80
+    },
+    // Kiosk settings
+    kioskSettings: {
+      mode: 'freeplay',
+      uiMode: 'jukebox',
+      creditBalance: 0,
+      searchAllMusic: true,
+      searchYoutube: false
+    }
   }
 });
 

@@ -51,7 +51,7 @@ function FullscreenApp() {
     comingUpY: 95,
     comingUpOpacity: 100,
     showWatermark: true,
-    watermarkImage: '/Obie_neon_no_BG.png',
+    watermarkImage: './Obie_neon_no_BG.png',
     watermarkSize: 100,
     watermarkX: 90,
     watermarkY: 10,

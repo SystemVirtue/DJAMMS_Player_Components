@@ -6,6 +6,69 @@ import type { QueueVideoItem, SupabaseLocalVideo } from '@shared/types';
 import { searchLocalVideos, blockingCommands, localVideoToQueueItem } from '@shared/supabase-client';
 import './JukeboxSearchMode.css';
 
+// Video background component with ping-pong looping
+const VideoBackground: React.FC = () => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isReversing, setIsReversing] = useState(false);
+  const animationFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Handle forward playback ending - start reverse
+    const handleEnded = () => {
+      setIsReversing(true);
+    };
+
+    // Handle reverse playback (manual frame stepping since playbackRate < 0 not supported)
+    const reversePlayback = () => {
+      if (!video || !isReversing) return;
+      
+      if (video.currentTime <= 0.05) {
+        // Reached start, switch back to forward
+        setIsReversing(false);
+        video.currentTime = 0;
+        video.play();
+        return;
+      }
+      
+      // Step backwards (~30fps)
+      video.currentTime = Math.max(0, video.currentTime - 0.033);
+      animationFrameRef.current = requestAnimationFrame(reversePlayback);
+    };
+
+    if (isReversing) {
+      video.pause();
+      animationFrameRef.current = requestAnimationFrame(reversePlayback);
+    } else {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    }
+
+    video.addEventListener('ended', handleEnded);
+    
+    return () => {
+      video.removeEventListener('ended', handleEnded);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isReversing]);
+
+  return (
+    <video
+      ref={videoRef}
+      className="jukebox-video-background"
+      src="/background-video.mp4"
+      autoPlay
+      muted
+      playsInline
+    />
+  );
+};
+
 interface JukeboxSearchModeProps {
   nowPlaying?: QueueVideoItem | null;
   credits?: number;
@@ -215,6 +278,9 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
 
   return (
     <div className="jukebox-container">
+      {/* Video background with ping-pong loop */}
+      <VideoBackground />
+      
       {/* Scanline overlay */}
       <div className="jukebox-scanlines" />
       

@@ -112,7 +112,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     comingUpY: 95,
     comingUpOpacity: 100,
     showWatermark: true,
-    watermarkImage: '/Obie_neon_no_BG.png', // Default watermark from public folder
+    watermarkImage: './Obie_neon_no_BG.png', // Default watermark from public folder (relative path for production)
     watermarkSize: 100,
     watermarkX: 90,
     watermarkY: 10,
@@ -122,7 +122,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Display management state
   const [availableDisplays, setAvailableDisplays] = useState<DisplayInfo[]>([]);
   const [playerWindowOpen, setPlayerWindowOpen] = useState(false);
-  const [playerReady, setPlayerReady] = useState(false); // True after first video starts playing
+  const [playerReady, setPlayerReady] = useState(false); // True after queue is loaded and ready
   const playerReadyRef = useRef(false); // Ref to avoid stale closure in IPC callbacks
   const hasIndexedRef = useRef(false); // Prevent multiple indexing calls during mount
   
@@ -419,6 +419,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             playlistsDirectory: savedPlaylistsDir ?? s.playlistsDirectory
           }));
           
+          // Load saved overlay settings
+          const savedOverlaySettings = await (window as any).electronAPI.getSetting('overlaySettings');
+          if (savedOverlaySettings) {
+            console.log('[PlayerWindow] Loaded saved overlay settings:', savedOverlaySettings);
+            setOverlaySettings(prev => ({ ...prev, ...savedOverlaySettings }));
+          }
+          
+          // Load saved kiosk settings
+          const savedKioskSettings = await (window as any).electronAPI.getSetting('kioskSettings');
+          if (savedKioskSettings) {
+            console.log('[PlayerWindow] Loaded saved kiosk settings:', savedKioskSettings);
+            setKioskSettings(prev => ({ ...prev, ...savedKioskSettings }));
+          }
+          
           // Load last active playlist and auto-play
           const savedActivePlaylist = await (window as any).electronAPI.getSetting('activePlaylist');
           const playlistToLoad = savedActivePlaylist || findDefaultPlaylist(loadedPlaylists);
@@ -432,13 +446,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             setQueue(finalTracks);
             setQueueIndex(0);
             if (finalTracks.length > 0) {
-              // Small delay to ensure Player Window is ready
+              // Delay to ensure Player Window is fully loaded and ready to receive IPC
+              // Player Window is created at 500ms, needs time to load and register handlers
               setTimeout(() => {
+                console.log('[PlayerWindow] Sending initial play command to Player Window');
                 setCurrentVideo(finalTracks[0]);
                 setIsPlaying(true);
+                // Mark player as ready since we have a queue loaded
+                if (!playerReadyRef.current) {
+                  playerReadyRef.current = true;
+                  setPlayerReady(true);
+                }
                 // Send play command to Player Window (the ONLY player)
                 (window as any).electronAPI.controlPlayerWindow('play', finalTracks[0]);
-              }, 500);
+              }, 1500);
             }
           }
         } catch (error) {
@@ -1058,9 +1079,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       if (state) {
         if (typeof state.isPlaying === 'boolean') {
           setIsPlaying(state.isPlaying);
-          // Mark player as ready once first video starts playing (use ref to avoid stale closure)
-          if (state.isPlaying && !playerReadyRef.current) {
-            console.log('[PlayerWindow] Player is now ready - first video playing');
+          // Mark player as ready once Player Window responds with playback state
+          // This means the Player Window is loaded and communicating
+          if (!playerReadyRef.current) {
+            console.log('[PlayerWindow] Player Window is responding - marking ready');
             playerReadyRef.current = true;
             setPlayerReady(true);
           }
@@ -1100,7 +1122,18 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     
     console.log('[PlayerWindow] Sending overlay settings to player window:', overlaySettings);
     (window as any).electronAPI.controlPlayerWindow('updateOverlaySettings', overlaySettings);
+    
+    // Save overlay settings to persistent storage
+    (window as any).electronAPI.setSetting('overlaySettings', overlaySettings);
   }, [isElectron, overlaySettings]);
+
+  // Save kiosk settings when they change
+  useEffect(() => {
+    if (!isElectron) return;
+    
+    console.log('[PlayerWindow] Saving kiosk settings:', kioskSettings);
+    (window as any).electronAPI.setSetting('kioskSettings', kioskSettings);
+  }, [isElectron, kioskSettings]);
 
   // Sync player state to Supabase when it changes
   // This ensures Web Admin / Kiosk see up-to-date state
@@ -2119,11 +2152,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                           <span className="material-symbols-rounded">image</span>
                           Select Image
                         </button>
-                        {overlaySettings.watermarkImage && overlaySettings.watermarkImage !== '/Obie_neon_no_BG.png' && (
+                        {overlaySettings.watermarkImage && overlaySettings.watermarkImage !== './Obie_neon_no_BG.png' && (
                           <button 
                             className="action-btn"
                             style={{ backgroundColor: 'var(--warning)' }}
-                            onClick={() => setOverlaySettings(prev => ({ ...prev, watermarkImage: '/Obie_neon_no_BG.png' }))}
+                            onClick={() => setOverlaySettings(prev => ({ ...prev, watermarkImage: './Obie_neon_no_BG.png' }))}
                           >
                             <span className="material-symbols-rounded">restart_alt</span>
                             Reset

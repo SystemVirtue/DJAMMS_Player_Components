@@ -64,6 +64,18 @@
   touch-action: manipulation;
 }
 
+/* Video background - fills screen with ping-pong looping */
+.jukebox-video-background {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
 /* Scanline overlay for retro CRT effect */
 .jukebox-scanlines {
   position: fixed;
