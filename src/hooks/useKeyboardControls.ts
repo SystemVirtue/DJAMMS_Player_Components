@@ -16,10 +16,11 @@ export function useKeyboardControls(config: KeyboardControlsConfig) {
     }
 
     switch (e.code) {
-      case 'Space':
-        e.preventDefault();
-        onAction('playPause');
-        break;
+      // Space bar play/pause DISABLED - causes accidental triggers
+      // case 'Space':
+      //   e.preventDefault();
+      //   onAction('playPause');
+      //   break;
       case 'KeyS':
         e.preventDefault();
         console.log('[useKeyboardControls] KeyS pressed');

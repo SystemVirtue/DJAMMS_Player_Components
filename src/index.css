@@ -417,6 +417,130 @@ html, body, #root {
   background-color: var(--accent-hover);
 }
 
+.dialog-btn-warning {
+  background-color: #ff9500;
+  color: #000;
+}
+
+.dialog-btn-warning:hover {
+  background-color: #e08600;
+}
+
+.dialog-btn-secondary {
+  background-color: #3a8fd9;
+  color: var(--text-primary);
+}
+
+.dialog-btn-secondary:hover {
+  background-color: #2d7bc2;
+}
+
+.dialog-btn-danger {
+  background-color: #dc3545;
+  color: var(--text-primary);
+}
+
+.dialog-btn-danger:hover {
+  background-color: #c82333;
+}
+
+.dialog-box-wide {
+  min-width: 340px;
+}
+
+.dialog-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* ==========================================
+   VIDEO CLICK POPOVER (Add to Priority Queue)
+   ========================================== */
+.video-popover {
+  background: #282828;
+  border: 1px solid #3f3f3f;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  min-width: 280px;
+  max-width: 360px;
+  animation: popoverFadeIn 0.15s ease-out;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.popover-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9998;
+}
+
+.popover-content {
+  margin-bottom: 16px;
+}
+
+.popover-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.popover-subtitle {
+  font-size: 14px;
+  color: #aaa;
+  margin-top: 8px;
+}
+
+.popover-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.popover-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.popover-btn-cancel {
+  background: #3f3f3f;
+  color: #fff;
+}
+
+.popover-btn-cancel:hover {
+  background: #4f4f4f;
+}
+
+.popover-btn-primary {
+  background: #3ea6ff;
+  color: #000;
+  font-weight: 600;
+}
+
+.popover-btn-primary:hover {
+  background: #65b8ff;
+}
+
 /* ==========================================
    PLAYLIST PLAY BUTTON
    ========================================== */
@@ -798,6 +922,37 @@ html, body, #root {
   background-color: var(--bg-elevated);
 }
 
+/* Radio button group for search filters */
+.search-radio-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.radio-btn {
+  background-color: var(--bg-elevated);
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.radio-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.radio-btn.active {
+  background-color: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+
 .table-container {
   flex: 1;
   overflow-y: auto;
@@ -934,6 +1089,90 @@ html, body, #root {
   width: 4px;
 }
 
+/* Now Playing Content Layout (Queue Tab) */
+.now-playing-content {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, rgba(29, 185, 84, 0.1) 0%, rgba(29, 185, 84, 0.05) 100%);
+  border-radius: 0 0 8px 8px;
+  border-left: 4px solid var(--accent);
+  gap: 20px;
+}
+
+.now-playing-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.now-playing-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.now-playing-artist {
+  font-size: 14px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.now-playing-playlist {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-playing-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 280px;
+}
+
+.now-playing-progress .time-elapsed,
+.now-playing-progress .time-remaining {
+  font-size: 13px;
+  font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+  color: var(--text-secondary);
+  min-width: 45px;
+  text-align: center;
+}
+
+.now-playing-progress .time-elapsed {
+  text-align: right;
+}
+
+.now-playing-progress .time-remaining {
+  text-align: left;
+  color: var(--text-muted);
+}
+
+.now-playing-progress .progress-bar-container {
+  flex: 1;
+  height: 6px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 120px;
+}
+
+.now-playing-progress .progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #2ecc71);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
 .priority-queue-section .media-table tbody tr.priority-item {
   background-color: rgba(255, 149, 0, 0.05);
 }
@@ -945,6 +1184,15 @@ html, body, #root {
 .priority-queue-section .media-table tbody tr.priority-item td:first-child {
   color: #ff9500;
   font-weight: 600;
+}
+
+/* "Already Played" rows in queue - dimmed appearance */
+.media-table tbody tr.played {
+  opacity: 0.5;
+}
+
+.media-table tbody tr.played:hover {
+  opacity: 0.75;
 }
 
 /* Queue List Items (QueueTab) */

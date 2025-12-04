@@ -1,11 +1,31 @@
 // fullscreen.tsx - THE ONLY PLAYER - handles all audio/video playback
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import ReactDOM from 'react-dom/client'
 import { FullscreenPlayer } from './components'
 import { Video } from './types'
 import { useSupabase } from './hooks/useSupabase'
 import { getSupabaseService } from './services/SupabaseService'
 import { QueueVideoItem } from './types/supabase'
+
+// Overlay settings type
+interface OverlaySettings {
+  showNowPlaying: boolean;
+  nowPlayingSize: number;
+  nowPlayingX: number;
+  nowPlayingY: number;
+  nowPlayingOpacity: number;
+  showComingUp: boolean;
+  comingUpSize: number;
+  comingUpX: number;
+  comingUpY: number;
+  comingUpOpacity: number;
+  showWatermark: boolean;
+  watermarkImage: string;
+  watermarkSize: number;
+  watermarkX: number;
+  watermarkY: number;
+  watermarkOpacity: number;
+}
 
 function FullscreenApp() {
   const [video, setVideo] = useState<Video | null>(null)
@@ -18,9 +38,30 @@ function FullscreenApp() {
   const [fadeDuration, setFadeDuration] = useState<number>(2.0)
   const [seekToPosition, setSeekToPosition] = useState<number | null>(null)
   
+  // Overlay settings - defaults match PlayerWindow
+  const [overlaySettings, setOverlaySettings] = useState<OverlaySettings>({
+    showNowPlaying: true,
+    nowPlayingSize: 100,
+    nowPlayingX: 5,
+    nowPlayingY: 85,
+    nowPlayingOpacity: 100,
+    showComingUp: true,
+    comingUpSize: 100,
+    comingUpX: 5,
+    comingUpY: 95,
+    comingUpOpacity: 100,
+    showWatermark: true,
+    watermarkImage: '/Obie_neon_no_BG.png',
+    watermarkSize: 100,
+    watermarkX: 90,
+    watermarkY: 10,
+    watermarkOpacity: 80
+  })
+  
   // Track queues for Supabase sync
   const [activeQueue, setActiveQueue] = useState<Video[]>([])
   const [priorityQueue, setPriorityQueue] = useState<Video[]>([])
+  const [queueIndex, setQueueIndex] = useState(0)
   
   // Ref to track current duration for debug seek
   const durationRef = useRef<number>(0)
@@ -145,6 +186,17 @@ function FullscreenApp() {
           if (data) {
             if (Array.isArray(data.activeQueue)) setActiveQueue(data.activeQueue)
             if (Array.isArray(data.priorityQueue)) setPriorityQueue(data.priorityQueue)
+            if (typeof data.queueIndex === 'number') setQueueIndex(data.queueIndex)
+          }
+          break
+        case 'updateOverlaySettings':
+          // Receive overlay settings from main window
+          if (data) {
+            console.log('[FullscreenApp] Received overlay settings:', data)
+            setOverlaySettings(prev => ({
+              ...prev,
+              ...data
+            }))
           }
           break
         case 'indexPlaylists':
@@ -159,13 +211,20 @@ function FullscreenApp() {
         case 'debugSkipToEnd':
           // Debug feature: seek to 15 seconds before end of video to test crossfade
           const currentDuration = durationRef.current
+          console.log(`[FullscreenApp] Debug skip to end: durationRef.current = ${currentDuration}`)
+          if (currentDuration <= 0) {
+            console.log('[FullscreenApp] Debug skip to end: duration not available yet, ignoring')
+            break
+          }
           if (currentDuration > 15) {
             const seekPosition = currentDuration - 15
             console.log(`[FullscreenApp] Debug skip to end: seeking to ${seekPosition.toFixed(1)}s (duration: ${currentDuration.toFixed(1)}s)`)
             setSeekToPosition(seekPosition)
           } else {
-            console.log('[FullscreenApp] Debug skip to end: video too short, skipping to end')
-            setSeekToPosition(Math.max(0, currentDuration - 2))
+            // Short video - seek to 2 seconds before end, but never to 0 (would restart)
+            const seekPosition = Math.max(1, currentDuration - 2)
+            console.log(`[FullscreenApp] Debug skip to end: video short, seeking to ${seekPosition.toFixed(1)}s`)
+            setSeekToPosition(seekPosition)
           }
           break
       }
@@ -245,6 +304,13 @@ function FullscreenApp() {
     // Also notify via postMessage (for web/iframe mode)
     window.parent.postMessage({ type: 'VIDEO_END' }, window.location.origin)
   }
+  
+  // Keep durationRef in sync with duration state
+  useEffect(() => {
+    if (duration > 0) {
+      durationRef.current = duration
+    }
+  }, [duration])
 
   // Handle state changes - sync back to Main Window for UI display
   const handleStateChange = (state: { currentVideo: Video | null, currentTime: number, duration: number, isPlaying: boolean }) => {
@@ -272,6 +338,27 @@ function FullscreenApp() {
     setSeekToPosition(null)
   }
 
+  // Calculate upcoming videos: priority queue first, then next 3 from active queue
+  const upcomingVideos = useMemo(() => {
+    const upcoming: Video[] = []
+    
+    // Add all priority queue videos first
+    upcoming.push(...priorityQueue)
+    
+    // Then add next 3 videos from active queue (after current index)
+    if (activeQueue.length > 0) {
+      for (let i = 1; i <= 3; i++) {
+        const nextIdx = (queueIndex + i) % activeQueue.length
+        // Don't add if we've looped back to current or already have enough
+        if (upcoming.length < 6 && activeQueue[nextIdx]) {
+          upcoming.push(activeQueue[nextIdx])
+        }
+      }
+    }
+    
+    return upcoming
+  }, [priorityQueue, activeQueue, queueIndex])
+
   return (
     <FullscreenPlayer
       video={video}
@@ -286,6 +373,8 @@ function FullscreenApp() {
       fadeDuration={fadeDuration}
       seekToPosition={seekToPosition}
       onSeekComplete={handleSeekComplete}
+      overlaySettings={overlaySettings}
+      upcomingVideos={upcomingVideos}
     />
   )
 }

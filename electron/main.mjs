@@ -666,6 +666,39 @@ ipcMain.handle('select-playlists-directory', async () => {
   return { success: false };
 });
 
+ipcMain.handle('select-image-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Select Watermark Image',
+    filters: [
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }
+    ]
+  });
+  
+  if (!result.canceled && result.filePaths[0]) {
+    // Read the file and convert to base64 data URL (file:// URLs are blocked in renderer)
+    const filePath = result.filePaths[0];
+    try {
+      const fileBuffer = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase().slice(1);
+      const mimeType = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'svg': 'image/svg+xml'
+      }[ext] || 'image/png';
+      const base64 = fileBuffer.toString('base64');
+      return { success: true, filePath: `data:${mimeType};base64,${base64}` };
+    } catch (error) {
+      console.error('Failed to read image file:', error);
+      return { success: false, error: error.message };
+    }
+  }
+  return { success: false };
+});
+
 // Playback State Sync (between windows)
 ipcMain.on('playback-state-update', (event, state) => {
   // Forward to fullscreen window if it exists

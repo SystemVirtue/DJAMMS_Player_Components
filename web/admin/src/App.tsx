@@ -489,10 +489,18 @@ export default function App() {
 
   // Filtering and sorting
   const filterByScope = (videos: SupabaseLocalVideo[], scope: string): SupabaseLocalVideo[] => {
+    // Helper to check if a video contains 'karaoke' in title, filename, or playlist
+    const isKaraoke = (v: SupabaseLocalVideo): boolean => {
+      const title = v.title?.toLowerCase() || '';
+      const path = (v.path || '').toLowerCase();
+      const playlist = ((v.metadata as any)?.playlist || '').toLowerCase();
+      return title.includes('karaoke') || path.includes('karaoke') || playlist.includes('karaoke');
+    };
+    
     switch (scope) {
       case 'all': return videos;
-      case 'no-karaoke': return videos.filter(v => !v.title?.toLowerCase().includes('karaoke'));
-      case 'karaoke': return videos.filter(v => v.title?.toLowerCase().includes('karaoke'));
+      case 'no-karaoke': return videos.filter(v => !isKaraoke(v));
+      case 'karaoke': return videos.filter(v => isKaraoke(v));
       case 'queue': 
         // Convert queue items to match local video format for display
         // Put playlist in metadata to match SupabaseLocalVideo structure
@@ -784,36 +792,113 @@ export default function App() {
                 </div>
               </div>
               <div className="table-container">
-                <table className="media-table">
-                  <thead>
-                    <tr>
-                      <th className="col-index">#</th>
-                      <th className="col-title">Title</th>
-                      <th className="col-artist">Artist</th>
-                      <th className="col-duration">Duration</th>
-                      <th className="col-playlist">Playlist</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeQueue.length === 0 ? (
-                      <tr className="empty-state">
-                        <td colSpan={5}>Queue is empty. Add tracks from Search or Browse.</td>
+                {/* Now Playing Section */}
+                {currentVideo && (
+                  <div className="queue-section now-playing-section">
+                    <div className="queue-section-header">
+                      <span className="material-symbols-rounded">play_circle</span>
+                      NOW PLAYING
+                    </div>
+                    <table className="media-table">
+                      <tbody>
+                        <tr className="playing">
+                          <td className="col-index">▶</td>
+                          <td className="col-title">{currentVideo.title}</td>
+                          <td>{getDisplayArtist(currentVideo.artist)}</td>
+                          <td>{currentVideo.duration || '—'}</td>
+                          <td>{getPlaylistDisplayName(currentVideo.playlist || '')}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Priority Queue Section */}
+                {priorityQueue.length > 0 && (
+                  <div className="queue-section priority-queue-section">
+                    <div className="queue-section-header priority">
+                      <span className="material-symbols-rounded">priority_high</span>
+                      PRIORITY QUEUE
+                    </div>
+                    <table className="media-table">
+                      <tbody>
+                        {priorityQueue.map((track, index) => (
+                          <tr
+                            key={`priority-${track.id}-${index}`}
+                            className="priority-item"
+                          >
+                            <td className="col-index">P{index + 1}</td>
+                            <td className="col-title">{track.title}</td>
+                            <td>{getDisplayArtist(track.artist)}</td>
+                            <td>{track.duration || '—'}</td>
+                            <td>{getPlaylistDisplayName(track.playlist || '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Active Queue Section - Reordered: "Up Next" first, then "Already Played" */}
+                <div className="queue-section active-queue-section">
+                  <div className="queue-section-header">
+                    <span className="material-symbols-rounded">queue_music</span>
+                    UP NEXT
+                  </div>
+                  <table className="media-table">
+                    <thead>
+                      <tr>
+                        <th className="col-index">#</th>
+                        <th className="col-title">Title</th>
+                        <th className="col-artist">Artist</th>
+                        <th className="col-duration">Duration</th>
+                        <th className="col-playlist">Playlist</th>
                       </tr>
-                    ) : activeQueue.map((track, index) => (
-                      <tr
-                        key={`${track.id}-${index}`}
-                        className={index === queueIndex ? 'playing' : ''}
-                        onClick={() => playVideoAtIndex(index)}
-                      >
-                        <td>{index + 1}</td>
-                        <td className="col-title">{track.title}</td>
-                        <td>{getDisplayArtist(track.artist)}</td>
-                        <td>{track.duration || '—'}</td>
-                        <td>{getPlaylistDisplayName(track.playlist || '')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {activeQueue.length === 0 ? (
+                        <tr className="empty-state">
+                          <td colSpan={5}>Queue is empty. Add tracks from Search or Browse.</td>
+                        </tr>
+                      ) : (() => {
+                        // Reorder: videos after current index first ("up next"), then videos before ("already played")
+                        const upNextVideos = activeQueue.slice(queueIndex + 1).map((track, idx) => ({
+                          track,
+                          originalIndex: queueIndex + 1 + idx,
+                          isUpNext: true
+                        }));
+                        const alreadyPlayedVideos = activeQueue.slice(0, queueIndex).map((track, idx) => ({
+                          track,
+                          originalIndex: idx,
+                          isUpNext: false
+                        }));
+                        const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
+                        
+                        if (reorderedQueue.length === 0) {
+                          return (
+                            <tr className="empty-state">
+                              <td colSpan={5}>No more tracks in queue.</td>
+                            </tr>
+                          );
+                        }
+                        
+                        return reorderedQueue.map(({ track, originalIndex, isUpNext }, displayIndex) => (
+                          <tr
+                            key={`queue-${track.id}-${originalIndex}`}
+                            className={!isUpNext ? 'played' : ''}
+                            onClick={() => playVideoAtIndex(originalIndex)}
+                          >
+                            <td>{displayIndex + 1}</td>
+                            <td className="col-title">{track.title}</td>
+                            <td>{getDisplayArtist(track.artist)}</td>
+                            <td>{track.duration || '—'}</td>
+                            <td>{getPlaylistDisplayName(track.playlist || '')}</td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}

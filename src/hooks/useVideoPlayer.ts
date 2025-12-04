@@ -70,6 +70,10 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   // This prevents double-triggering (once at fade point, once at actual end)
   const crossfadeTriggeredRef = useRef(false);
 
+  // Debounce protection for video end events to prevent infinite loop on video load failure
+  const lastVideoEndTimeRef = useRef(0);
+  const VIDEO_END_DEBOUNCE_MS = 500;
+
   // Track if we're currently in a crossfade to allow dual-play during that time
   const isCrossfadingRef = useRef(false);
 
@@ -174,6 +178,16 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     const handleVideoEnd = (video: HTMLVideoElement) => {
       if (video === activeVideoRef.current) {
+        // DEBOUNCE: Prevent rapid-fire video end events (e.g., from failed video loads)
+        const now = Date.now();
+        const timeSinceLastEnd = now - lastVideoEndTimeRef.current;
+        
+        if (timeSinceLastEnd < VIDEO_END_DEBOUNCE_MS) {
+          console.warn('[useVideoPlayer] Video end debounced - too rapid (' + timeSinceLastEnd + 'ms since last end)');
+          return;
+        }
+        lastVideoEndTimeRef.current = now;
+        
         // Only trigger onVideoEnd if we haven't already triggered it via early crossfade
         if (!crossfadeTriggeredRef.current) {
           console.log('[useVideoPlayer] Video ended naturally (no early crossfade)');

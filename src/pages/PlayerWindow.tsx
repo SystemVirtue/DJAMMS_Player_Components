@@ -1,7 +1,7 @@
 // src/pages/PlayerWindow.tsx
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Video } from '../types';
-import { localSearchService, SearchResult } from '../services';
+import { localSearchService, SearchResult, getSupabaseService } from '../services';
 import { getPlaylistDisplayName, getDisplayArtist } from '../utils/playlistHelpers';
 import { useSupabase } from '../hooks/useSupabase';
 import { QueueVideoItem } from '../types/supabase';
@@ -19,13 +19,12 @@ interface DisplayInfo {
   isPrimary: boolean;
 }
 
-type TabId = 'queue' | 'search' | 'browse' | 'settings' | 'tools';
+type TabId = 'queue' | 'search' | 'settings' | 'tools';
 
 // Navigation items configuration
 const navItems: { id: TabId; icon: string; label: string }[] = [
   { id: 'queue', icon: 'queue_music', label: 'Queue' },
   { id: 'search', icon: 'search', label: 'Search' },
-  { id: 'browse', icon: 'library_music', label: 'Browse' },
   { id: 'settings', icon: 'settings', label: 'Settings' },
   { id: 'tools', icon: 'build', label: 'Tools' },
 ];
@@ -35,6 +34,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [currentVideo, setCurrentVideo] = useState<Video | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(70);
+  const [playbackTime, setPlaybackTime] = useState(0); // Current playback position in seconds
+  const [playbackDuration, setPlaybackDuration] = useState(0); // Total duration in seconds
 
   // Playlist/Queue state
   const [playlists, setPlaylists] = useState<Record<string, Video[]>>({});
@@ -44,13 +45,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [queueIndex, setQueueIndex] = useState(0);
   const [priorityQueue, setPriorityQueue] = useState<Video[]>([]); // KIOSK requests
 
-  // Search/Browse state
+  // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchScope, setSearchScope] = useState('all');
-  const [searchSort, setSearchSort] = useState('relevance');
-  const [browseQuery, setBrowseQuery] = useState('');
-  const [browseScope, setBrowseScope] = useState('all');
-  const [browseSort, setBrowseSort] = useState('az');
+  const [searchSort, setSearchSort] = useState('az');
+  const [searchLimit, setSearchLimit] = useState(100); // Limit displayed rows for performance
+  
+  // Supabase-powered search results (async)
+  const [searchResults, setSearchResults] = useState<Video[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchTotalCount, setSearchTotalCount] = useState(0);
 
   // UI state
   const [currentTab, setCurrentTab] = useState<TabId>('queue');
@@ -63,6 +67,14 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [showPauseDialog, setShowPauseDialog] = useState(false);
   const [showQueuePlayDialog, setShowQueuePlayDialog] = useState(false);
   const [queueVideoToPlay, setQueueVideoToPlay] = useState<{ video: Video; index: number } | null>(null);
+  const [showSkipConfirmDialog, setShowSkipConfirmDialog] = useState(false);
+  
+  // Track if current video is from priority queue (for skip confirmation)
+  const [isFromPriorityQueue, setIsFromPriorityQueue] = useState(false);
+  
+  // Popover state for search video click
+  const [popoverVideo, setPopoverVideo] = useState<Video | null>(null);
+  const [popoverPosition, setPopoverPosition] = useState({ x: 0, y: 0 });
 
   // Settings
   const [settings, setSettings] = useState({
@@ -75,10 +87,50 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
   });
 
+  // Kiosk settings state
+  const [kioskSettings, setKioskSettings] = useState({
+    mode: 'freeplay' as 'freeplay' | 'credits',
+    uiMode: 'classic' as 'classic' | 'jukebox', // UI style: classic (SearchInterface) or jukebox (JukeboxSearchMode)
+    creditBalance: 0,
+    searchAllMusic: true,
+    searchYoutube: false
+  });
+  const [kioskSerialStatus, setKioskSerialStatus] = useState<'disconnected' | 'connected'>('disconnected');
+  const [kioskAvailableSerialDevices, setKioskAvailableSerialDevices] = useState<string[]>([]);
+  const [kioskSelectedSerialDevice, setKioskSelectedSerialDevice] = useState<string>('');
+
+  // Player overlay settings state - default watermark is Obie_neon_no_BG.png in public folder
+  const [overlaySettings, setOverlaySettings] = useState({
+    showNowPlaying: true,
+    nowPlayingSize: 100,
+    nowPlayingX: 5,
+    nowPlayingY: 85,
+    nowPlayingOpacity: 100,
+    showComingUp: true,
+    comingUpSize: 100,
+    comingUpX: 5,
+    comingUpY: 95,
+    comingUpOpacity: 100,
+    showWatermark: true,
+    watermarkImage: '/Obie_neon_no_BG.png', // Default watermark from public folder
+    watermarkSize: 100,
+    watermarkX: 90,
+    watermarkY: 10,
+    watermarkOpacity: 80
+  });
+
   // Display management state
   const [availableDisplays, setAvailableDisplays] = useState<DisplayInfo[]>([]);
   const [playerWindowOpen, setPlayerWindowOpen] = useState(false);
   const [playerReady, setPlayerReady] = useState(false); // True after first video starts playing
+  const playerReadyRef = useRef(false); // Ref to avoid stale closure in IPC callbacks
+  const hasIndexedRef = useRef(false); // Prevent multiple indexing calls during mount
+  
+  // Debounce refs to prevent infinite loop on rapid video end events
+  const lastPlayNextTimeRef = useRef(0);
+  const lastPlayedVideoIdRef = useRef<string | null>(null);
+  const consecutiveFailuresRef = useRef(0);
+  const MAX_CONSECUTIVE_FAILURES = 3; // Skip video after this many rapid failures
 
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
@@ -239,9 +291,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Load playlists and settings on mount
   useEffect(() => {
+    // Guard against multiple executions (React Strict Mode or HMR)
+    if (hasIndexedRef.current) return;
+    
     const loadData = async () => {
       if (isElectron) {
         try {
+          hasIndexedRef.current = true; // Mark as indexed BEFORE async operations
           const { playlists: loadedPlaylists } = await (window as any).electronAPI.getPlaylists();
           setPlaylists(loadedPlaylists || {});
           localSearchService.indexVideos(loadedPlaylists || {});
@@ -296,8 +352,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           }
         } catch (error) {
           console.error('Failed to load data:', error);
+          hasIndexedRef.current = false; // Reset on error to allow retry
         }
       } else {
+        hasIndexedRef.current = true;
         const webPlaylists = (window as any).__PLAYLISTS__ || {};
         setPlaylists(webPlaylists);
         localSearchService.indexVideos(webPlaylists);
@@ -406,6 +464,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       (window as any).electronAPI.controlPlayerWindow('pause');
     }
     setShowPauseDialog(false);
+    setCurrentTab('queue'); // Auto-switch to Queue tab
   };
 
   const handleResumePlayback = () => {
@@ -414,14 +473,31 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         (window as any).electronAPI.controlPlayerWindow('resume');
       }
       setIsPlaying(true);
+      setCurrentTab('queue'); // Auto-switch to Queue tab
     } else if (queue.length > 0) {
       playVideoAtIndex(0);
+      setCurrentTab('queue'); // Auto-switch to Queue tab
     }
   };
 
   const skipTrack = () => {
     if (!playerReady) return; // Ignore until player is ready
+    
+    // If current video is from priority queue, show confirmation dialog
+    if (isFromPriorityQueue) {
+      setShowSkipConfirmDialog(true);
+      return;
+    }
+    
     playNextVideo();
+    setCurrentTab('queue'); // Auto-switch to Queue tab
+  };
+  
+  // Actually perform the skip (called after confirmation or directly if not priority)
+  const confirmSkip = () => {
+    setShowSkipConfirmDialog(false);
+    playNextVideo();
+    setCurrentTab('queue'); // Auto-switch to Queue tab
   };
 
   const playNext = () => {
@@ -437,6 +513,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Unified function to play the next video - ALWAYS checks priority queue first
   const playNextVideo = useCallback(() => {
+    // DEBOUNCE: Prevent rapid-fire calls that cause infinite loop on video load failure
+    const now = Date.now();
+    const timeSinceLastCall = now - lastPlayNextTimeRef.current;
+    
+    if (timeSinceLastCall < 500) {
+      console.warn('[PlayerWindow] playNextVideo debounced - too rapid (' + timeSinceLastCall + 'ms since last call)');
+      return;
+    }
+    lastPlayNextTimeRef.current = now;
+    
     console.log('[PlayerWindow] playNextVideo called, priorityQueue:', priorityQueueRef.current.length, 'activeQueue:', queueRef.current.length);
     
     // ALWAYS check priority queue first (KIOSK requests take precedence)
@@ -444,9 +530,24 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       const nextVideo = priorityQueueRef.current[0];
       const newPriorityQueue = priorityQueueRef.current.slice(1);
       console.log('[PlayerWindow] Playing from priority queue:', nextVideo.title);
+      
+      // Update ref SYNCHRONOUSLY before state update to prevent race conditions
+      priorityQueueRef.current = newPriorityQueue;
+      
+      // Track video for failure detection
+      const videoId = nextVideo.id || nextVideo.src;
+      if (lastPlayedVideoIdRef.current === videoId) {
+        consecutiveFailuresRef.current++;
+        console.warn('[PlayerWindow] Same video played again, consecutive failures:', consecutiveFailuresRef.current);
+      } else {
+        consecutiveFailuresRef.current = 0;
+        lastPlayedVideoIdRef.current = videoId;
+      }
+      
       setPriorityQueue(newPriorityQueue);
       setCurrentVideo(nextVideo);
       setIsPlaying(true);
+      setIsFromPriorityQueue(true); // Mark as priority queue video
       sendPlayCommand(nextVideo);
       // Immediate sync so Web Admin sees the update right away
       setTimeout(() => {
@@ -469,14 +570,40 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       return;
     }
     
-    const nextIndex = currentIndex < currentQueue.length - 1 ? currentIndex + 1 : 0;
-    const nextVideo = currentQueue[nextIndex];
+    let nextIndex = currentIndex < currentQueue.length - 1 ? currentIndex + 1 : 0;
+    let nextVideo = currentQueue[nextIndex];
+    
+    // Track video for failure detection - if same video fails multiple times, skip it
+    if (nextVideo) {
+      const videoId = nextVideo.id || nextVideo.src;
+      if (lastPlayedVideoIdRef.current === videoId) {
+        consecutiveFailuresRef.current++;
+        console.warn('[PlayerWindow] Same video attempted again, consecutive failures:', consecutiveFailuresRef.current);
+        
+        // If we've failed too many times on this video, skip to the next one
+        if (consecutiveFailuresRef.current >= MAX_CONSECUTIVE_FAILURES) {
+          console.error('[PlayerWindow] Too many consecutive failures for video:', nextVideo.title, '- skipping');
+          nextIndex = nextIndex < currentQueue.length - 1 ? nextIndex + 1 : 0;
+          nextVideo = currentQueue[nextIndex];
+          consecutiveFailuresRef.current = 0;
+          lastPlayedVideoIdRef.current = nextVideo ? (nextVideo.id || nextVideo.src) : null;
+        }
+      } else {
+        consecutiveFailuresRef.current = 0;
+        lastPlayedVideoIdRef.current = videoId;
+      }
+    }
     
     if (nextVideo) {
       console.log('[PlayerWindow] Playing from active queue index:', nextIndex, nextVideo.title);
+      
+      // Update ref SYNCHRONOUSLY before state update to prevent race conditions
+      queueIndexRef.current = nextIndex;
+      
       setQueueIndex(nextIndex);
       setCurrentVideo(nextVideo);
       setIsPlaying(true);
+      setIsFromPriorityQueue(false); // Not from priority queue
       sendPlayCommand(nextVideo);
       // Immediate sync so Web Admin sees the update right away
       setTimeout(() => {
@@ -500,6 +627,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       const newQueue = [currentTrack, ...shuffledOthers];
       setQueue(newQueue);
       setQueueIndex(0); // Current track is now at index 0
+      setCurrentTab('queue'); // Auto-switch to Queue tab
     }
   };
 
@@ -533,11 +661,60 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     setQueueVideoToPlay(null);
   }, [queueVideoToPlay, playVideoAtIndex]);
 
+  // Move selected queue video to play next (position after current)
+  const moveQueueVideoToNext = useCallback(() => {
+    if (queueVideoToPlay && queue.length > 1) {
+      const { index } = queueVideoToPlay;
+      const targetIndex = queueIndex + 1; // Position right after current
+      
+      // Don't move if already in the next position or is the current video
+      if (index === targetIndex || index === queueIndex) {
+        setShowQueuePlayDialog(false);
+        setQueueVideoToPlay(null);
+        return;
+      }
+      
+      const newQueue = [...queue];
+      const [movedVideo] = newQueue.splice(index, 1);
+      // If we removed from before the target, adjust target index
+      const adjustedTarget = index < targetIndex ? targetIndex - 1 : targetIndex;
+      newQueue.splice(adjustedTarget, 0, movedVideo);
+      setQueue(newQueue);
+    }
+    setShowQueuePlayDialog(false);
+    setQueueVideoToPlay(null);
+  }, [queueVideoToPlay, queue, queueIndex]);
+
+  // Remove selected video from queue
+  const removeQueueVideo = useCallback(() => {
+    if (queueVideoToPlay) {
+      const { index } = queueVideoToPlay;
+      
+      // Don't remove the currently playing video
+      if (index === queueIndex) {
+        setShowQueuePlayDialog(false);
+        setQueueVideoToPlay(null);
+        return;
+      }
+      
+      const newQueue = queue.filter((_, i) => i !== index);
+      setQueue(newQueue);
+      
+      // Adjust queueIndex if we removed a video before the current one
+      if (index < queueIndex) {
+        setQueueIndex(prev => prev - 1);
+      }
+    }
+    setShowQueuePlayDialog(false);
+    setQueueVideoToPlay(null);
+  }, [queueVideoToPlay, queue, queueIndex]);
+
   // Playlist functions
   const handlePlaylistClick = (playlistName: string) => {
     setSelectedPlaylist(playlistName);
-    setCurrentTab('browse');
-    setBrowseScope('playlist'); // Only set to playlist when user explicitly clicks a playlist
+    setCurrentTab('search');
+    setSearchScope('playlist'); // Filter by selected playlist
+    setSearchLimit(100); // Reset pagination
   };
 
   const handlePlayButtonClick = (e: React.MouseEvent, playlistName: string) => {
@@ -570,82 +747,147 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   };
 
   const handleTabChange = (tab: TabId) => {
+    // If leaving Search tab while a playlist is selected, clear the selection
+    if (currentTab === 'search' && tab !== 'search' && selectedPlaylist) {
+      setSelectedPlaylist(null);
+      setSearchScope('all'); // Reset to default filter
+    }
+    // If clicking Search tab directly (not from playlist click), reset to defaults
+    if (tab === 'search' && currentTab !== 'search') {
+      setSearchQuery(''); // Clear search text
+      setSearchScope('all'); // Default filter
+      setSearchSort('artist'); // Default sort
+      setSelectedPlaylist(null); // Clear any selected playlist
+      setSearchLimit(100); // Reset pagination
+    }
     setCurrentTab(tab);
-    if (tab === 'browse') {
-      // Default to 'all' when clicking Browse tab directly
-      setBrowseScope('all');
-      setSelectedPlaylist(null);
-    } else {
-      setSelectedPlaylist(null);
-    }
   };
 
-  const handleScopeChange = (scope: string, isBrowse: boolean) => {
-    if (isBrowse) {
-      setBrowseScope(scope);
-      if (scope !== 'playlist') setSelectedPlaylist(null);
-    } else {
-      setSearchScope(scope);
-      if (scope !== 'playlist') setSelectedPlaylist(null);
-    }
+  const handleScopeChange = (scope: string) => {
+    setSearchScope(scope);
+    setSearchLimit(100); // Reset pagination when filter changes
+    if (scope !== 'playlist') setSelectedPlaylist(null);
   };
 
-  // Filtering and sorting
-  const filterByScope = (videos: Video[], scope: string): Video[] => {
+  // Filtering and sorting (memoized callbacks for use in useMemo)
+  const filterByScope = useCallback((videos: Video[], scope: string): Video[] => {
+    // Helper to check if a video contains 'karaoke' in title, filename, or playlist
+    const isKaraoke = (v: Video): boolean => {
+      const title = v.title?.toLowerCase() || '';
+      const path = (v.path || v.src || '').toLowerCase();
+      const playlist = v.playlist?.toLowerCase() || '';
+      return title.includes('karaoke') || path.includes('karaoke') || playlist.includes('karaoke');
+    };
+    
     switch (scope) {
       case 'all': return videos;
-      case 'no-karaoke': return videos.filter(v => !v.title?.toLowerCase().includes('karaoke'));
-      case 'karaoke': return videos.filter(v => v.title?.toLowerCase().includes('karaoke'));
+      case 'no-karaoke': return videos.filter(v => !isKaraoke(v));
+      case 'karaoke': return videos.filter(v => isKaraoke(v));
       case 'queue': return queue;
       case 'playlist':
         if (!selectedPlaylist) return [];
         return playlists[selectedPlaylist] || [];
       default: return videos;
     }
-  };
+  }, [queue, selectedPlaylist, playlists]);
 
-  const sortResults = (results: Video[], sortBy: string): Video[] => {
+  const sortResults = useCallback((results: Video[], sortBy: string): Video[] => {
     const sorted = [...results];
     switch (sortBy) {
       case 'artist': return sorted.sort((a, b) => (a.artist || '').localeCompare(b.artist || ''));
       case 'title':
       case 'az': return sorted.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      case 'playlist': return sorted.sort((a, b) => (a.playlist || '').localeCompare(b.playlist || ''));
       default: return sorted;
     }
-  };
+  }, []);
 
-  const getAllVideos = (): Video[] => {
-    const allVideos = Object.values(playlists).flat();
+  // Memoize getAllVideos to avoid recomputing on every render (for local fallback)
+  const allVideos = useMemo((): Video[] => {
+    const videos = Object.values(playlists).flat();
     // Deduplicate by path (or title+artist if path is not available)
     const seen = new Set<string>();
-    return allVideos.filter(video => {
+    return videos.filter(video => {
       const key = video.path || video.src || `${video.title}|${video.artist}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  };
+  }, [playlists]);
 
-  const getSearchResults = (): Video[] => {
-    if (!searchQuery.trim()) return [];
-    let results = filterByScope(getAllVideos(), searchScope);
-    results = results.filter(video =>
-      video.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      video.artist?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-    return sortResults(results, searchSort);
-  };
-
-  const getBrowseResults = (): Video[] => {
-    let results = filterByScope(getAllVideos(), browseScope);
-    if (browseQuery.trim()) {
-      results = results.filter(video =>
-        video.title?.toLowerCase().includes(browseQuery.toLowerCase()) ||
-        video.artist?.toLowerCase().includes(browseQuery.toLowerCase())
-      );
+  // Search effect - calls Supabase PostgreSQL full-text search (or browse when query empty)
+  useEffect(() => {
+    const supabase = getSupabaseService();
+    
+    // For playlist scope, always use local data since we have it in memory
+    if (searchScope === 'playlist') {
+      if (!selectedPlaylist) {
+        setSearchResults([]);
+        setSearchTotalCount(0);
+        return;
+      }
+      let results = playlists[selectedPlaylist] || [];
+      if (searchQuery.trim()) {
+        results = results.filter(video =>
+          video.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          video.artist?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+      }
+      setSearchResults(sortResults(results, searchSort));
+      setSearchTotalCount(results.length);
+      return;
     }
-    return sortResults(results, browseSort);
-  };
+    
+    if (!supabase.initialized) {
+      // Fallback to local search/browse if Supabase not ready
+      let results = filterByScope(allVideos, searchScope);
+      if (searchQuery.trim()) {
+        results = results.filter(video =>
+          video.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          video.artist?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+      }
+      setSearchResults(sortResults(results, searchSort));
+      setSearchTotalCount(results.length);
+      return;
+    }
+
+    // Debounce search/browse requests
+    const timeoutId = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        // Map UI sort values to database sort values
+        const dbSortBy = searchSort === 'az' ? 'title' : searchSort;
+        
+        let results: Video[];
+        if (searchQuery.trim()) {
+          // Search mode - use full-text search
+          results = await supabase.searchVideos(searchQuery, searchScope, searchLimit, 0);
+          // Apply local sorting to search results
+          results = sortResults(results, searchSort);
+        } else {
+          // Browse mode - show all videos sorted
+          results = await supabase.browseVideos(searchScope, dbSortBy, 'asc', searchLimit, 0);
+        }
+        setSearchResults(results);
+        
+        // Get total count for pagination
+        const total = await supabase.countVideos(searchScope);
+        setSearchTotalCount(total);
+      } catch (error) {
+        console.error('[PlayerWindow] Search error:', error);
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, searchScope, searchSort, searchLimit, selectedPlaylist, playlists, allVideos, filterByScope, sortResults]);
+
+  // Keep these functions for compatibility
+  const getAllVideos = (): Video[] => allVideos;
+  const getSearchResults = (): Video[] => searchResults;
 
   // Queue management
   const handleClearQueue = () => {
@@ -661,6 +903,28 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const handleAddToQueue = (video: Video) => {
     setQueue(prev => [...prev, video]);
   };
+
+  // Video click handler for search - opens popover to add to priority queue
+  const handleVideoClick = useCallback((video: Video, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setPopoverVideo(video);
+    setPopoverPosition({ x: event.clientX, y: event.clientY });
+  }, []);
+
+  // Add video to priority queue (from popover)
+  const handleAddToPriorityQueue = useCallback(() => {
+    if (!popoverVideo) return;
+    setPriorityQueue(prev => [...prev, popoverVideo]);
+    // Sync to Supabase
+    syncState({
+      priorityQueue: [...priorityQueue, popoverVideo]
+    }, true);
+    setPopoverVideo(null);
+  }, [popoverVideo, priorityQueue, syncState]);
+
+  const handleClosePopover = useCallback(() => {
+    setPopoverVideo(null);
+  }, []);
 
   // Settings
   const handleUpdateSetting = (key: keyof typeof settings, value: any) => {
@@ -703,11 +967,19 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       if (state) {
         if (typeof state.isPlaying === 'boolean') {
           setIsPlaying(state.isPlaying);
-          // Mark player as ready once first video starts playing
-          if (state.isPlaying && !playerReady) {
+          // Mark player as ready once first video starts playing (use ref to avoid stale closure)
+          if (state.isPlaying && !playerReadyRef.current) {
             console.log('[PlayerWindow] Player is now ready - first video playing');
+            playerReadyRef.current = true;
             setPlayerReady(true);
           }
+        }
+        // Track playback time and duration for progress display
+        if (typeof state.currentTime === 'number') {
+          setPlaybackTime(state.currentTime);
+        }
+        if (typeof state.duration === 'number') {
+          setPlaybackDuration(state.duration);
         }
       }
     });
@@ -726,9 +998,18 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     // Send queue update to Player Window
     (window as any).electronAPI.controlPlayerWindow('updateQueue', {
       activeQueue: queue,
-      priorityQueue: priorityQueue
+      priorityQueue: priorityQueue,
+      queueIndex: queueIndex
     });
-  }, [isElectron, queue, priorityQueue]);
+  }, [isElectron, queue, priorityQueue, queueIndex]);
+
+  // Sync overlay settings to Player Window when they change
+  useEffect(() => {
+    if (!isElectron) return;
+    
+    console.log('[PlayerWindow] Sending overlay settings to player window:', overlaySettings);
+    (window as any).electronAPI.controlPlayerWindow('updateOverlaySettings', overlaySettings);
+  }, [isElectron, overlaySettings]);
 
   // Sync player state to Supabase when it changes
   // This ensures Web Admin / Kiosk see up-to-date state
@@ -822,16 +1103,59 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       {/* Queue Play Confirmation Dialog */}
       {showQueuePlayDialog && queueVideoToPlay && (
         <div className="dialog-overlay" onClick={() => { setShowQueuePlayDialog(false); setQueueVideoToPlay(null); }}>
-          <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+          <div className="dialog-box dialog-box-wide" onClick={(e) => e.stopPropagation()}>
             <h3>{queueVideoToPlay.video.title}{queueVideoToPlay.video.artist ? ` - ${getDisplayArtist(queueVideoToPlay.video.artist)}` : ''}</h3>
-            <p>Play now?</p>
-            <div className="dialog-actions">
-              <button className="dialog-btn dialog-btn-primary" onClick={confirmQueuePlay}>PLAY NOW</button>
+            <div className="dialog-actions dialog-actions-grid">
+              <button className="dialog-btn dialog-btn-primary" onClick={confirmQueuePlay}>▶ PLAY NOW</button>
+              <button className="dialog-btn dialog-btn-secondary" onClick={moveQueueVideoToNext}>⏭ PLAY NEXT</button>
+              <button className="dialog-btn dialog-btn-danger" onClick={removeQueueVideo}>✕ REMOVE</button>
               <button className="dialog-btn" onClick={() => { setShowQueuePlayDialog(false); setQueueVideoToPlay(null); }}>CANCEL</button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Skip Priority Queue Video Confirmation Dialog */}
+      {showSkipConfirmDialog && (
+        <div className="dialog-overlay" onClick={() => setShowSkipConfirmDialog(false)}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+            <h3>Now playing from Priority Queue</h3>
+            <p>Do you really want to skip this requested song?</p>
+            <div className="dialog-actions">
+              <button className="dialog-btn dialog-btn-warning" onClick={confirmSkip}>SKIP</button>
+              <button className="dialog-btn" onClick={() => setShowSkipConfirmDialog(false)}>CANCEL</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video Click Popover - Add to Priority Queue */}
+      {popoverVideo && (
+        <div 
+          className="video-popover"
+          style={{
+            position: 'fixed',
+            left: Math.min(popoverPosition.x, window.innerWidth - 320),
+            top: Math.min(popoverPosition.y, window.innerHeight - 150),
+            zIndex: 9999,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="popover-content">
+            <div className="popover-title">
+              {getDisplayArtist(popoverVideo.artist) 
+                ? `${getDisplayArtist(popoverVideo.artist)} - ${popoverVideo.title}` 
+                : popoverVideo.title}
+            </div>
+            <div className="popover-subtitle">Add to Priority Queue?</div>
+          </div>
+          <div className="popover-actions">
+            <button className="popover-btn popover-btn-cancel" onClick={handleClosePopover}>Cancel</button>
+            <button className="popover-btn popover-btn-primary" onClick={handleAddToPriorityQueue}>Add to Priority Queue</button>
+          </div>
+        </div>
+      )}
+      {popoverVideo && <div className="popover-backdrop" onClick={handleClosePopover} />}
       
       {/* Fixed Top Header */}
       <header className="top-header">
@@ -974,12 +1298,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             <div className="tab-content active">
               <div className="tab-header">
                 <h1>Queue</h1>
-                <div className="tab-actions">
-                  <button className="action-btn" onClick={handleClearQueue}>
-                    <span className="material-symbols-rounded">clear_all</span>
-                    Clear Queue
-                  </button>
-                </div>
               </div>
               <div className="table-container">
                 {/* Now Playing Section */}
@@ -989,17 +1307,27 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                       <span className="material-symbols-rounded">play_circle</span>
                       NOW PLAYING
                     </div>
-                    <table className="media-table">
-                      <tbody>
-                        <tr className="playing">
-                          <td className="col-index">▶</td>
-                          <td className="col-title">{currentVideo.title}</td>
-                          <td>{getDisplayArtist(currentVideo.artist)}</td>
-                          <td>{currentVideo.duration || '—'}</td>
-                          <td>{currentVideo.playlistDisplayName || getPlaylistDisplayName(currentVideo.playlist || '')}</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                    <div className="now-playing-content">
+                      <div className="now-playing-info">
+                        <div className="now-playing-title">{currentVideo.title}</div>
+                        <div className="now-playing-artist">{getDisplayArtist(currentVideo.artist)}</div>
+                        <div className="now-playing-playlist">{currentVideo.playlistDisplayName || getPlaylistDisplayName(currentVideo.playlist || '')}</div>
+                      </div>
+                      <div className="now-playing-progress">
+                        <span className="time-elapsed">
+                          {Math.floor(playbackTime / 60)}:{String(Math.floor(playbackTime % 60)).padStart(2, '0')}
+                        </span>
+                        <div className="progress-bar-container">
+                          <div 
+                            className="progress-bar-fill" 
+                            style={{ width: `${playbackDuration > 0 ? (playbackTime / playbackDuration) * 100 : 0}%` }}
+                          />
+                        </div>
+                        <span className="time-remaining">
+                          -{Math.floor((playbackDuration - playbackTime) / 60)}:{String(Math.floor((playbackDuration - playbackTime) % 60)).padStart(2, '0')}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -1029,7 +1357,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                   </div>
                 )}
 
-                {/* Active Queue Section */}
+                {/* Active Queue Section - Reordered: "Up Next" first, then "Already Played" */}
                 <div className="queue-section active-queue-section">
                   <div className="queue-section-header">
                     <span className="material-symbols-rounded">queue_music</span>
@@ -1048,28 +1376,44 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     <tbody>
                       {queue.length === 0 ? (
                         <tr className="empty-state">
-                          <td colSpan={5}>Queue is empty. Add tracks from Search or Browse.</td>
+                          <td colSpan={5}>Queue is empty. Add tracks from Search.</td>
                         </tr>
-                      ) : queue.filter((_, idx) => idx !== queueIndex).length === 0 ? (
-                        <tr className="empty-state">
-                          <td colSpan={5}>No more tracks in queue.</td>
-                        </tr>
-                      ) : queue.map((track, index) => {
-                        // Skip the currently playing track
-                        if (index === queueIndex) return null;
-                        return (
+                      ) : (() => {
+                        // Reorder: videos after current index first ("up next"), then videos before ("already played")
+                        const upNextVideos = queue.slice(queueIndex + 1).map((track, idx) => ({
+                          track,
+                          originalIndex: queueIndex + 1 + idx,
+                          isUpNext: true
+                        }));
+                        const alreadyPlayedVideos = queue.slice(0, queueIndex).map((track, idx) => ({
+                          track,
+                          originalIndex: idx,
+                          isUpNext: false
+                        }));
+                        const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
+                        
+                        if (reorderedQueue.length === 0) {
+                          return (
+                            <tr className="empty-state">
+                              <td colSpan={5}>No more tracks in queue.</td>
+                            </tr>
+                          );
+                        }
+                        
+                        return reorderedQueue.map(({ track, originalIndex, isUpNext }, displayIndex) => (
                           <tr
-                            key={`queue-${track.id}-${index}`}
-                            onClick={() => handleQueueItemClick(index)}
+                            key={`queue-${track.id}-${originalIndex}`}
+                            className={!isUpNext ? 'played' : ''}
+                            onClick={() => handleQueueItemClick(originalIndex)}
                           >
-                            <td>{index + 1}</td>
+                            <td>{displayIndex + 1}</td>
                             <td className="col-title">{track.title}</td>
                             <td>{getDisplayArtist(track.artist)}</td>
                             <td>{track.duration || '—'}</td>
                             <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
                           </tr>
-                        );
-                      })}
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -1080,31 +1424,71 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           {/* Search Tab */}
           {currentTab === 'search' && (
             <div className="tab-content active">
-              <div className="search-header">
-                <div className="search-input-container">
+              <div className="search-header" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+                <div className="search-input-container" style={{ flex: '1 1 300px', minWidth: '200px' }}>
                   <span className="material-symbols-rounded search-icon">search</span>
                   <input
                     type="text"
                     placeholder="Search all music…"
                     className="search-input"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setSearchLimit(100); // Reset pagination when query changes
+                    }}
                   />
+                  {searchLoading && <span className="material-symbols-rounded loading-icon" style={{ marginLeft: '8px', animation: 'spin 1s linear infinite' }}>progress_activity</span>}
                 </div>
-                <div className="search-filters">
-                  <select className="filter-select" value={searchScope} onChange={(e) => handleScopeChange(e.target.value, false)}>
-                    <option value="all">All Music</option>
-                    <option value="no-karaoke">Exclude Karaoke</option>
-                    <option value="karaoke">Karaoke Only</option>
-                    <option value="queue">Current Queue</option>
-                    <option value="playlist">Selected Playlist</option>
-                  </select>
-                  <select className="filter-select" value={searchSort} onChange={(e) => setSearchSort(e.target.value)}>
-                    <option value="relevance">Relevance</option>
-                    <option value="artist">Artist</option>
-                    <option value="title">Title</option>
-                    <option value="az">A-Z</option>
-                  </select>
+                <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '12px', marginRight: '4px' }}>Filter:</span>
+                  {selectedPlaylist && (
+                    <button
+                      className={`radio-btn ${searchScope === 'playlist' ? 'active' : ''}`}
+                      onClick={() => handleScopeChange('playlist')}
+                      style={{ fontWeight: searchScope === 'playlist' ? 'bold' : 'normal' }}
+                    >
+                      📁 {getPlaylistDisplayName(selectedPlaylist)}
+                    </button>
+                  )}
+                  <button
+                    className={`radio-btn ${searchScope === 'all' ? 'active' : ''}`}
+                    onClick={() => handleScopeChange('all')}
+                  >
+                    All Music
+                  </button>
+                  <button
+                    className={`radio-btn ${searchScope === 'karaoke' ? 'active' : ''}`}
+                    onClick={() => handleScopeChange('karaoke')}
+                  >
+                    Karaoke Only
+                  </button>
+                  <button
+                    className={`radio-btn ${searchScope === 'no-karaoke' ? 'active' : ''}`}
+                    onClick={() => handleScopeChange('no-karaoke')}
+                  >
+                    Hide Karaoke
+                  </button>
+                </div>
+                <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '12px', marginRight: '4px' }}>Sort:</span>
+                  <button
+                    className={`radio-btn ${searchSort === 'artist' ? 'active' : ''}`}
+                    onClick={() => setSearchSort('artist')}
+                  >
+                    Artist
+                  </button>
+                  <button
+                    className={`radio-btn ${searchSort === 'az' || searchSort === 'title' ? 'active' : ''}`}
+                    onClick={() => setSearchSort('az')}
+                  >
+                    Song
+                  </button>
+                  <button
+                    className={`radio-btn ${searchSort === 'playlist' ? 'active' : ''}`}
+                    onClick={() => setSearchSort('playlist')}
+                  >
+                    Playlist
+                  </button>
                 </div>
               </div>
               <div className="table-container">
@@ -1119,80 +1503,19 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     </tr>
                   </thead>
                   <tbody>
-                    {!searchQuery.trim() ? (
+                    {searchLoading && searchResults.length === 0 ? (
                       <tr className="empty-state">
-                        <td colSpan={5}>Start typing to search...</td>
+                        <td colSpan={5}>Loading...</td>
                       </tr>
-                    ) : getSearchResults().length === 0 ? (
-                      <tr className="empty-state">
-                        <td colSpan={5}>No results found</td>
-                      </tr>
-                    ) : (
-                      getSearchResults().map((track, index) => (
-                        <tr key={`${track.id}-${index}`} onClick={() => handleAddToQueue(track)}>
-                          <td>{index + 1}</td>
-                          <td className="col-title">{track.title}</td>
-                          <td>{getDisplayArtist(track.artist)}</td>
-                          <td>{track.duration || '—'}</td>
-                          <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Browse Tab */}
-          {currentTab === 'browse' && (
-            <div className="tab-content active">
-              <div className="search-header">
-                <div className="search-input-container">
-                  <span className="material-symbols-rounded search-icon">search</span>
-                  <input
-                    type="text"
-                    placeholder="Filter current playlist…"
-                    className="search-input"
-                    value={browseQuery}
-                    onChange={(e) => setBrowseQuery(e.target.value)}
-                  />
-                </div>
-                <div className="search-filters">
-                  <select className="filter-select" value={browseScope} onChange={(e) => handleScopeChange(e.target.value, true)}>
-                    <option value="all">All Music</option>
-                    {selectedPlaylist && <option value="playlist">Selected Playlist: {getPlaylistDisplayName(selectedPlaylist)}</option>}
-                    <option value="no-karaoke">Exclude Karaoke</option>
-                    <option value="karaoke">Karaoke Only</option>
-                  </select>
-                  <select className="filter-select" value={browseSort} onChange={(e) => setBrowseSort(e.target.value)}>
-                    <option value="az">A-Z</option>
-                    <option value="artist">Artist</option>
-                    <option value="title">Title</option>
-                  </select>
-                </div>
-              </div>
-              <div className="table-container">
-                <table className="media-table">
-                  <thead>
-                    <tr>
-                      <th className="col-index">#</th>
-                      <th className="col-title">Title</th>
-                      <th className="col-artist">Artist</th>
-                      <th className="col-duration">Duration</th>
-                      <th className="col-playlist">Playlist</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {getBrowseResults().length === 0 ? (
+                    ) : searchResults.length === 0 ? (
                       <tr className="empty-state">
                         <td colSpan={5}>
-                          {browseScope === 'playlist' && selectedPlaylist ? 'No tracks in this playlist' : 'No tracks found'}
+                          {searchScope === 'playlist' && selectedPlaylist ? 'No tracks in this playlist' : 'No tracks found'}
                         </td>
                       </tr>
                     ) : (
-                      getBrowseResults().map((track, index) => (
-                        <tr key={`${track.id}-${index}`} onClick={() => handleAddToQueue(track)}>
+                      searchResults.map((track, index) => (
+                        <tr key={`${track.id}-${index}`} onClick={(e) => handleVideoClick(track, e)} style={{ cursor: 'pointer' }}>
                           <td>{index + 1}</td>
                           <td className="col-title">{track.title}</td>
                           <td>{getDisplayArtist(track.artist)}</td>
@@ -1203,6 +1526,21 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     )}
                   </tbody>
                 </table>
+                {searchTotalCount > searchResults.length && (
+                  <div className="load-more-container" style={{ padding: '12px', textAlign: 'center' }}>
+                    <button 
+                      className="action-btn"
+                      onClick={() => setSearchLimit(prev => prev + 100)}
+                      style={{ marginRight: '8px' }}
+                      disabled={searchLoading}
+                    >
+                      {searchLoading ? 'Loading...' : `Load More (${searchTotalCount - searchResults.length} remaining)`}
+                    </button>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
+                      Showing {searchResults.length} of {searchTotalCount} tracks
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1434,6 +1772,573 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     </div>
                   </div>
                 </div>
+
+                {/* Player Overlay Settings Section */}
+                <div className="settings-section">
+                  <h2><span className="section-icon">🎬</span> Player Overlay</h2>
+                  
+                  {/* Now Playing Text */}
+                  <div className="setting-item">
+                    <label>'Now Playing' Text</label>
+                    <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className={`radio-btn ${!overlaySettings.showNowPlaying ? 'active' : ''}`}
+                        onClick={() => setOverlaySettings(prev => ({ ...prev, showNowPlaying: false }))}
+                      >
+                        Hide
+                      </button>
+                      <button
+                        className={`radio-btn ${overlaySettings.showNowPlaying ? 'active' : ''}`}
+                        onClick={() => setOverlaySettings(prev => ({ ...prev, showNowPlaying: true }))}
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Now Playing Settings (conditional) */}
+                  <div className={`conditional-settings ${overlaySettings.showNowPlaying ? 'visible' : ''}`}>
+                    <div className="setting-item">
+                      <label>Now Playing Position & Size</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Size:</span>
+                          <input
+                            type="number"
+                            min="10"
+                            max="200"
+                            value={overlaySettings.nowPlayingSize}
+                            onChange={(e) => {
+                              const value = Math.min(200, Math.max(10, parseInt(e.target.value) || 100));
+                              setOverlaySettings(prev => ({ ...prev, nowPlayingSize: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>X:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={overlaySettings.nowPlayingX}
+                            onChange={(e) => {
+                              const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 5));
+                              setOverlaySettings(prev => ({ ...prev, nowPlayingX: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Y:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={overlaySettings.nowPlayingY}
+                            onChange={(e) => {
+                              const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 85));
+                              setOverlaySettings(prev => ({ ...prev, nowPlayingY: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Opacity:</span>
+                          <input
+                            type="number"
+                            min="10"
+                            max="100"
+                            value={overlaySettings.nowPlayingOpacity}
+                            onChange={(e) => {
+                              const value = Math.min(100, Math.max(10, parseInt(e.target.value) || 100));
+                              setOverlaySettings(prev => ({ ...prev, nowPlayingOpacity: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Coming Up Ticker */}
+                  <div className="setting-item">
+                    <label>'Coming Up' Ticker</label>
+                    <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className={`radio-btn ${!overlaySettings.showComingUp ? 'active' : ''}`}
+                        onClick={() => setOverlaySettings(prev => ({ ...prev, showComingUp: false }))}
+                      >
+                        Hide
+                      </button>
+                      <button
+                        className={`radio-btn ${overlaySettings.showComingUp ? 'active' : ''}`}
+                        onClick={() => setOverlaySettings(prev => ({ ...prev, showComingUp: true }))}
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Coming Up Settings (conditional) */}
+                  <div className={`conditional-settings ${overlaySettings.showComingUp ? 'visible' : ''}`}>
+                    <div className="setting-item">
+                      <label>Coming Up Position & Size</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Size:</span>
+                          <input
+                            type="number"
+                            min="10"
+                            max="200"
+                            value={overlaySettings.comingUpSize}
+                            onChange={(e) => {
+                              const value = Math.min(200, Math.max(10, parseInt(e.target.value) || 100));
+                              setOverlaySettings(prev => ({ ...prev, comingUpSize: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>X:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={overlaySettings.comingUpX}
+                            onChange={(e) => {
+                              const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 5));
+                              setOverlaySettings(prev => ({ ...prev, comingUpX: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Y:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={overlaySettings.comingUpY}
+                            onChange={(e) => {
+                              const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 95));
+                              setOverlaySettings(prev => ({ ...prev, comingUpY: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Opacity:</span>
+                          <input
+                            type="number"
+                            min="10"
+                            max="100"
+                            value={overlaySettings.comingUpOpacity}
+                            onChange={(e) => {
+                              const value = Math.min(100, Math.max(10, parseInt(e.target.value) || 100));
+                              setOverlaySettings(prev => ({ ...prev, comingUpOpacity: value }));
+                            }}
+                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                          />
+                          <span>%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Watermark / Logo */}
+                  <div className="setting-item">
+                    <label>Watermark / Logo</label>
+                    <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className={`radio-btn ${!overlaySettings.showWatermark ? 'active' : ''}`}
+                        onClick={() => setOverlaySettings(prev => ({ ...prev, showWatermark: false }))}
+                      >
+                        Off
+                      </button>
+                      <button
+                        className={`radio-btn ${overlaySettings.showWatermark ? 'active' : ''}`}
+                        onClick={() => setOverlaySettings(prev => ({ ...prev, showWatermark: true }))}
+                      >
+                        On
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Watermark Settings (conditional) */}
+                  <div className={`conditional-settings ${overlaySettings.showWatermark ? 'visible' : ''}`}>
+                    {/* Image Selection */}
+                    <div className="setting-item">
+                      <label>Image</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {overlaySettings.watermarkImage && (
+                          <div className="watermark-preview" style={{
+                            width: '60px',
+                            height: '60px',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            border: '1px solid var(--border-color)',
+                            background: '#1a1a1a'
+                          }}>
+                            <img 
+                              src={overlaySettings.watermarkImage} 
+                              alt="Watermark preview"
+                              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                            />
+                          </div>
+                        )}
+                        <button 
+                          className="action-btn"
+                          onClick={async () => {
+                            if (isElectron) {
+                              try {
+                                const result = await (window as any).electronAPI.selectImageFile();
+                                if (result && result.filePath) {
+                                  setOverlaySettings(prev => ({ ...prev, watermarkImage: result.filePath }));
+                                }
+                              } catch (error) {
+                                console.error('Failed to select image:', error);
+                              }
+                            } else {
+                              // Web fallback - use file input
+                              const input = document.createElement('input');
+                              input.type = 'file';
+                              input.accept = 'image/*';
+                              input.onchange = (e) => {
+                                const file = (e.target as HTMLInputElement).files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = (ev) => {
+                                    setOverlaySettings(prev => ({ ...prev, watermarkImage: ev.target?.result as string }));
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              };
+                              input.click();
+                            }
+                          }}
+                        >
+                          <span className="material-symbols-rounded">image</span>
+                          Select Image
+                        </button>
+                        {overlaySettings.watermarkImage && overlaySettings.watermarkImage !== '/Obie_neon_no_BG.png' && (
+                          <button 
+                            className="action-btn"
+                            style={{ backgroundColor: 'var(--warning)' }}
+                            onClick={() => setOverlaySettings(prev => ({ ...prev, watermarkImage: '/Obie_neon_no_BG.png' }))}
+                          >
+                            <span className="material-symbols-rounded">restart_alt</span>
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Image Size */}
+                    <div className="setting-item">
+                      <label>Image Size</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                          type="number"
+                          min="1"
+                          max="400"
+                          value={overlaySettings.watermarkSize}
+                          onChange={(e) => {
+                            const value = Math.min(400, Math.max(1, parseInt(e.target.value) || 100));
+                            setOverlaySettings(prev => ({ ...prev, watermarkSize: value }));
+                          }}
+                          style={{
+                            width: '70px',
+                            padding: '6px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-secondary)',
+                            color: 'var(--text-primary)',
+                            fontSize: '14px'
+                          }}
+                        />
+                        <span>%</span>
+                        <input
+                          type="range"
+                          min="1"
+                          max="400"
+                          value={overlaySettings.watermarkSize}
+                          onChange={(e) => setOverlaySettings(prev => ({ ...prev, watermarkSize: parseInt(e.target.value) }))}
+                          style={{ flex: 1, maxWidth: '150px' }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Image Position */}
+                    <div className="setting-item">
+                      <label>Image Position</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>X:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={overlaySettings.watermarkX}
+                            onChange={(e) => {
+                              const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 90));
+                              setOverlaySettings(prev => ({ ...prev, watermarkX: value }));
+                            }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
+                          />
+                          <span>%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Y:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={overlaySettings.watermarkY}
+                            onChange={(e) => {
+                              const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 10));
+                              setOverlaySettings(prev => ({ ...prev, watermarkY: value }));
+                            }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
+                          />
+                          <span>%</span>
+                        </div>
+                      </div>
+                      <small style={{ color: 'var(--text-secondary)', marginTop: '4px', display: 'block' }}>
+                        Position is relative to player window (center of image). Default: X=90%, Y=10%
+                      </small>
+                    </div>
+
+                    {/* Image Opacity */}
+                    <div className="setting-item">
+                      <label>Image Opacity</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                          type="number"
+                          min="10"
+                          max="100"
+                          value={overlaySettings.watermarkOpacity}
+                          onChange={(e) => {
+                            const value = Math.min(100, Math.max(10, parseInt(e.target.value) || 80));
+                            setOverlaySettings(prev => ({ ...prev, watermarkOpacity: value }));
+                          }}
+                          style={{
+                            width: '70px',
+                            padding: '6px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-secondary)',
+                            color: 'var(--text-primary)',
+                            fontSize: '14px'
+                          }}
+                        />
+                        <span>%</span>
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          value={overlaySettings.watermarkOpacity}
+                          onChange={(e) => setOverlaySettings(prev => ({ ...prev, watermarkOpacity: parseInt(e.target.value) }))}
+                          style={{ flex: 1, maxWidth: '150px' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Kiosk Settings Section */}
+                <div className="settings-section">
+                  <h2><span className="section-icon">🎰</span> Kiosk</h2>
+                  
+                  {/* Kiosk Mode Toggle */}
+                  <div className="setting-item">
+                    <label>Kiosk Mode</label>
+                    <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className={`radio-btn ${kioskSettings.mode === 'freeplay' ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, mode: 'freeplay' }))}
+                      >
+                        Free Play
+                      </button>
+                      <button
+                        className={`radio-btn ${kioskSettings.mode === 'credits' ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, mode: 'credits' }))}
+                      >
+                        Credits
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Kiosk UI Style Toggle */}
+                  <div className="setting-item">
+                    <label>Kiosk UI Style</label>
+                    <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className={`radio-btn ${kioskSettings.uiMode === 'classic' ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, uiMode: 'classic' }))}
+                      >
+                        Classic
+                      </button>
+                      <button
+                        className={`radio-btn ${kioskSettings.uiMode === 'jukebox' ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, uiMode: 'jukebox' }))}
+                      >
+                        Jukebox
+                      </button>
+                    </div>
+                    <span className="setting-hint" style={{ marginLeft: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {kioskSettings.uiMode === 'classic' ? 'Standard search interface' : 'Premium cyber-neon touchscreen UI'}
+                    </span>
+                  </div>
+
+                  {/* Kiosk Balance */}
+                  <div className="setting-item">
+                    <label>Kiosk Balance</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span className="kiosk-balance" style={{ 
+                        fontSize: '18px', 
+                        fontWeight: 'bold', 
+                        color: 'var(--accent-primary)',
+                        minWidth: '60px'
+                      }}>
+                        {kioskSettings.creditBalance} Credits
+                      </span>
+                      <button 
+                        className="action-btn"
+                        onClick={() => setKioskSettings(prev => ({ ...prev, creditBalance: prev.creditBalance + 1 }))}
+                      >
+                        +1
+                      </button>
+                      <button 
+                        className="action-btn"
+                        onClick={() => setKioskSettings(prev => ({ ...prev, creditBalance: prev.creditBalance + 3 }))}
+                      >
+                        +3
+                      </button>
+                      <button 
+                        className="action-btn"
+                        style={{ backgroundColor: 'var(--error)' }}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, creditBalance: 0 }))}
+                      >
+                        Clear (0)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Kiosk Coin Acceptor Status */}
+                  <div className="setting-item">
+                    <label>Coin Acceptor Status</label>
+                    <span className={`status-indicator ${kioskSerialStatus === 'connected' ? 'active' : ''}`} style={{ marginRight: '12px' }}>
+                      {kioskSerialStatus === 'connected' ? 'SERIAL DEVICE CONNECTED' : 'SERIAL DEVICE DISCONNECTED'}
+                    </span>
+                  </div>
+
+                  {/* Serial Device Selection */}
+                  <div className="setting-item">
+                    <label>Serial Devices</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button 
+                          className="action-btn"
+                          onClick={() => {
+                            // TODO: Send command via Supabase to Kiosk to enumerate serial devices
+                            console.log('[Kiosk] Requesting serial device list from Kiosk...');
+                            // Placeholder - will be populated by Kiosk via Supabase
+                            setKioskAvailableSerialDevices(['COM1', 'COM3', '/dev/ttyUSB0']);
+                          }}
+                        >
+                          <span className="material-symbols-rounded">usb</span>
+                          List Available Devices
+                        </button>
+                      </div>
+                      <select 
+                        className="setting-select"
+                        value={kioskSelectedSerialDevice}
+                        onChange={(e) => setKioskSelectedSerialDevice(e.target.value)}
+                        style={{ maxWidth: '300px' }}
+                      >
+                        <option value="">Select a device...</option>
+                        {kioskAvailableSerialDevices.map((device) => (
+                          <option key={device} value={device}>{device}</option>
+                        ))}
+                      </select>
+                      <button 
+                        className="action-btn"
+                        onClick={() => {
+                          if (kioskSelectedSerialDevice) {
+                            // TODO: Send command via Supabase to Kiosk to connect to selected device
+                            console.log('[Kiosk] Requesting connection to:', kioskSelectedSerialDevice);
+                            // Kiosk will update status via Supabase after attempting connection
+                          }
+                        }}
+                        disabled={!kioskSelectedSerialDevice}
+                      >
+                        <span className="material-symbols-rounded">link</span>
+                        Connect to Selected Device
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Kiosk Search Mode */}
+                  <div className="setting-item">
+                    <label>Search All Music</label>
+                    <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className={`radio-btn ${kioskSettings.searchAllMusic ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, searchAllMusic: true }))}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        className={`radio-btn ${!kioskSettings.searchAllMusic ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, searchAllMusic: false }))}
+                      >
+                        No
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="setting-item">
+                    <label>Search YouTube <span style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>(future)</span></label>
+                    <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className={`radio-btn ${kioskSettings.searchYoutube ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, searchYoutube: true }))}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        className={`radio-btn ${!kioskSettings.searchYoutube ? 'active' : ''}`}
+                        onClick={() => setKioskSettings(prev => ({ ...prev, searchYoutube: false }))}
+                      >
+                        No
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1447,11 +2352,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 <div className="tools-grid">
                   {isElectron && (
                     <>
-                      <div className="tool-card" onClick={handleOpenFullscreen}>
-                        <span className="material-symbols-rounded">open_in_new</span>
-                        <h3>Fullscreen Player</h3>
-                        <p>Open player on secondary display</p>
-                      </div>
                       <div className="tool-card" onClick={handleRefreshPlaylists}>
                         <span className="material-symbols-rounded">refresh</span>
                         <h3>Refresh Playlists</h3>

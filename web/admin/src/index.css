@@ -386,6 +386,81 @@ body {
 }
 
 /* ==========================================
+   QUEUE SECTIONS
+   ========================================== */
+.queue-section {
+  margin-bottom: 24px;
+}
+
+.queue-section:last-child {
+  margin-bottom: 0;
+}
+
+.queue-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background-color: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+}
+
+.queue-section-header .material-symbols-rounded {
+  font-size: 18px;
+}
+
+.queue-section-header.priority {
+  color: #ff9500;
+  background-color: rgba(255, 149, 0, 0.1);
+}
+
+.queue-section-header.priority .material-symbols-rounded {
+  color: #ff9500;
+}
+
+.queue-section .media-table {
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+}
+
+.now-playing-section .media-table tbody tr.playing {
+  background-color: rgba(29, 185, 84, 0.1);
+}
+
+.now-playing-section .media-table tbody tr.playing::before {
+  background-color: var(--accent);
+  width: 4px;
+}
+
+.priority-queue-section .media-table tbody tr.priority-item {
+  background-color: rgba(255, 149, 0, 0.05);
+}
+
+.priority-queue-section .media-table tbody tr.priority-item:hover {
+  background-color: rgba(255, 149, 0, 0.1);
+}
+
+.priority-queue-section .media-table tbody tr.priority-item td:first-child {
+  color: #ff9500;
+  font-weight: 600;
+}
+
+/* "Already Played" rows in queue - dimmed appearance */
+.media-table tbody tr.played {
+  opacity: 0.5;
+}
+
+.media-table tbody tr.played:hover {
+  opacity: 0.75;
+}
+
+/* ==========================================
    MAIN CONTAINER
    ========================================== */
 .main-container {

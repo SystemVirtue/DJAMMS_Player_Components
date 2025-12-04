@@ -462,9 +462,33 @@ class SupabaseService {
     }
 
     if (pendingCommands && pendingCommands.length > 0) {
-      console.log(`[SupabaseService] Processing ${pendingCommands.length} pending commands`);
-      for (const command of pendingCommands) {
-        await this.processCommand(command);
+      // Filter out commands we've already processed (prevents log spam)
+      const newCommands = pendingCommands.filter(cmd => !this.processedCommandIds.has(cmd.id));
+      
+      if (newCommands.length > 0) {
+        console.log(`[SupabaseService] Processing ${newCommands.length} pending commands`);
+        for (const command of newCommands) {
+          await this.processCommand(command);
+        }
+      }
+      
+      // Clean up stale commands that are stuck in 'pending' but we've already processed
+      // This handles the case where the status update failed
+      const staleCommands = pendingCommands.filter(cmd => this.processedCommandIds.has(cmd.id));
+      if (staleCommands.length > 0) {
+        // Batch update all stale commands to 'executed' status
+        const staleIds = staleCommands.map(cmd => cmd.id);
+        this.client
+          .from('admin_commands')
+          .update({ status: 'executed', executed_at: new Date().toISOString() })
+          .in('id', staleIds)
+          .then(({ error: updateError }) => {
+            if (updateError) {
+              console.warn('[SupabaseService] Error cleaning up stale commands:', updateError.message);
+            } else {
+              console.log(`[SupabaseService] 🧹 Cleaned up ${staleIds.length} stale commands`);
+            }
+          });
       }
     }
   }
@@ -476,13 +500,13 @@ class SupabaseService {
   private async processCommand(command: SupabaseCommand): Promise<void> {
     // CRITICAL: Check if command was already processed to prevent duplicate execution
     if (this.processedCommandIds.has(command.id)) {
-      console.log(`[SupabaseService] ⏭️ Command ${command.id} already processed, skipping duplicate`);
+      // Silent skip - already processed (this can happen via Broadcast + polling race)
       return;
     }
     
     // Check if command is currently being processed (prevent concurrent execution)
     if (this.processingCommandIds.has(command.id)) {
-      console.log(`[SupabaseService] ⏳ Command ${command.id} is currently being processed, skipping`);
+      // Silent skip - currently processing
       return;
     }
     
@@ -775,6 +799,133 @@ class SupabaseService {
 
     if (error) {
       console.error('[SupabaseService] Error marking video unavailable:', error);
+    }
+  }
+
+  // ==================== Search & Browse (PostgreSQL Full-Text Search) ====================
+
+  /**
+   * Search videos using PostgreSQL full-text search
+   * @param query - Search query string
+   * @param scope - 'all' | 'karaoke' | 'no-karaoke'
+   * @param limit - Max results (default 100)
+   * @param offset - Pagination offset (default 0)
+   */
+  public async searchVideos(
+    query: string,
+    scope: string = 'all',
+    limit: number = 100,
+    offset: number = 0
+  ): Promise<Video[]> {
+    if (!this.client) {
+      console.error('[SupabaseService] Client not initialized for search');
+      return [];
+    }
+
+    try {
+      const { data, error } = await this.client.rpc('search_videos', {
+        search_query: query,
+        scope: scope,
+        result_limit: limit,
+        result_offset: offset
+      });
+
+      if (error) {
+        console.error('[SupabaseService] Search error:', error);
+        return [];
+      }
+
+      // Transform database results to Video format
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        artist: row.artist,
+        path: row.path,
+        src: row.path, // Use path as src for local files
+        playlist: row.playlist,
+        playlistDisplayName: row.playlist_display_name,
+        duration: row.duration
+      }));
+    } catch (error) {
+      console.error('[SupabaseService] Search exception:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Browse videos with sorting and filtering
+   * @param scope - 'all' | 'karaoke' | 'no-karaoke'
+   * @param sortBy - 'title' | 'artist' | 'playlist'
+   * @param sortDir - 'asc' | 'desc'
+   * @param limit - Max results (default 100)
+   * @param offset - Pagination offset (default 0)
+   */
+  public async browseVideos(
+    scope: string = 'all',
+    sortBy: string = 'title',
+    sortDir: string = 'asc',
+    limit: number = 100,
+    offset: number = 0
+  ): Promise<Video[]> {
+    if (!this.client) {
+      console.error('[SupabaseService] Client not initialized for browse');
+      return [];
+    }
+
+    try {
+      const { data, error } = await this.client.rpc('browse_videos', {
+        scope: scope,
+        sort_by: sortBy,
+        sort_dir: sortDir,
+        result_limit: limit,
+        result_offset: offset
+      });
+
+      if (error) {
+        console.error('[SupabaseService] Browse error:', error);
+        return [];
+      }
+
+      // Transform database results to Video format
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        artist: row.artist,
+        path: row.path,
+        src: row.path, // Use path as src for local files
+        playlist: row.playlist,
+        playlistDisplayName: row.playlist_display_name,
+        duration: row.duration
+      }));
+    } catch (error) {
+      console.error('[SupabaseService] Browse exception:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get total video count for pagination
+   * @param scope - 'all' | 'karaoke' | 'no-karaoke'
+   */
+  public async countVideos(scope: string = 'all'): Promise<number> {
+    if (!this.client) {
+      return 0;
+    }
+
+    try {
+      const { data, error } = await this.client.rpc('count_videos', {
+        scope: scope
+      });
+
+      if (error) {
+        console.error('[SupabaseService] Count error:', error);
+        return 0;
+      }
+
+      return data || 0;
+    } catch (error) {
+      console.error('[SupabaseService] Count exception:', error);
+      return 0;
     }
   }
 
