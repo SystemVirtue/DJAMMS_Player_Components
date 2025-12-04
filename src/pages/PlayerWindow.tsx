@@ -139,9 +139,27 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // This runs in the main window so commands are received even without Player Window open
   const { isInitialized: supabaseInitialized, isOnline: supabaseOnline, syncState } = useSupabase({
     autoInit: isElectron, // Only initialize in Electron environment
-    onPlay: (video?: QueueVideoItem) => {
-      console.log('[PlayerWindow] Supabase play command received:', video?.title);
-      if (video) {
+    onPlay: (video?: QueueVideoItem, queueIndex?: number) => {
+      console.log('[PlayerWindow] Supabase play command received:', video?.title, 'queueIndex:', queueIndex);
+      
+      // If queueIndex is provided, play from that position in the queue (click-to-play from Web Admin)
+      if (typeof queueIndex === 'number' && queueIndex >= 0) {
+        const currentQueue = queueRef.current;
+        if (currentQueue && queueIndex < currentQueue.length) {
+          const videoToPlay = currentQueue[queueIndex];
+          console.log('[PlayerWindow] Playing from queue index:', queueIndex, videoToPlay.title);
+          setQueueIndex(queueIndex);
+          setCurrentVideo(videoToPlay);
+          setIsPlaying(true);
+          if (isElectron) {
+            (window as any).electronAPI.controlPlayerWindow('play', videoToPlay);
+          }
+          return;
+        }
+      }
+      
+      // If video object is provided, play that specific video
+      if (video && video.id) {
         // Convert QueueVideoItem to Video format and play
         const videoToPlay: Video = {
           id: video.id,
@@ -263,6 +281,79 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             (window as any).electronAPI.controlPlayerWindow('play', finalTracks[0]);
           }
         }
+      }
+    },
+    onQueueMove: (fromIndex: number, toIndex: number) => {
+      console.log('[PlayerWindow] Supabase queue_move command received:', fromIndex, '->', toIndex);
+      setQueue(prev => {
+        const newQueue = [...prev];
+        const currentIdx = queueIndexRef.current;
+        
+        // Validate indices
+        if (fromIndex < 0 || fromIndex >= newQueue.length || toIndex < 0 || toIndex >= newQueue.length) {
+          console.warn('[PlayerWindow] Invalid queue move indices');
+          return prev;
+        }
+        
+        // Remove item from old position and insert at new position
+        const [movedItem] = newQueue.splice(fromIndex, 1);
+        newQueue.splice(toIndex, 0, movedItem);
+        
+        // Adjust queueIndex if needed to keep current video playing
+        let newQueueIdx = currentIdx;
+        if (fromIndex === currentIdx) {
+          // Moving the current video
+          newQueueIdx = toIndex;
+        } else if (fromIndex < currentIdx && toIndex >= currentIdx) {
+          // Moving item from before current to after current
+          newQueueIdx = currentIdx - 1;
+        } else if (fromIndex > currentIdx && toIndex <= currentIdx) {
+          // Moving item from after current to before current
+          newQueueIdx = currentIdx + 1;
+        }
+        
+        setQueueIndex(newQueueIdx);
+        
+        // Sync immediately
+        setTimeout(() => {
+          syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true);
+        }, 0);
+        
+        return newQueue;
+      });
+    },
+    onQueueRemove: (videoId: string, queueType: 'active' | 'priority') => {
+      console.log('[PlayerWindow] Supabase queue_remove command received:', videoId, queueType);
+      
+      if (queueType === 'priority') {
+        setPriorityQueue(prev => {
+          const newQueue = prev.filter(v => v.id !== videoId);
+          setTimeout(() => syncState({ priorityQueue: newQueue }, true), 0);
+          return newQueue;
+        });
+      } else {
+        setQueue(prev => {
+          const currentIdx = queueIndexRef.current;
+          const removeIdx = prev.findIndex(v => v.id === videoId);
+          
+          // Don't remove if it's the currently playing video or not found
+          if (removeIdx === -1 || removeIdx === currentIdx) {
+            console.warn('[PlayerWindow] Cannot remove: video not found or currently playing');
+            return prev;
+          }
+          
+          const newQueue = prev.filter(v => v.id !== videoId);
+          
+          // Adjust queueIndex if removing item before current
+          let newQueueIdx = currentIdx;
+          if (removeIdx < currentIdx) {
+            newQueueIdx = currentIdx - 1;
+            setQueueIndex(newQueueIdx);
+          }
+          
+          setTimeout(() => syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true), 0);
+          return newQueue;
+        });
       }
     }
   });

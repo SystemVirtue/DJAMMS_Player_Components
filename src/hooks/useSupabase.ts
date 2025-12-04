@@ -26,8 +26,8 @@ export interface UseSupabaseOptions {
   playerId?: string;
   /** Whether to auto-initialize on mount */
   autoInit?: boolean;
-  /** Callback when a play command is received */
-  onPlay?: (video?: QueueVideoItem) => void;
+  /** Callback when a play command is received (video and/or queueIndex for click-to-play) */
+  onPlay?: (video?: QueueVideoItem, queueIndex?: number) => void;
   /** Callback when a pause command is received */
   onPause?: () => void;
   /** Callback when a resume command is received */
@@ -152,11 +152,11 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
 
     const service = serviceRef.current;
 
-    // Play command
+    // Play command (supports both video object and queueIndex for click-to-play)
     if (onPlay) {
       service.onCommand('play', (cmd) => {
-        const payload = cmd.command_data as { video?: QueueVideoItem };
-        onPlay(payload?.video);
+        const payload = cmd.command_data as { video?: QueueVideoItem; queueIndex?: number };
+        onPlay(payload?.video, payload?.queueIndex);
       });
     }
 
