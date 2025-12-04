@@ -22,7 +22,7 @@ const QUICK_FILTERS = [
   { id: 'new', label: '✨ New Arrivals', icon: '✨' },
   { id: 'christmas', label: '🎄 Holiday', icon: '🎄' },
   { id: 'rock', label: '🎸 Rock', icon: '🎸' },
-  { id: 'hiphop', label: '🎤 Hip-Hop', icon: '🎤' },
+  { id: 'karaoke', label: '🎤 Karaoke', icon: '🎤' },
   { id: 'dance', label: '💃 Dance', icon: '💃' },
 ];
 
@@ -48,6 +48,18 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
   const [searchResults, setSearchResults] = useState<SupabaseLocalVideo[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [keyboardVisible] = useState(true);
+  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide'>('hide'); // 'show' = only karaoke, 'hide' = no karaoke
+  
+  // Filter results based on karaoke filter
+  const filteredResults = searchResults.filter(video => {
+    const hasKaraoke = video.title?.toLowerCase().includes('karaoke') || 
+                       video.path?.toLowerCase().includes('karaoke');
+    if (karaokeFilter === 'show') {
+      return hasKaraoke; // Only show karaoke items
+    } else {
+      return !hasKaraoke; // Hide karaoke items
+    }
+  });
   
   // UI state
   const [selectedVideo, setSelectedVideo] = useState<SupabaseLocalVideo | null>(null);
@@ -258,25 +270,45 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
       
       {/* Search Bar */}
       <div className="jukebox-search-bar">
-        <div className="search-input-wrapper">
-          <span className="search-icon">🔍</span>
-          <input
-            ref={searchInputRef}
-            type="text"
-            className="search-input"
-            placeholder="Search songs, artists..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            readOnly // Using on-screen keyboard
-          />
-          {searchQuery && (
-            <button className="search-clear-btn" onClick={handleClear}>
-              ✕
+        <div className="search-bar-row">
+          <div className="search-input-wrapper">
+            <span className="search-icon">🔍</span>
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="search-input"
+              placeholder="Search songs, artists..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              readOnly // Using on-screen keyboard
+            />
+            {searchQuery && (
+              <button className="search-clear-btn" onClick={handleClear}>
+                ✕
+              </button>
+            )}
+            <button className="search-mic-btn" title="Voice search (coming soon)">
+              🎤
             </button>
-          )}
-          <button className="search-mic-btn" title="Voice search (coming soon)">
-            🎤
-          </button>
+          </div>
+          
+          {/* Karaoke Filter Toggle */}
+          <div className="karaoke-filter-toggle">
+            <button
+              className={`filter-btn ${karaokeFilter === 'show' ? 'active' : ''}`}
+              onClick={() => setKaraokeFilter('show')}
+            >
+              <span className="filter-btn-icon">🎤</span>
+              <span className="filter-btn-text">Show Karaoke</span>
+            </button>
+            <button
+              className={`filter-btn ${karaokeFilter === 'hide' ? 'active' : ''}`}
+              onClick={() => setKaraokeFilter('hide')}
+            >
+              <span className="filter-btn-icon">🎵</span>
+              <span className="filter-btn-text">Hide Karaoke</span>
+            </button>
+          </div>
         </div>
         {isSearching && <div className="search-loading-bar" />}
       </div>
@@ -308,17 +340,17 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
               </div>
             </div>
           </div>
-        ) : searchResults.length === 0 && !isSearching ? (
+        ) : filteredResults.length === 0 && !isSearching ? (
           // No results
           <div className="jukebox-no-results">
             <div className="no-results-icon">😢</div>
             <h2>No songs found</h2>
-            <p>Try a different search term</p>
+            <p>{searchResults.length > 0 ? `No ${karaokeFilter === 'show' ? 'karaoke' : 'non-karaoke'} matches` : 'Try a different search term'}</p>
           </div>
         ) : (
           // Results grid
           <div className="results-grid">
-            {searchResults.map((video, index) => (
+            {filteredResults.map((video, index) => (
               <div
                 key={video.id}
                 className={`song-card ${isCurrentlyPlaying(video) ? 'now-playing' : ''} ${queueingVideo === video.id ? 'queueing' : ''}`}
