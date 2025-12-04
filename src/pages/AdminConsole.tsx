@@ -2,7 +2,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { SearchBar, SearchResults, BrowseView } from '../components/Search';
 import { Video } from '../types';
-import { localSearchService, SearchResult } from '../services';
+import { localSearchService, SearchResult, SupabaseService } from '../services';
+import { QueueVideoItem } from '../types/supabase';
+import { DEFAULT_PLAYER_ID } from '../config/supabase';
 
 interface AdminConsoleProps {
   className?: string;
@@ -101,6 +103,38 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({ className = '' }) =>
   const handleClearSearch = useCallback(() => {
     setSearchQuery('');
     setSearchResults([]);
+  }, []);
+
+  // Add to priority queue via Supabase command
+  const handleAddToPriorityQueue = useCallback(async (video: Video) => {
+    console.log('Admin: Add to priority queue', video);
+    
+    // Convert Video to QueueVideoItem format
+    const queueItem: QueueVideoItem = {
+      id: video.id,
+      src: video.src || video.path || '',
+      title: video.title,
+      artist: video.artist || null,
+      path: video.path || '',
+      sourceType: 'local',
+      playlist: video.playlist,
+      playlistDisplayName: video.playlist,
+      duration: video.duration
+    };
+    
+    // Send command via Supabase
+    const supabase = SupabaseService.getInstance();
+    const result = await supabase.sendCommand(
+      DEFAULT_PLAYER_ID,
+      'queue_add',
+      { video: queueItem, queueType: 'priority' }
+    );
+    
+    if (result.success) {
+      console.log('Admin: Priority queue add command sent:', result.commandId);
+    } else {
+      console.error('Admin: Failed to send priority queue command:', result.error);
+    }
   }, []);
 
   // Directory selection
@@ -275,13 +309,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({ className = '' }) =>
             onAddToQueue={(video) => {
               console.log('Admin: Add to queue', video);
             }}
-            onAddToPriorityQueue={(video) => {
-              console.log('Admin: Add to priority queue', video);
-              // TODO: Send command via IPC to add to priority queue
-              if (isElectron) {
-                (window as any).electronAPI?.addToPriorityQueue?.(video);
-              }
-            }}
+            onAddToPriorityQueue={handleAddToPriorityQueue}
             onPlayPlaylist={(name, videos) => {
               console.log('Admin: Play playlist', name, videos.length);
             }}
@@ -314,13 +342,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({ className = '' }) =>
                   onAddToQueue={(video) => {
                     console.log('Admin: Add to queue', video);
                   }}
-                  onAddToPriorityQueue={(video) => {
-                    console.log('Admin: Add to priority queue', video);
-                    // TODO: Send command via IPC to add to priority queue
-                    if (isElectron) {
-                      (window as any).electronAPI?.addToPriorityQueue?.(video);
-                    }
-                  }}
+                  onAddToPriorityQueue={handleAddToPriorityQueue}
                 />
               </div>
             </div>

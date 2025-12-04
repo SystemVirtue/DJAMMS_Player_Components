@@ -51,6 +51,7 @@ class SupabaseService {
   private commandChannel: RealtimeChannel | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private stateSyncTimeout: ReturnType<typeof setTimeout> | null = null;
+  private commandPollInterval: ReturnType<typeof setInterval> | null = null;
   
   // Command handlers
   private commandHandlers: Map<CommandType, CommandHandler[]> = new Map();
@@ -59,6 +60,7 @@ class SupabaseService {
   private isInitialized = false;
   private isOnline = false;
   private lastSyncedState: Partial<SupabasePlayerState> | null = null;
+  private realtimeEnabled = false; // Track if Realtime is working
 
   private constructor() {
     // Private constructor for singleton
@@ -137,6 +139,9 @@ class SupabaseService {
       this.stateSyncTimeout = null;
     }
 
+    // Stop command polling
+    this.stopCommandPolling();
+
     // Unsubscribe from realtime
     if (this.commandChannel) {
       await this.commandChannel.unsubscribe();
@@ -145,6 +150,7 @@ class SupabaseService {
 
     this.isInitialized = false;
     this.isOnline = false;
+    this.realtimeEnabled = false;
     console.log('[SupabaseService] Shutdown complete');
   }
 
@@ -376,12 +382,19 @@ class SupabaseService {
       .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
           console.log('[SupabaseService] ✅ Command listener SUBSCRIBED - ready to receive commands');
+          this.realtimeEnabled = true;
+          // Stop polling if it was running
+          this.stopCommandPolling();
         } else if (status === 'CHANNEL_ERROR') {
           console.error('[SupabaseService] ❌ Command channel ERROR:', err);
-          console.error('[SupabaseService] Commands from Web Admin/Kiosk will NOT be received!');
-          console.error('[SupabaseService] Check: Is Realtime enabled for admin_commands table in Supabase?');
+          console.warn('[SupabaseService] ⚠️ Falling back to polling for commands (every 2 seconds)');
+          this.realtimeEnabled = false;
+          // Start polling as fallback
+          this.startCommandPolling();
         } else if (status === 'TIMED_OUT') {
-          console.warn('[SupabaseService] ⚠️ Command channel TIMED_OUT - retrying...');
+          console.warn('[SupabaseService] ⚠️ Command channel TIMED_OUT - falling back to polling');
+          this.realtimeEnabled = false;
+          this.startCommandPolling();
         } else {
           console.log(`[SupabaseService] Command channel status: ${status}`);
         }
@@ -389,6 +402,33 @@ class SupabaseService {
 
     // Also check for any pending commands that arrived while offline
     await this.processPendingCommands();
+  }
+
+  /**
+   * Start polling for commands (fallback when Realtime fails)
+   */
+  private startCommandPolling(): void {
+    if (this.commandPollInterval) {
+      console.log('[SupabaseService] Command polling already running');
+      return;
+    }
+
+    console.log('[SupabaseService] 🔄 Starting command polling (every 2 seconds)');
+    
+    this.commandPollInterval = setInterval(async () => {
+      await this.processPendingCommands();
+    }, 2000); // Poll every 2 seconds
+  }
+
+  /**
+   * Stop command polling
+   */
+  private stopCommandPolling(): void {
+    if (this.commandPollInterval) {
+      console.log('[SupabaseService] Stopping command polling (Realtime connected)');
+      clearInterval(this.commandPollInterval);
+      this.commandPollInterval = null;
+    }
   }
 
   /**
@@ -487,6 +527,51 @@ class SupabaseService {
   public offCommand(type: CommandType, handler: CommandHandler): void {
     const existing = this.commandHandlers.get(type) || [];
     this.commandHandlers.set(type, existing.filter(h => h !== handler));
+  }
+
+  /**
+   * Send a command to a player (for Admin Console use)
+   * Note: This inserts a command that will be picked up by the target player
+   */
+  public async sendCommand(
+    targetPlayerId: string,
+    commandType: CommandType,
+    payload?: CommandPayload,
+    source: string = 'electron-admin'
+  ): Promise<{ success: boolean; commandId?: string; error?: string }> {
+    if (!this.client) {
+      console.warn('[SupabaseService] Cannot send command - not initialized');
+      return { success: false, error: 'Not initialized' };
+    }
+
+    console.log(`[SupabaseService] 📤 Sending command: ${commandType} to player: ${targetPlayerId}`);
+
+    const { data, error } = await this.client
+      .from('admin_commands')
+      .insert({
+        player_id: targetPlayerId,
+        command_type: commandType,
+        payload: payload || {},
+        source,
+        status: 'pending'
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('[SupabaseService] Error sending command:', error);
+      return { success: false, error: error.message };
+    }
+
+    console.log(`[SupabaseService] ✅ Command sent: ${commandType} (${data.id})`);
+    return { success: true, commandId: data.id };
+  }
+
+  /**
+   * Get the current player ID
+   */
+  public getPlayerId(): string {
+    return this.playerId;
   }
 
   // ==================== Heartbeat ====================
