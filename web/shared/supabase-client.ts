@@ -212,6 +212,39 @@ export function subscribeToPlayerState(
   return channel;
 }
 
+/**
+ * Subscribe to local_videos table changes (for when playlists are re-indexed)
+ * This allows Web Admin to auto-refresh when the Electron player indexes new playlists
+ */
+export function subscribeToLocalVideos(
+  playerId: string = DEFAULT_PLAYER_ID,
+  callback: () => void
+): RealtimeChannel {
+  const channel = supabase
+    .channel(`local_videos:${playerId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'local_videos'
+      },
+      (payload) => {
+        // Filter for this player's videos
+        const record = (payload.new || payload.old) as any;
+        if (record && record.player_id === playerId) {
+          console.log('[SupabaseClient] Local videos changed, triggering refresh');
+          callback();
+        }
+      }
+    )
+    .subscribe((status) => {
+      console.log(`[SupabaseClient] Local videos subscription: ${status}`);
+    });
+
+  return channel;
+}
+
 // ==================== Command Functions ====================
 
 /**

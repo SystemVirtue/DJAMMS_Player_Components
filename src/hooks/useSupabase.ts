@@ -55,7 +55,7 @@ export interface UseSupabaseReturn {
   initialize: () => Promise<boolean>;
   /** Shutdown the Supabase service */
   shutdown: () => Promise<void>;
-  /** Sync current player state to Supabase */
+  /** Sync current player state to Supabase (set immediate=true to bypass debounce) */
   syncState: (state: {
     status?: 'idle' | 'playing' | 'paused' | 'buffering' | 'error';
     isPlaying?: boolean;
@@ -65,7 +65,7 @@ export interface UseSupabaseReturn {
     activeQueue?: Video[];
     priorityQueue?: Video[];
     queueIndex?: number;
-  }) => void;
+  }, immediate?: boolean) => void;
 }
 
 export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn {
@@ -119,9 +119,9 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     volume?: number;
     activeQueue?: Video[];
     priorityQueue?: Video[];
-  }) => {
+  }, immediate: boolean = false) => {
     if (serviceRef.current.initialized) {
-      serviceRef.current.syncPlayerState(state);
+      serviceRef.current.syncPlayerState(state, immediate);
     }
   }, []);
 

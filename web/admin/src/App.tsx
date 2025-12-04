@@ -6,6 +6,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { 
   supabase, 
   subscribeToPlayerState, 
+  subscribeToLocalVideos,
   getPlayerState, 
   getAllLocalVideos, 
   insertCommand, 
@@ -288,6 +289,7 @@ export default function App() {
   }, []);
 
   // Load all videos from local_videos table for Browse/Search
+  // Also subscribe to changes so we auto-refresh when Electron re-indexes playlists
   useEffect(() => {
     const loadAllVideos = async () => {
       try {
@@ -309,6 +311,22 @@ export default function App() {
       }
     };
     loadAllVideos();
+    
+    // Subscribe to local_videos changes - debounce to avoid multiple rapid refreshes
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+    const channel = subscribeToLocalVideos(DEFAULT_PLAYER_ID, () => {
+      // Debounce refresh since multiple changes may come in rapid succession
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      refreshTimeout = setTimeout(() => {
+        console.log('[WebAdmin] Refreshing playlists due to local_videos change');
+        loadAllVideos();
+      }, 1000);
+    });
+    
+    return () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      channel.unsubscribe();
+    };
   }, []);
 
   // Search videos when query changes
@@ -404,22 +422,9 @@ export default function App() {
   };
 
   const skipTrack = async () => {
-    // Save current state for rollback
-    const prevIndex = queueIndex;
-    const prevVideo = currentVideo;
-    // Optimistic update - move to next track immediately
-    if (activeQueue.length > 0 && queueIndex < activeQueue.length - 1) {
-      const nextIndex = queueIndex + 1;
-      setQueueIndex(nextIndex);
-      setCurrentVideo(activeQueue[nextIndex] as NowPlayingVideo);
-      setIsPlaying(true);
-    }
-    const success = await sendBlockingCommand(() => blockingCommands.skip());
-    if (!success) {
-      // Rollback on failure
-      setQueueIndex(prevIndex);
-      setCurrentVideo(prevVideo);
-    }
+    // Don't do optimistic update - let Supabase state sync handle the UI update
+    // This prevents double-skip when the optimistic update and state sync both advance
+    await sendBlockingCommand(() => blockingCommands.skip());
   };
 
   const toggleShuffle = async () => {

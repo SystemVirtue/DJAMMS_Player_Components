@@ -630,6 +630,33 @@ ipcMain.handle('select-directory', async () => {
   return { success: false };
 });
 
+// Playlists Directory Operations
+ipcMain.handle('get-playlists-directory', async () => {
+  return store.get('playlistsDirectory');
+});
+
+ipcMain.handle('set-playlists-directory', async (event, path) => {
+  store.set('playlistsDirectory', path);
+  return { success: true };
+});
+
+ipcMain.handle('select-playlists-directory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select Playlists Directory'
+  });
+  
+  if (!result.canceled && result.filePaths[0]) {
+    store.set('playlistsDirectory', result.filePaths[0]);
+    // Notify renderer of the change
+    if (mainWindow) {
+      mainWindow.webContents.send('playlists-directory-changed', result.filePaths[0]);
+    }
+    return { success: true, path: result.filePaths[0] };
+  }
+  return { success: false };
+});
+
 // Playback State Sync (between windows)
 ipcMain.on('playback-state-update', (event, state) => {
   // Forward to fullscreen window if it exists

@@ -237,7 +237,9 @@ class SupabaseService {
   }
 
   /**
-   * Sync player state to Supabase (debounced)
+   * Sync player state to Supabase (debounced by default, immediate if specified)
+   * @param state - The state to sync
+   * @param immediate - If true, bypass debounce and sync immediately (use for shuffle, etc.)
    */
   public syncPlayerState(state: {
     status?: 'idle' | 'playing' | 'paused' | 'buffering' | 'error';
@@ -248,15 +250,21 @@ class SupabaseService {
     activeQueue?: Video[];
     priorityQueue?: Video[];
     queueIndex?: number;
-  }): void {
-    // Debounce rapid updates
+  }, immediate: boolean = false): void {
+    // Clear any pending debounced update
     if (this.stateSyncTimeout) {
       clearTimeout(this.stateSyncTimeout);
     }
 
-    this.stateSyncTimeout = setTimeout(() => {
+    if (immediate) {
+      // Sync immediately (for queue shuffle, etc.)
       this.performStateSync(state);
-    }, STATE_SYNC_DEBOUNCE);
+    } else {
+      // Debounce rapid updates
+      this.stateSyncTimeout = setTimeout(() => {
+        this.performStateSync(state);
+      }, STATE_SYNC_DEBOUNCE);
+    }
   }
 
   /**
@@ -680,18 +688,27 @@ class SupabaseService {
     }
 
     try {
-      // Flatten all videos from all playlists
-      const allVideos: Video[] = [];
+      // Flatten all videos from all playlists and deduplicate by path
+      const allVideosRaw: Video[] = [];
       for (const videos of Object.values(playlists)) {
-        allVideos.push(...videos);
+        allVideosRaw.push(...videos);
       }
+      
+      // Deduplicate by path (same video may appear in multiple playlists)
+      const seen = new Set<string>();
+      const allVideos = allVideosRaw.filter(video => {
+        const key = video.path || video.file_path || video.src || `${video.title}|${video.artist}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
 
       if (allVideos.length === 0) {
         console.log('[SupabaseService] No videos to index');
         return;
       }
 
-      console.log(`[SupabaseService] Indexing ${allVideos.length} local videos...`);
+      console.log(`[SupabaseService] Indexing ${allVideos.length} unique local videos (${allVideosRaw.length - allVideos.length} duplicates removed)...`);
 
       // First, delete existing entries for this player (clean slate)
       const { error: deleteError } = await this.client

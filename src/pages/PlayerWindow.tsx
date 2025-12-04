@@ -130,12 +130,22 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       // Check priority queue first (KIOSK requests take precedence)
       if (priorityQueueRef.current.length > 0) {
         const nextVideo = priorityQueueRef.current[0];
-        setPriorityQueue(prev => prev.slice(1)); // Remove from priority queue
+        const newPriorityQueue = priorityQueueRef.current.slice(1);
+        setPriorityQueue(newPriorityQueue);
         setCurrentVideo(nextVideo);
         setIsPlaying(true);
         if (isElectron) {
           (window as any).electronAPI.controlPlayerWindow('play', nextVideo);
         }
+        // Immediate sync so Web Admin sees the update right away
+        setTimeout(() => {
+          syncState({
+            status: 'playing',
+            isPlaying: true,
+            currentVideo: nextVideo,
+            priorityQueue: newPriorityQueue
+          }, true);
+        }, 0);
         return;
       }
       // Fall back to active queue
@@ -150,6 +160,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         if (isElectron) {
           (window as any).electronAPI.controlPlayerWindow('play', nextVideo);
         }
+        // Immediate sync so Web Admin sees the update right away
+        setTimeout(() => {
+          syncState({
+            status: 'playing',
+            isPlaying: true,
+            currentVideo: nextVideo,
+            queueIndex: nextIndex
+          }, true);
+        }, 0);
       }
     },
     onSetVolume: (newVolume: number) => {
@@ -197,6 +216,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         // Put current video at index 0, shuffled rest after
         const newQueue = [currentVideo, ...shuffledOthers];
         setQueueIndex(0); // Current video is now at index 0
+        
+        // Trigger immediate sync so Web Admin sees the shuffled queue right away
+        // We call syncState inside the setter to access the new queue value
+        setTimeout(() => {
+          syncState({
+            activeQueue: newQueue,
+            queueIndex: 0
+          }, true); // immediate = true to bypass debounce
+        }, 0);
+        
         return newQueue;
       });
     },
@@ -371,10 +400,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     const unsubSkip = api.onSkipVideo(() => skipTrack());
     const unsubVolumeUp = api.onVolumeUp(() => setVolume(v => Math.min(100, v + 10)));
     const unsubVolumeDown = api.onVolumeDown(() => setVolume(v => Math.max(0, v - 10)));
-    const unsubPlaylistDir = api.onPlaylistsDirectoryChanged(async () => {
+    const unsubPlaylistDir = api.onPlaylistsDirectoryChanged(async (newPath: string) => {
+      console.log('[PlayerWindow] Playlists directory changed to:', newPath);
       const { playlists: newPlaylists } = await api.getPlaylists();
       setPlaylists(newPlaylists || {});
       localSearchService.indexVideos(newPlaylists || {});
+      // Re-index to Supabase so Web Admin gets the updated playlists
+      (window as any).electronAPI.controlPlayerWindow('indexPlaylists', newPlaylists || {});
+      // Update settings state
+      setSettings(s => ({ ...s, playlistsDirectory: newPath }));
     });
 
     return () => {
@@ -538,7 +572,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   };
 
   const getAllVideos = (): Video[] => {
-    return Object.values(playlists).flat();
+    const allVideos = Object.values(playlists).flat();
+    // Deduplicate by path (or title+artist if path is not available)
+    const seen = new Set<string>();
+    return allVideos.filter(video => {
+      const key = video.path || video.src || `${video.title}|${video.artist}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   };
 
   const getSearchResults = (): Video[] => {
@@ -1084,6 +1126,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                                 const { playlists: newPlaylists } = await (window as any).electronAPI.getPlaylists();
                                 setPlaylists(newPlaylists || {});
                                 localSearchService.indexVideos(newPlaylists || {});
+                                // Re-index to Supabase so Web Admin gets the updated playlists
+                                (window as any).electronAPI.controlPlayerWindow('indexPlaylists', newPlaylists || {});
                               }
                             } catch (error) {
                               console.error('Failed to select playlists directory:', error);

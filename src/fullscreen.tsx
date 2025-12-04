@@ -25,6 +25,8 @@ function FullscreenApp() {
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
   
   // Supabase integration - listens for remote commands
+  // NOTE: Skip is NOT handled here - PlayerWindow manages the queue and sends
+  // play commands via IPC. Handling skip here would cause double-skip.
   const { isInitialized: supabaseReady, syncState } = useSupabase({
     autoInit: true,
     // Remote play command (from Admin Console)
@@ -48,13 +50,9 @@ function FullscreenApp() {
     onPause: () => setIsPlaying(false),
     // Remote resume command  
     onResume: () => setIsPlaying(true),
-    // Remote skip command - request next from main window
-    onSkip: () => {
-      if (isElectron) {
-        (window as any).electronAPI.onVideoEnded()
-      }
-      window.parent.postMessage({ type: 'VIDEO_END' }, window.location.origin)
-    },
+    // NOTE: onSkip is intentionally NOT registered here
+    // Skip commands are handled by PlayerWindow which manages the queue
+    // and sends the next video via IPC controlPlayerWindow('play', nextVideo)
     // Remote volume command
     onSetVolume: (vol: number) => setVolume(vol),
     // Remote seek command
