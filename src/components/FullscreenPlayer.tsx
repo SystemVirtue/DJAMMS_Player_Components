@@ -14,6 +14,8 @@ interface FullscreenPlayerProps {
   enableAudioNormalization: boolean;
   preloadVideo?: Video | null;
   fadeDuration?: number;
+  seekToPosition?: number | null; // When set, seek to this position (seconds)
+  onSeekComplete?: () => void; // Called after seek completes
 }
 
 export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
@@ -26,7 +28,9 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
   onStateChange,
   enableAudioNormalization,
   preloadVideo,
-  fadeDuration
+  fadeDuration,
+  seekToPosition,
+  onSeekComplete
 }) => {
   const playerRef = useRef<any>(null);
   const prevVideoRef = useRef<Video | null>(null);
@@ -68,6 +72,17 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
       playerRef.current.setVolume(volume);
     }
   }, [volume]);
+
+  // Handle seek requests (e.g., debug skip to end)
+  useEffect(() => {
+    if (seekToPosition !== null && seekToPosition !== undefined && playerRef.current) {
+      console.log(`[FullscreenPlayer] Seeking to position: ${seekToPosition}s`);
+      playerRef.current.seekTo(seekToPosition);
+      if (onSeekComplete) {
+        onSeekComplete();
+      }
+    }
+  }, [seekToPosition, onSeekComplete]);
 
   useEffect(() => {
     // Handle video playback changes

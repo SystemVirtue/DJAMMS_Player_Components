@@ -130,49 +130,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onSkip: () => {
       console.log('[PlayerWindow] Supabase skip command received');
-      // Check priority queue first (KIOSK requests take precedence)
-      if (priorityQueueRef.current.length > 0) {
-        const nextVideo = priorityQueueRef.current[0];
-        const newPriorityQueue = priorityQueueRef.current.slice(1);
-        setPriorityQueue(newPriorityQueue);
-        setCurrentVideo(nextVideo);
-        setIsPlaying(true);
-        if (isElectron) {
-          (window as any).electronAPI.controlPlayerWindow('play', nextVideo);
-        }
-        // Immediate sync so Web Admin sees the update right away
-        setTimeout(() => {
-          syncState({
-            status: 'playing',
-            isPlaying: true,
-            currentVideo: nextVideo,
-            priorityQueue: newPriorityQueue
-          }, true);
-        }, 0);
-        return;
-      }
-      // Fall back to active queue
-      const nextIndex = queueRef.current.length > 0 
-        ? (queueIndexRef.current + 1) % queueRef.current.length 
-        : 0;
-      const nextVideo = queueRef.current[nextIndex];
-      if (nextVideo) {
-        setQueueIndex(nextIndex);
-        setCurrentVideo(nextVideo);
-        setIsPlaying(true);
-        if (isElectron) {
-          (window as any).electronAPI.controlPlayerWindow('play', nextVideo);
-        }
-        // Immediate sync so Web Admin sees the update right away
-        setTimeout(() => {
-          syncState({
-            status: 'playing',
-            isPlaying: true,
-            currentVideo: nextVideo,
-            queueIndex: nextIndex
-          }, true);
-        }, 0);
-      }
+      // Use unified playNextVideo which checks priority queue first
+      playNextVideo();
     },
     onSetVolume: (newVolume: number) => {
       console.log('[PlayerWindow] Supabase volume command received:', newVolume);
@@ -401,6 +360,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       else handleResumePlayback();
     });
     const unsubSkip = api.onSkipVideo(() => skipTrack());
+    const unsubDebugSkip = api.onDebugSkipToEnd?.(() => {
+      // Debug feature: seek to 15 seconds before end of video to test crossfade
+      console.log('[PlayerWindow] Debug skip to end triggered (Shift+>)');
+      if (isElectron && playerReady) {
+        (window as any).electronAPI.controlPlayerWindow('debugSkipToEnd');
+      }
+    });
     const unsubVolumeUp = api.onVolumeUp(() => setVolume(v => Math.min(100, v + 10)));
     const unsubVolumeDown = api.onVolumeDown(() => setVolume(v => Math.max(0, v - 10)));
     const unsubPlaylistDir = api.onPlaylistsDirectoryChanged(async (newPath: string) => {
@@ -417,11 +383,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     return () => {
       unsubToggle?.();
       unsubSkip?.();
+      unsubDebugSkip?.();
       unsubVolumeUp?.();
       unsubVolumeDown?.();
       unsubPlaylistDir?.();
     };
-  }, [isElectron, isPlaying]);
+  }, [isElectron, isPlaying, playerReady]);
 
   // Player control functions
   const handlePauseClick = () => {
@@ -454,16 +421,74 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   const skipTrack = () => {
     if (!playerReady) return; // Ignore until player is ready
-    if (queueIndex < queue.length - 1) {
-      playVideoAtIndex(queueIndex + 1);
-    }
+    playNextVideo();
   };
 
   const playNext = () => {
-    if (queueIndex < queue.length - 1) {
-      playVideoAtIndex(queueIndex + 1);
-    }
+    playNextVideo();
   };
+
+  // Send play command to Player Window (the ONLY player - handles all audio/video)
+  const sendPlayCommand = useCallback((video: Video) => {
+    if (isElectron) {
+      (window as any).electronAPI.controlPlayerWindow('play', video);
+    }
+  }, [isElectron]);
+
+  // Unified function to play the next video - ALWAYS checks priority queue first
+  const playNextVideo = useCallback(() => {
+    console.log('[PlayerWindow] playNextVideo called, priorityQueue:', priorityQueueRef.current.length, 'activeQueue:', queueRef.current.length);
+    
+    // ALWAYS check priority queue first (KIOSK requests take precedence)
+    if (priorityQueueRef.current.length > 0) {
+      const nextVideo = priorityQueueRef.current[0];
+      const newPriorityQueue = priorityQueueRef.current.slice(1);
+      console.log('[PlayerWindow] Playing from priority queue:', nextVideo.title);
+      setPriorityQueue(newPriorityQueue);
+      setCurrentVideo(nextVideo);
+      setIsPlaying(true);
+      sendPlayCommand(nextVideo);
+      // Immediate sync so Web Admin sees the update right away
+      setTimeout(() => {
+        syncState({
+          status: 'playing',
+          isPlaying: true,
+          currentVideo: nextVideo,
+          priorityQueue: newPriorityQueue
+        }, true);
+      }, 0);
+      return;
+    }
+    
+    // Fall back to active queue - advance to next track or loop
+    const currentQueue = queueRef.current;
+    const currentIndex = queueIndexRef.current;
+    
+    if (currentQueue.length === 0) {
+      console.log('[PlayerWindow] Both queues empty, nothing to play');
+      return;
+    }
+    
+    const nextIndex = currentIndex < currentQueue.length - 1 ? currentIndex + 1 : 0;
+    const nextVideo = currentQueue[nextIndex];
+    
+    if (nextVideo) {
+      console.log('[PlayerWindow] Playing from active queue index:', nextIndex, nextVideo.title);
+      setQueueIndex(nextIndex);
+      setCurrentVideo(nextVideo);
+      setIsPlaying(true);
+      sendPlayCommand(nextVideo);
+      // Immediate sync so Web Admin sees the update right away
+      setTimeout(() => {
+        syncState({
+          status: 'playing',
+          isPlaying: true,
+          currentVideo: nextVideo,
+          queueIndex: nextIndex
+        }, true);
+      }, 0);
+    }
+  }, [sendPlayCommand, syncState]);
 
   const toggleShuffle = () => {
     if (!playerReady) return; // Ignore until player is ready
@@ -477,13 +502,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       setQueueIndex(0); // Current track is now at index 0
     }
   };
-
-  // Send play command to Player Window (the ONLY player - handles all audio/video)
-  const sendPlayCommand = useCallback((video: Video) => {
-    if (isElectron) {
-      (window as any).electronAPI.controlPlayerWindow('play', video);
-    }
-  }, [isElectron]);
 
   const playVideoAtIndex = useCallback((index: number) => {
     const video = queue[index];
@@ -666,21 +684,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   }, [queue, queueIndex, priorityQueue]);
 
   const handleVideoEnd = useCallback(() => {
-    const currentQueue = queueRef.current;
-    const currentIndex = queueIndexRef.current;
-    
-    console.log('[PlayerWindow] Video ended, currentIndex:', currentIndex, 'queueLength:', currentQueue.length);
-    
-    if (currentQueue.length === 0) {
-      console.log('[PlayerWindow] Queue is empty, nothing to play');
-      return;
-    }
-    
-    // Advance to next track, or loop back to beginning if at end
-    const nextIndex = currentIndex < currentQueue.length - 1 ? currentIndex + 1 : 0;
-    console.log('[PlayerWindow] Playing next track at index:', nextIndex);
-    playVideoAtIndex(nextIndex);
-  }, [playVideoAtIndex]);
+    console.log('[PlayerWindow] Video ended - calling playNextVideo');
+    // Use unified playNextVideo which checks priority queue first
+    playNextVideo();
+  }, [playNextVideo]);
 
   // Set up IPC listener to receive video end events from Player Window
   useEffect(() => {

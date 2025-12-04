@@ -71,6 +71,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('skip-video', subscription);
     return () => ipcRenderer.removeListener('skip-video', subscription);
   },
+  onDebugSkipToEnd: (callback) => {
+    const subscription = () => callback();
+    ipcRenderer.on('debug-skip-to-end', subscription);
+    return () => ipcRenderer.removeListener('debug-skip-to-end', subscription);
+  },
   onVolumeUp: (callback) => {
     const subscription = () => callback();
     ipcRenderer.on('volume-up', subscription);

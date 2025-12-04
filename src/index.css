@@ -947,6 +947,118 @@ html, body, #root {
   font-weight: 600;
 }
 
+/* Queue List Items (QueueTab) */
+.queue-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.queue-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.queue-item:last-child {
+  border-bottom: none;
+}
+
+.queue-item.played {
+  opacity: 0.5;
+}
+
+.queue-item.played:hover {
+  opacity: 0.75;
+}
+
+.queue-item-index {
+  width: 28px;
+  font-size: 14px;
+  color: var(--text-tertiary);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.queue-item-thumbnail {
+  width: 40px;
+  height: 40px;
+  background-color: var(--bg-elevated);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.queue-item-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.queue-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-item-artist {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-item-duration {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.queue-item-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.queue-item:hover .queue-item-actions {
+  opacity: 1;
+}
+
+.queue-action-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.queue-action-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .empty-state {
   text-align: center;
   padding: 48px;

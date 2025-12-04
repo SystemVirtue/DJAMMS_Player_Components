@@ -36,26 +36,38 @@ export const QueueTab: React.FC<QueueTabProps> = ({
     );
   }
 
+  // Reorder queue: "up next" videos first (after currentIndex), then "already played" (before currentIndex)
+  // The current video is NOT shown in this list - it's displayed in NOW PLAYING section
+  const upNextVideos = queue.slice(currentIndex + 1); // Videos after current
+  const alreadyPlayedVideos = queue.slice(0, currentIndex); // Videos before current
+  const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
+  
+  // Map to track original indices for click handling
+  const getOriginalIndex = (reorderedIndex: number): number => {
+    if (reorderedIndex < upNextVideos.length) {
+      // It's in the "up next" section
+      return currentIndex + 1 + reorderedIndex;
+    } else {
+      // It's in the "already played" section
+      return reorderedIndex - upNextVideos.length;
+    }
+  };
+
   return (
     <div className="tab-content">
       <div className="queue-list">
-        {queue.map((video, index) => {
-          const isPlaying = currentVideo?.id === video.id && index === currentIndex;
+        {reorderedQueue.map((video, reorderedIndex) => {
+          const originalIndex = getOriginalIndex(reorderedIndex);
+          const isUpNext = reorderedIndex < upNextVideos.length;
           
           return (
             <div
-              key={`${video.id}-${index}`}
-              className={`queue-item ${isPlaying ? 'playing' : ''}`}
-              onClick={() => onPlayVideo(index)}
+              key={`${video.id}-${originalIndex}`}
+              className={`queue-item ${!isUpNext ? 'played' : ''}`}
+              onClick={() => onPlayVideo(originalIndex)}
             >
               <span className="queue-item-index">
-                {isPlaying ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                  </svg>
-                ) : (
-                  index + 1
-                )}
+                {reorderedIndex + 1}
               </span>
               
               <div className="queue-item-thumbnail">

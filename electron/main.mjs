@@ -354,6 +354,15 @@ function createApplicationMenu() {
             }
           }
         },
+        {
+          label: 'Debug: Skip to End (15s before)',
+          accelerator: 'Shift+.',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send('debug-skip-to-end');
+            }
+          }
+        },
         { type: 'separator' },
         {
           label: 'Volume Up',

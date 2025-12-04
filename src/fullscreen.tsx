@@ -16,10 +16,14 @@ function FullscreenApp() {
   const [enableAudioNormalization, setEnableAudioNormalization] = useState(false)
   const [preloadVideo, setPreloadVideo] = useState<Video | null>(null)
   const [fadeDuration, setFadeDuration] = useState<number>(2.0)
+  const [seekToPosition, setSeekToPosition] = useState<number | null>(null)
   
   // Track queues for Supabase sync
   const [activeQueue, setActiveQueue] = useState<Video[]>([])
   const [priorityQueue, setPriorityQueue] = useState<Video[]>([])
+  
+  // Ref to track current duration for debug seek
+  const durationRef = useRef<number>(0)
 
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
@@ -152,6 +156,18 @@ function FullscreenApp() {
             }
           }
           break
+        case 'debugSkipToEnd':
+          // Debug feature: seek to 15 seconds before end of video to test crossfade
+          const currentDuration = durationRef.current
+          if (currentDuration > 15) {
+            const seekPosition = currentDuration - 15
+            console.log(`[FullscreenApp] Debug skip to end: seeking to ${seekPosition.toFixed(1)}s (duration: ${currentDuration.toFixed(1)}s)`)
+            setSeekToPosition(seekPosition)
+          } else {
+            console.log('[FullscreenApp] Debug skip to end: video too short, skipping to end')
+            setSeekToPosition(Math.max(0, currentDuration - 2))
+          }
+          break
       }
     }
 
@@ -232,6 +248,11 @@ function FullscreenApp() {
 
   // Handle state changes - sync back to Main Window for UI display
   const handleStateChange = (state: { currentVideo: Video | null, currentTime: number, duration: number, isPlaying: boolean }) => {
+    // Track duration in ref for debug skip feature
+    if (state.duration > 0) {
+      durationRef.current = state.duration
+    }
+    
     // Note: Don't sync to Supabase here - PlayerWindow handles Supabase sync
     // This prevents partial updates that overwrite queue data
     
@@ -244,6 +265,11 @@ function FullscreenApp() {
       type: 'STATE_CHANGE',
       data: state
     }, window.location.origin)
+  }
+  
+  // Clear seek position after seek completes
+  const handleSeekComplete = () => {
+    setSeekToPosition(null)
   }
 
   return (
@@ -258,6 +284,8 @@ function FullscreenApp() {
       enableAudioNormalization={enableAudioNormalization}
       preloadVideo={preloadVideo}
       fadeDuration={fadeDuration}
+      seekToPosition={seekToPosition}
+      onSeekComplete={handleSeekComplete}
     />
   )
 }
