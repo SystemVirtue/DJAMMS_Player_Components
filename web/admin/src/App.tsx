@@ -122,6 +122,12 @@ export default function App() {
   useEffect(() => {
     // Helper to apply state
     const applyState = (state: SupabasePlayerState) => {
+      console.log('[WebAdmin] Received player state update:', {
+        now_playing: state.now_playing_video?.title,
+        is_playing: state.is_playing,
+        queue_length: state.active_queue?.length || 0,
+        priority_length: state.priority_queue?.length || 0
+      });
       setPlayerState(state);
       
       // Update local state from Supabase

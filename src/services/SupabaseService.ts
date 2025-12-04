@@ -306,6 +306,13 @@ class SupabaseService {
         return; // Only last_updated, skip
       }
 
+      console.log('[SupabaseService] Syncing state to Supabase:', {
+        now_playing: updateData.now_playing_video?.title,
+        is_playing: updateData.is_playing,
+        queue_length: updateData.active_queue?.length,
+        priority_length: updateData.priority_queue?.length
+      });
+
       const { error } = await this.client
         .from('player_state')
         .update(updateData)
@@ -314,6 +321,7 @@ class SupabaseService {
       if (error) {
         console.error('[SupabaseService] State sync error:', error);
       } else {
+        console.log('[SupabaseService] ✅ State synced successfully');
         this.lastSyncedState = updateData;
       }
     } catch (error) {

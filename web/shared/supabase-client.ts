@@ -189,15 +189,17 @@ export async function sendCommandAndWait(
 
       const commandId = data.id;
       let resolved = false;
+      let intentionalClose = false; // Track if we closed the channel ourselves
       const startTime = Date.now();
       let channelRef: ReturnType<typeof supabase.channel> | null = null;
       
       const cleanup = () => {
+        intentionalClose = true; // Mark as intentional before unsubscribing
         channelRef?.unsubscribe();
       };
       
       const fallbackToPolling = () => {
-        if (resolved) return;
+        if (resolved || intentionalClose) return; // Don't fallback if we intentionally closed
         const elapsed = Date.now() - startTime;
         const remaining = Math.max(timeoutMs - elapsed, 1000);
         console.log(`[SupabaseClient] Falling back to polling (${remaining}ms remaining)`);
@@ -277,13 +279,12 @@ export async function sendCommandAndWait(
         .subscribe((status) => {
           console.log(`[SupabaseClient] Command ack subscription (${commandId}): ${status}`);
           
-          // If subscription fails or closes unexpectedly, fall back to polling
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-            if (status === 'CLOSED') {
-              console.warn('[SupabaseClient] Realtime channel closed unexpectedly, falling back to polling');
-            } else {
-              console.warn('[SupabaseClient] Realtime subscription failed, falling back to polling');
-            }
+          // If subscription fails or closes unexpectedly (not by us), fall back to polling
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.warn('[SupabaseClient] Realtime subscription failed, falling back to polling');
+            fallbackToPolling();
+          } else if (status === 'CLOSED' && !intentionalClose && !resolved) {
+            console.warn('[SupabaseClient] Realtime channel closed unexpectedly, falling back to polling');
             fallbackToPolling();
           }
         });
