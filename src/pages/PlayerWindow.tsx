@@ -15,6 +15,7 @@ import {
   validatePlayerId,
   MIN_PLAYER_ID_LENGTH
 } from '../utils/playerUtils';
+import { useVideoPlayer } from '../hooks/useVideoPlayer';
 
 interface PlayerWindowProps {
   className?: string;
@@ -489,7 +490,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       if (playlistKey && playlists[playlistKey]) {
         const playlistTracks = playlists[playlistKey];
         const shouldShuffle = shuffle ?? settings.autoShufflePlaylists;
-        const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
+        const finalTracks = Array.isArray(playlistTracks)
+          ? (shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks])
+          : [];
         setActivePlaylist(playlistKey);
         setQueue(finalTracks);
         setQueueIndex(0);
@@ -575,6 +578,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         });
       }
     }
+  });
+
+  const videoARef = useRef<HTMLVideoElement>(null);
+  const videoBRef = useRef<HTMLVideoElement>(null);
+  const videoPlayer = useVideoPlayer({
+    videoRefs: [videoARef, videoBRef],
+    crossfadeMode: 'manual', // or from settings
+    crossfadeDuration: 2,
+    onVideoEnd: () => {/* handle video end */},
+    // other config
   });
 
   // Shuffle helper
@@ -1027,12 +1040,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       setQueueIndex(0);
       // Trigger skip (fade-out)
       if (video.id !== currentVideo?.id) {
-        skip();
+        videoPlayer.skip();
       }
     }
     setShowQueuePlayDialog(false);
     setQueueVideoToPlay(null);
-  }, [queueVideoToPlay, queue, currentVideo, skip]);
+  }, [queueVideoToPlay, queue, currentVideo, videoPlayer]);
 
   // Move selected queue video to play next (position after current)
   const moveQueueVideoToNext = useCallback(() => {
@@ -1101,7 +1114,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       setActivePlaylist(playlistToLoad);
       setSelectedPlaylist(null);
       const playlistTracks = playlists[playlistToLoad] || [];
-      const finalTracks = settings.autoShufflePlaylists ? shuffleArray(playlistTracks) : [...playlistTracks];
+      const finalTracks = Array.isArray(playlistTracks)
+        ? (settings.autoShufflePlaylists ? shuffleArray(playlistTracks) : [...playlistTracks])
+        : [];
       setQueue(finalTracks);
       setQueueIndex(0);
       if (finalTracks.length > 0) {
@@ -1159,7 +1174,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       case 'queue': return queue;
       case 'playlist':
         if (!selectedPlaylist) return [];
-        return playlists[selectedPlaylist] || [];
+        return Array.isArray(playlists[selectedPlaylist]) ? playlists[selectedPlaylist] : [];
       default: return videos;
     }
   }, [queue, selectedPlaylist, playlists]);
@@ -1242,11 +1257,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           // Browse mode - show all videos sorted
           results = await supabase.browseVideos(searchScope, dbSortBy, 'asc', searchLimit, 0);
         }
-        setSearchResults(results);
-        
-        // Get total count for pagination
-        const total = await supabase.countVideos(searchScope);
-        setSearchTotalCount(total);
+        if (Array.isArray(results)) {
+          setSearchResults(sortResults(results, searchSort));
+          setSearchTotalCount(results.length);
+        } else {
+          setSearchResults([]);
+          setSearchTotalCount(0);
+        }
       } catch (error) {
         console.error('[PlayerWindow] Search error:', error);
         setSearchResults([]);
@@ -1534,9 +1551,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Get playlist counts with display names (strips YouTube Playlist ID prefix)
   const getPlaylistList = () => {
     return Object.entries(playlists).map(([name, videos]) => ({
-      name, // Original folder name for internal use
-      displayName: getPlaylistDisplayName(name), // Display name without YouTube ID prefix
-      count: videos.length
+      name,
+      displayName: getPlaylistDisplayName(name),
+      count: Array.isArray(videos) ? videos.length : 0
     }));
   };
 
@@ -1654,7 +1671,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               <div style={{width: '100%', height: '100%', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'}}></div>
             </div>
             <div className="track-info">
-              <div className="track-title">{cleanVideoTitle(currentTrack?.title) || 'No track playing'}</div>
+              <div className="track-title">{cleanVideoTitle(currentTrack?.title ?? '') || 'No track playing'}</div>
               <div className="track-artist">{getDisplayArtist(currentTrack?.artist) || '—'}</div>
             </div>
           </div>
@@ -1676,7 +1693,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               <input 
                 type="range" 
                 value={volume} 
-                onChange={(e) => {
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                   const newVolume = Number(e.target.value);
                   setVolume(newVolume);
                   // Send volume to Player Window (the ONLY player)
@@ -1764,7 +1781,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                         <span className="material-symbols-rounded">play_arrow</span>
                       </button>
                     )}
-                    <span className="playlist-count">{playlist.count}</span>
+                                       <span className="playlist-count">{playlist.count}</span>
                   </div>
                 ))}
               </div>
@@ -2347,7 +2364,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                               const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 5));
                               setOverlaySettings(prev => ({ ...prev, nowPlayingX: value }));
                             }}
-                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
                           />
                           <span>%</span>
                         </div>
@@ -2362,7 +2387,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                               const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 85));
                               setOverlaySettings(prev => ({ ...prev, nowPlayingY: value }));
                             }}
-                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
                           />
                           <span>%</span>
                         </div>
@@ -2377,7 +2410,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                               const value = Math.min(100, Math.max(10, parseInt(e.target.value) || 100));
                               setOverlaySettings(prev => ({ ...prev, nowPlayingOpacity: value }));
                             }}
-                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
                           />
                           <span>%</span>
                         </div>
@@ -2435,7 +2476,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                               const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 5));
                               setOverlaySettings(prev => ({ ...prev, comingUpX: value }));
                             }}
-                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
                           />
                           <span>%</span>
                         </div>
@@ -2450,7 +2499,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                               const value = Math.min(99, Math.max(1, parseInt(e.target.value) || 95));
                               setOverlaySettings(prev => ({ ...prev, comingUpY: value }));
                             }}
-                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
                           />
                           <span>%</span>
                         </div>
@@ -2465,7 +2522,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                               const value = Math.min(100, Math.max(10, parseInt(e.target.value) || 100));
                               setOverlaySettings(prev => ({ ...prev, comingUpOpacity: value }));
                             }}
-                            style={{ width: '55px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '14px' }}
+                            style={{
+                              width: '55px',
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              background: 'var(--bg-secondary)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px'
+                            }}
                           />
                           <span>%</span>
                         </div>
@@ -2857,47 +2922,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                         No
                       </button>
                     </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Tools Tab */}
-          {currentTab === 'tools' && (
-            <div className="tab-content active">
-              <div className="tools-container">
-                <h2>Toolkit</h2>
-                <p>Utility tools for managing your music library and player.</p>
-                <div className="tools-grid">
-                  {isElectron && (
-                    <>
-                      <div className="tool-card" onClick={handleRefreshPlaylists}>
-                        <span className="material-symbols-rounded">refresh</span>
-                        <h3>Refresh Playlists</h3>
-                        <p>Rescan the playlists directory</p>
-                      </div>
-                    </>
-                  )}
-                  <div className="tool-card" onClick={handleClearQueue}>
-                    <span className="material-symbols-rounded">clear_all</span>
-                    <h3>Clear Queue</h3>
-                    <p>Remove all tracks from the queue</p>
-                  </div>
-                  <div className="tool-card disabled">
-                    <span className="material-symbols-rounded">edit</span>
-                    <h3>Batch Tag Editor</h3>
-                    <p>Edit metadata for multiple files</p>
-                  </div>
-                  <div className="tool-card disabled">
-                    <span className="material-symbols-rounded">content_copy</span>
-                    <h3>Duplicate Finder</h3>
-                    <p>Find and manage duplicate tracks</p>
-                  </div>
-                  <div className="tool-card disabled">
-                    <span className="material-symbols-rounded">analytics</span>
-                    <h3>Library Stats</h3>
-                    <p>View detailed library statistics</p>
                   </div>
                 </div>
               </div>
