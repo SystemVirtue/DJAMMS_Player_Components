@@ -57,7 +57,7 @@ interface ConnectPlayerModalProps {
   appName?: string;
 }
 
-export default function ConnectPlayerModal({
+function ConnectPlayerModal({
   children,
   title = 'Connect to Player',
   description = 'Enter the Player ID to connect to',
@@ -380,3 +380,7 @@ export function PlayerIdBadge({ className = '' }: { className?: string }) {
     </div>
   );
 }
+
+// Named export for compatibility with different import styles
+export { ConnectPlayerModal };
+export default ConnectPlayerModal;

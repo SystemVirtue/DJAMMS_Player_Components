@@ -34,11 +34,20 @@ export default [
         declarationDir: 'dist/types',
       }),
     ],
-    external: ['react', 'react-dom'],
+    // External dependencies - not bundled into the library
+    // Supabase and related packages are excluded since they're only used by the Electron app
+    external: [
+      'react', 
+      'react-dom',
+      '@supabase/supabase-js',
+      'axios',
+      'form-data'
+    ],
   },
   {
     input: 'dist/types/index.d.ts',
     output: [{ file: 'dist/index.d.ts', format: 'esm' }],
     plugins: [dts()],
+    external: [/\.css$/],
   },
 ];

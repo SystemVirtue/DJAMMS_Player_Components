@@ -5,7 +5,15 @@
  * This is in contrast to Web apps which can only connect to existing IDs.
  */
 
-import { getSupabaseService } from '../services/SupabaseService';
+// Lazy import to avoid bundling Supabase in library build
+let _supabaseService: any = null;
+const getSupabaseServiceLazy = async () => {
+  if (!_supabaseService) {
+    const module = await import('../services/SupabaseService');
+    _supabaseService = module.getSupabaseService();
+  }
+  return _supabaseService;
+};
 
 // Storage key for localStorage (used in renderer process)
 const STORAGE_KEY = 'djamms_player_id';
@@ -65,8 +73,13 @@ export async function validatePlayerId(id: string): Promise<boolean> {
   }
 
   try {
-    const supabase = getSupabaseService();
+    const supabase = await getSupabaseServiceLazy();
     const client = supabase.getClient();
+    
+    if (!client) {
+      console.error('[playerUtils] Supabase client not available');
+      return false;
+    }
     
     const { data, error } = await client
       .from('players')
@@ -103,8 +116,12 @@ export async function claimPlayerId(id: string, name?: string): Promise<{ succes
   }
 
   try {
-    const supabase = getSupabaseService();
+    const supabase = await getSupabaseServiceLazy();
     const client = supabase.getClient();
+    
+    if (!client) {
+      return { success: false, error: 'Supabase client not available' };
+    }
     
     const { error } = await client
       .from('players')
@@ -142,8 +159,12 @@ export async function getPlayerInfo(id: string): Promise<{
   const clean = id.trim().toUpperCase();
   
   try {
-    const supabase = getSupabaseService();
+    const supabase = await getSupabaseServiceLazy();
     const client = supabase.getClient();
+    
+    if (!client) {
+      return null;
+    }
     
     const { data, error } = await client
       .from('players')
