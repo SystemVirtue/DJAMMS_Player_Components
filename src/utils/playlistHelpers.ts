@@ -1,6 +1,78 @@
 // utils/playlistHelpers.ts
 
 /**
+ * Format duration in seconds to MM:SS format
+ * 
+ * @param seconds - Duration in seconds
+ * @returns Formatted duration string (e.g., "3:45")
+ */
+export function formatDuration(seconds: number | undefined): string {
+  if (!seconds || isNaN(seconds) || seconds <= 0) {
+    return '—';
+  }
+  
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Parse video filename into artist and title components.
+ * 
+ * Expected filename format: "[Artist Name] - [Song Title] -- [YouTube_ID].mp4"
+ * Examples:
+ *   "The Verve - Bitter Sweet Symphony -- _UWOHofs0kA.mp4"
+ *   "Neil Young - Heart of Gold -- X3lA6pIVank.mp4"
+ * 
+ * @param filename - The video filename (with or without .mp4 extension)
+ * @returns Object with artist and title, or null values if parsing fails
+ */
+export function parseVideoFilename(filename: string): { artist: string | null; title: string | null; youtubeId: string | null } {
+  if (!filename) {
+    return { artist: null, title: null, youtubeId: null };
+  }
+
+  // Remove file extension
+  const nameWithoutExt = filename.replace(/\.mp4$/i, '');
+  
+  // Pattern: [Artist] - [Title] -- [YouTube_ID]
+  // YouTube ID is after " -- " (double dash with spaces)
+  const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ');
+  
+  if (doubleHyphenIndex === -1) {
+    // No YouTube ID separator found, try to parse as "Artist - Title"
+    const singleHyphenIndex = nameWithoutExt.indexOf(' - ');
+    if (singleHyphenIndex !== -1) {
+      return {
+        artist: nameWithoutExt.substring(0, singleHyphenIndex).trim(),
+        title: nameWithoutExt.substring(singleHyphenIndex + 3).trim(),
+        youtubeId: null
+      };
+    }
+    // Can't parse, return the whole thing as title
+    return { artist: null, title: nameWithoutExt.trim(), youtubeId: null };
+  }
+  
+  // Extract YouTube ID (everything after " -- ")
+  const youtubeId = nameWithoutExt.substring(doubleHyphenIndex + 4).trim();
+  
+  // Extract Artist and Title from the part before " -- "
+  const artistAndTitle = nameWithoutExt.substring(0, doubleHyphenIndex);
+  const singleHyphenIndex = artistAndTitle.indexOf(' - ');
+  
+  if (singleHyphenIndex === -1) {
+    // No artist separator, treat whole thing as title
+    return { artist: null, title: artistAndTitle.trim(), youtubeId };
+  }
+  
+  return {
+    artist: artistAndTitle.substring(0, singleHyphenIndex).trim(),
+    title: artistAndTitle.substring(singleHyphenIndex + 3).trim(),
+    youtubeId
+  };
+}
+
+/**
  * Get display name for a playlist folder, stripping YouTube Playlist ID prefix if present.
  * 
  * Naming convention:
@@ -63,54 +135,13 @@ export function isValidVideoFilename(filename: string): boolean {
 }
 
 /**
- * Clean a video title by removing YouTube IDs and separators.
+ * Clean a video title by removing YouTube IDs.
+ * This is a simplified version since parseVideoFilename() now handles proper parsing.
  * 
- * BULLETPROOF DETECTION LOGIC:
- * YouTube video IDs are exactly 11 characters. Our filename format is:
- * "[11-char YouTube_ID] [separator] [Artist] - [Title].mp4"
- * 
- * This means:
- * - Characters 0-10: YouTube ID (11 chars)
- * - Character 11: space
- * - Character 12: separator (could be |, ·, •, or ANY corrupted/unknown character)
- * - Character 13: space
- * - Characters 14+: The actual "Artist - Title" content
- * 
- * Detection: If character at position 11 is a space AND character at position 13 is a space,
- * then we have a YouTube ID prefix. Strip the first 14 characters.
- * 
- * This handles ALL separator corruption scenarios including:
- * - Normal: | (pipe)
- * - Windows substitution: · (middle dot U+00B7)
- * - Windows substitution: • (bullet U+2022)
- * - Replacement character: � (U+FFFD)
- * - Any other corrupted/unknown character
- * 
- * @param title - The raw title string (may contain YouTube ID and separator)
+ * @param title - The title string
  * @returns The cleaned title suitable for display
  */
 export function cleanVideoTitle(title: string): string {
   if (!title) return 'Unknown';
-  
-  // BULLETPROOF: Check if string follows YouTube ID pattern:
-  // Position 11 = space, Position 13 = space (meaning there's a separator at position 12)
-  // Format: "xxxxxxxxxxx ? " where x = YT ID chars, ? = any separator
-  if (title.length >= 14 && title.charAt(11) === ' ' && title.charAt(13) === ' ') {
-    // Strip the first 14 characters: "[11-char ID] [sep] "
-    title = title.substring(14);
-  }
-  
-  // Fallback: Also try to match known separators with surrounding spaces anywhere in string
-  // This catches edge cases where the ID might be slightly different length
-  if (!title || title === 'Unknown') {
-    return 'Unknown';
-  }
-  
-  // Also remove any remaining bracketed IDs in the middle/end (e.g., "[dQw4w9WgXcQ]")
-  title = title
-    .replace(/\s*\[[A-Za-z0-9_-]{10,15}\]\s*/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  
-  return title || 'Unknown';
+  return title.trim() || 'Unknown';
 }

@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const Store = require('electron-store');
+const Store = require('electron-store').default || require('electron-store');
 
 // Initialize persistent storage
 const store = new Store({
@@ -360,21 +360,47 @@ ipcMain.handle('get-playlists', async () => {
           .map((file, index) => {
             const filePath = path.join(playlistPath, file);
             const stats = fs.statSync(filePath);
-            // Parse title from filename (format: "ID | Title.mp4")
-            const nameWithoutExt = file.replace(/\.[^/.]+$/, '');
-            const parts = nameWithoutExt.split(' | ');
-            const title = parts.length > 1 ? parts.slice(1).join(' | ') : nameWithoutExt;
-            const artist = entry.name; // Use playlist name as artist
+            
+            // Parse filename format: "[Artist] - [Title] -- [YouTube_ID].mp4"
+            const nameWithoutExt = file.replace(/\.[^/.]+$/i, '');
+            
+            // Extract YouTube ID (after " -- ")
+            const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ');
+            let artist = null;
+            let title = nameWithoutExt;
+            let youtubeId = null;
+            
+            if (doubleHyphenIndex !== -1) {
+              youtubeId = nameWithoutExt.substring(doubleHyphenIndex + 4).trim();
+              const artistAndTitle = nameWithoutExt.substring(0, doubleHyphenIndex);
+              
+              // Extract Artist and Title (separated by " - ")
+              const singleHyphenIndex = artistAndTitle.indexOf(' - ');
+              if (singleHyphenIndex !== -1) {
+                artist = artistAndTitle.substring(0, singleHyphenIndex).trim();
+                title = artistAndTitle.substring(singleHyphenIndex + 3).trim();
+              } else {
+                title = artistAndTitle.trim();
+              }
+            } else {
+              // No YouTube ID, try to parse as "Artist - Title"
+              const singleHyphenIndex = nameWithoutExt.indexOf(' - ');
+              if (singleHyphenIndex !== -1) {
+                artist = nameWithoutExt.substring(0, singleHyphenIndex).trim();
+                title = nameWithoutExt.substring(singleHyphenIndex + 3).trim();
+              }
+            }
 
             return {
               id: `${entry.name}-${index}`,
               title,
-              artist,
+              artist: artist || entry.name,
               filename: file,
               path: filePath,
               src: `file://${filePath}`,
               size: stats.size,
-              playlist: entry.name
+              playlist: entry.name,
+              playlistDisplayName: entry.name.replace(/^PL[A-Za-z0-9_-]+[._]/, '')
             };
           })
           .sort((a, b) => a.title.localeCompare(b.title));
@@ -436,6 +462,23 @@ ipcMain.handle('control-fullscreen-player', async (event, action, data) => {
     return { success: true };
   }
   return { success: false, error: 'No fullscreen window' };
+});
+
+// Player window control (new handler)
+ipcMain.handle('control-player-window', async (event, action, data) => {
+  if (fullscreenWindow) {
+    fullscreenWindow.webContents.send('control-player', { action, data });
+    return { success: true };
+  }
+  return { success: false, error: 'No player window open' };
+});
+
+// Get player window status (new handler)
+ipcMain.handle('get-player-window-status', async () => {
+  return {
+    isOpen: fullscreenWindow !== null,
+    displayId: fullscreenWindow ? null : null
+  };
 });
 
 // Settings/Store Operations

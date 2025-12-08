@@ -2,7 +2,7 @@
   "name": "djamms-player",
   "version": "2.0.0",
   "description": "DJAMMS Video Player - Crossfading video player with search and browse functionality",
-  "main": "electron/main.mjs",
+  "main": "electron/main.cjs",
   "module": "dist/index.esm.js",
   "types": "dist/index.d.ts",
   "files": [

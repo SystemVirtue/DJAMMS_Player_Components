@@ -8,6 +8,9 @@ yarn-error.log*
 dist/
 build/
 release/
+electron/main.mjs
+electron/main.mjs.map
+electron/dist/
 
 # Environment variables
 .env

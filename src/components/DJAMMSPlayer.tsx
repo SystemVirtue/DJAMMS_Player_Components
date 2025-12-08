@@ -6,9 +6,8 @@ import { LoadingScreen } from './LoadingScreen';
 import { ErrorOverlay } from './ErrorOverlay';
 import { ProgressBar } from './ProgressBar';
 import { useVideoPlayer } from '../hooks/useVideoPlayer';
-import { useSkip } from '../hooks/useSkip';
 import { useKeyboardControls } from '../hooks/useKeyboardControls';
-import { Video } from '../types';
+import { Video, CrossfadeMode } from '../types';
 
 interface DJAMMSPlayerProps {
   width?: number;
@@ -21,7 +20,11 @@ interface DJAMMSPlayerProps {
   volume?: number;
   showLoadingOverlay?: boolean;
   enableAudioNormalization?: boolean;
-  /** Fade duration in seconds (used for skip/crossfade) */
+  /** Crossfade mode: 'manual' (clean cut) or 'seamless' (overlap) */
+  crossfadeMode?: CrossfadeMode;
+  /** Duration in seconds for crossfade/skip fade (1-5s recommended) */
+  crossfadeDuration?: number;
+  /** @deprecated Use crossfadeDuration instead */
   fadeDuration?: number;
   onVideoEnd?: () => void;
   onSkip?: () => void;
@@ -38,7 +41,9 @@ export interface DJAMMSPlayerRef {
   seekTo: (time: number) => void;
   getActiveVideo: () => HTMLVideoElement | null;
   preloadVideo: (video: Video) => void;
-  skipWithFade: () => void;
+  skip: () => void;
+  skipWithFade: () => void; // Alias for backwards compatibility
+  setCrossfadeMode: (mode: CrossfadeMode) => void;
 }
 
 export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
@@ -52,7 +57,9 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
   volume = 0.7,
   showLoadingOverlay = false,
   enableAudioNormalization = false,
-  fadeDuration = 2.0,
+  crossfadeMode = 'manual',
+  crossfadeDuration,
+  fadeDuration = 2.0, // Legacy prop
   onVideoEnd,
   onSkip,
   onError,
@@ -60,6 +67,9 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
 }, ref) => {
   const videoRef1 = useRef<HTMLVideoElement>(null);
   const videoRef2 = useRef<HTMLVideoElement>(null);
+
+  // Use crossfadeDuration if provided, otherwise fall back to fadeDuration
+  const effectiveDuration = crossfadeDuration ?? fadeDuration;
 
   const {
     currentVideo,
@@ -79,44 +89,33 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
     toggleMute,
     seekTo,
     retry,
-    skipWithFade
+    skip,
+    skipWithFade,
+    setCrossfadeMode
   } = useVideoPlayer({
     videoRefs: [videoRef1, videoRef2],
     initialVolume: volume,
+    crossfadeMode,
+    crossfadeDuration: effectiveDuration,
     onVideoEnd,
     onError,
-    enableAudioNormalization,
-    fadeDuration
+    enableAudioNormalization
   });
 
   useEffect(() => {
     onStateChange?.({ currentVideo, currentTime, duration, isPlaying });
   }, [currentVideo, currentTime, duration, isPlaying, onStateChange]);
 
-  // Build a VideoRefs-like object for useSkip. We derive active/inactive from
-  // the activeVideoElement returned by the hook so skip targets the correct element.
-  const activeRefObj = { current: activeVideoElement } as React.RefObject<HTMLVideoElement>;
-  const inactiveElem = activeVideoElement === videoRef1.current ? videoRef2.current : videoRef1.current;
-  const inactiveRefObj = { current: inactiveElem } as React.RefObject<HTMLVideoElement>;
-
-  const videoRefsForSkip = {
-    videoA: videoRef1,
-    videoB: videoRef2,
-    activeVideo: activeRefObj,
-    inactiveVideo: inactiveRefObj
-  };
-
-  const { skip } = useSkip({
-    videoRefs: videoRefsForSkip,
-    isPlaying,
-    onSkip,
-    fadeDurationMs: (fadeDuration ? Math.round(fadeDuration * 1000) : undefined)
-  });
+  // Wrap skip to also call onSkip callback if provided
+  const handleSkip = useCallback(() => {
+    skip();
+    onSkip?.();
+  }, [skip, onSkip]);
 
   const handleKeyboardAction = useCallback((action: string) => {
     switch (action) {
       case 'skip':
-        skip();
+        handleSkip();
         break;
       case 'playPause':
         if (isPlaying) {
@@ -137,7 +136,7 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
       default:
         break;
     }
-  }, [skip, isPlaying, pauseVideo, resumeVideo, setVolume, playerVolume, toggleMute]);
+  }, [handleSkip, isPlaying, pauseVideo, resumeVideo, setVolume, playerVolume, toggleMute]);
 
   useKeyboardControls({
     onAction: handleKeyboardAction,
@@ -154,8 +153,10 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
     seekTo,
     getActiveVideo: () => activeVideoElement,
     preloadVideo,
-    skipWithFade
-  }), [playVideo, pauseVideo, resumeVideo, setVolume, toggleMute, seekTo, activeVideoElement, preloadVideo, skipWithFade]);
+    skip: handleSkip,
+    skipWithFade: handleSkip, // Alias for backwards compatibility
+    setCrossfadeMode
+  }), [playVideo, pauseVideo, resumeVideo, setVolume, toggleMute, seekTo, activeVideoElement, preloadVideo, handleSkip, setCrossfadeMode]);
 
   const handleProgressSeek = useCallback((time: number) => {
     seekTo(time);
@@ -271,7 +272,7 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
           </button>
 
           <button
-            onClick={skip}
+            onClick={handleSkip}
             style={{
               padding: '8px 16px',
               background: 'rgba(0, 0, 0, 0.7)',

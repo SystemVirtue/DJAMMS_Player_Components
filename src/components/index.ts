@@ -11,6 +11,7 @@ export { VideoPlayer } from './VideoPlayer';
 export { TabNavigation } from './TabNavigation';
 export { PlaylistTab } from './PlaylistTab';
 export { SettingsTab } from './SettingsTab';
+export { CrossfadeSettings } from './CrossfadeSettings';
 export { FullscreenPlayer } from './FullscreenPlayer';
 export type { FullscreenPlayerRef } from './FullscreenPlayer';
 

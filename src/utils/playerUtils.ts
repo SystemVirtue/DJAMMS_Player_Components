@@ -64,6 +64,7 @@ export function isValidPlayerIdFormat(id: string): boolean {
 
 /**
  * Validate that a Player ID exists in the database
+ * Returns false if Supabase is not available (instead of throwing)
  */
 export async function validatePlayerId(id: string): Promise<boolean> {
   const clean = id.trim().toUpperCase();
@@ -77,7 +78,7 @@ export async function validatePlayerId(id: string): Promise<boolean> {
     const client = supabase.getClient();
     
     if (!client) {
-      console.error('[playerUtils] Supabase client not available');
+      // Supabase not available - just return false silently in dev mode
       return false;
     }
     
@@ -88,17 +89,13 @@ export async function validatePlayerId(id: string): Promise<boolean> {
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') {
-        // No rows returned - player doesn't exist
-        return false;
-      }
-      console.error('[playerUtils] Error validating Player ID:', error);
+      // Not found or other error
       return false;
     }
-
+    
     return !!data;
   } catch (err) {
-    console.error('[playerUtils] Exception validating Player ID:', err);
+    // Supabase error - return false
     return false;
   }
 }
@@ -120,7 +117,8 @@ export async function claimPlayerId(id: string, name?: string): Promise<{ succes
     const client = supabase.getClient();
     
     if (!client) {
-      return { success: false, error: 'Supabase client not available' };
+      // Supabase not available - fail silently without logging
+      return { success: false, error: 'Supabase not available' };
     }
     
     const { error } = await client
@@ -135,7 +133,6 @@ export async function claimPlayerId(id: string, name?: string): Promise<{ succes
       if (error.code === '23505') {
         return { success: false, error: 'Player ID already exists' };
       }
-      console.error('[playerUtils] Error claiming Player ID:', error);
       return { success: false, error: error.message };
     }
 
@@ -143,7 +140,6 @@ export async function claimPlayerId(id: string, name?: string): Promise<{ succes
     setPlayerId(clean);
     return { success: true };
   } catch (err) {
-    console.error('[playerUtils] Exception claiming Player ID:', err);
     return { success: false, error: 'Failed to claim Player ID' };
   }
 }
@@ -195,54 +191,21 @@ export function generateRandomPlayerId(): string {
 
 /**
  * Initialize Player ID on app startup
- * - If stored ID exists and is valid, use it
- * - If no stored ID, try to claim DEFAULT_PLAYER_ID
- * - If DEFAULT taken, generate and claim a random ID
+ * - If stored ID exists, use it (skip validation to avoid errors during startup)
+ * - Otherwise, just use DEFAULT_PLAYER_ID
+ * 
+ * Simplified to avoid errors when Supabase isn't ready yet
  */
 export async function initializePlayerId(): Promise<string> {
   // Check for stored ID
   const storedId = getPlayerId();
   if (storedId) {
-    const isValid = await validatePlayerId(storedId);
-    if (isValid) {
-      console.log('[playerUtils] Using stored Player ID:', storedId);
-      return storedId;
-    } else {
-      console.warn('[playerUtils] Stored Player ID no longer valid, will claim new ID');
-      clearPlayerId();
-    }
+    console.log('[playerUtils] Using stored Player ID:', storedId);
+    return storedId;
   }
 
-  // Try to claim default ID
-  console.log('[playerUtils] Attempting to claim default Player ID:', DEFAULT_PLAYER_ID);
-  const defaultResult = await claimPlayerId(DEFAULT_PLAYER_ID);
-  if (defaultResult.success) {
-    console.log('[playerUtils] Claimed default Player ID:', DEFAULT_PLAYER_ID);
-    return DEFAULT_PLAYER_ID;
-  }
-
-  // Default taken - check if we can just use it (we claimed it before from another instance)
-  const defaultExists = await validatePlayerId(DEFAULT_PLAYER_ID);
-  if (defaultExists) {
-    console.log('[playerUtils] Default Player ID exists, using it:', DEFAULT_PLAYER_ID);
-    setPlayerId(DEFAULT_PLAYER_ID);
-    return DEFAULT_PLAYER_ID;
-  }
-
-  // Generate random ID
-  let attempts = 0;
-  while (attempts < 10) {
-    const randomId = generateRandomPlayerId();
-    console.log('[playerUtils] Attempting to claim random Player ID:', randomId);
-    const result = await claimPlayerId(randomId);
-    if (result.success) {
-      console.log('[playerUtils] Claimed random Player ID:', randomId);
-      return randomId;
-    }
-    attempts++;
-  }
-
-  // Fallback - shouldn't happen
-  console.error('[playerUtils] Failed to claim any Player ID after 10 attempts');
-  throw new Error('Failed to initialize Player ID');
+  // Use default ID
+  console.log('[playerUtils] Using default Player ID:', DEFAULT_PLAYER_ID);
+  setPlayerId(DEFAULT_PLAYER_ID);
+  return DEFAULT_PLAYER_ID;
 }

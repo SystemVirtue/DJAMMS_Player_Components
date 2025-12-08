@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Video } from '../types';
 import { localSearchService, SearchResult, getSupabaseService } from '../services';
-import { getPlaylistDisplayName, getDisplayArtist, cleanVideoTitle } from '../utils/playlistHelpers';
+import { getPlaylistDisplayName, getDisplayArtist, cleanVideoTitle, formatDuration } from '../utils/playlistHelpers';
 import { useSupabase } from '../hooks/useSupabase';
 import { QueueVideoItem } from '../types/supabase';
 import { 
@@ -248,6 +248,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     normalizeAudioLevels: false,
     enableFullscreenPlayer: true,
     fadeDuration: 2.0,
+    crossfadeMode: 'manual' as 'manual' | 'seamless',
     playerDisplayId: null as number | null,
     playerFullscreen: false,
     playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
@@ -598,6 +599,14 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Sync music database to Supabase when it becomes initialized and we have playlists
+  useEffect(() => {
+    if (supabaseInitialized && Object.keys(playlists).length > 0) {
+      console.log('[PlayerWindow] Supabase initialized - syncing music database');
+      getSupabaseService().indexLocalVideos(playlists);
+    }
+  }, [supabaseInitialized, playlists]);
+
   // Load playlists and settings on mount
   useEffect(() => {
     // Guard against multiple executions (React Strict Mode or HMR)
@@ -611,8 +620,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setPlaylists(loadedPlaylists || {});
           localSearchService.indexVideos(loadedPlaylists || {});
           
-          // Index playlists to Supabase via Player Window (for Admin Console / Kiosk search)
-          (window as any).electronAPI.controlPlayerWindow('indexPlaylists', loadedPlaylists || {});
+          // Note: Supabase sync happens automatically via the useEffect hook when supabaseInitialized becomes true
           
           // Load all saved settings
           const savedVolume = await (window as any).electronAPI.getSetting('volume');
@@ -624,6 +632,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           const savedNormalize = await (window as any).electronAPI.getSetting('normalizeAudioLevels');
           const savedEnablePlayer = await (window as any).electronAPI.getSetting('enableFullscreenPlayer');
           const savedFadeDuration = await (window as any).electronAPI.getSetting('fadeDuration');
+          const savedCrossfadeMode = await (window as any).electronAPI.getSetting('crossfadeMode');
           const savedPlaylistsDir = await (window as any).electronAPI.getPlaylistsDirectory();
           
           setSettings(s => ({
@@ -634,6 +643,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             normalizeAudioLevels: savedNormalize ?? s.normalizeAudioLevels,
             enableFullscreenPlayer: savedEnablePlayer ?? s.enableFullscreenPlayer,
             fadeDuration: savedFadeDuration ?? s.fadeDuration,
+            crossfadeMode: savedCrossfadeMode ?? s.crossfadeMode,
             playlistsDirectory: savedPlaylistsDir ?? s.playlistsDirectory
           }));
           
@@ -762,8 +772,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       const { playlists: newPlaylists } = await api.getPlaylists();
       setPlaylists(newPlaylists || {});
       localSearchService.indexVideos(newPlaylists || {});
-      // Re-index to Supabase so Web Admin gets the updated playlists
-      (window as any).electronAPI.controlPlayerWindow('indexPlaylists', newPlaylists || {});
+      // Sync entire music database to Supabase for Web Admin/Kiosk
+      if (supabaseInitialized) {
+        console.log('[PlayerWindow] Syncing music database to Supabase after directory change (IPC)');
+        getSupabaseService().indexLocalVideos(newPlaylists || {});
+      }
       // Update settings state
       setSettings(s => ({ ...s, playlistsDirectory: newPath }));
     });
@@ -1501,10 +1514,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       const { playlists: newPlaylists } = await (window as any).electronAPI.getPlaylists();
       setPlaylists(newPlaylists || {});
       localSearchService.indexVideos(newPlaylists || {});
-      // Re-index to Supabase
-      (window as any).electronAPI.controlPlayerWindow('indexPlaylists', newPlaylists || {});
+      // Sync entire music database to Supabase for Web Admin/Kiosk
+      if (supabaseInitialized) {
+        console.log('[PlayerWindow] Syncing music database to Supabase after manual refresh');
+        getSupabaseService().indexLocalVideos(newPlaylists || {});
+      }
     }
-  }, [isElectron]);
+  }, [isElectron, supabaseInitialized]);
 
   // Get playlist counts with display names (strips YouTube Playlist ID prefix)
   const getPlaylistList = () => {
@@ -1804,7 +1820,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                             <td className="col-index">P{index + 1}</td>
                             <td className="col-title">{cleanVideoTitle(track.title)}</td>
                             <td>{getDisplayArtist(track.artist)}</td>
-                            <td>{track.duration || '—'}</td>
+                            <td>{formatDuration(track.duration)}</td>
                             <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
                           </tr>
                         ))}
@@ -1865,7 +1881,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                             <td>{displayIndex + 1}</td>
                             <td className="col-title">{cleanVideoTitle(track.title)}</td>
                             <td>{getDisplayArtist(track.artist)}</td>
-                            <td>{track.duration || '—'}</td>
+                            <td>{formatDuration(track.duration)}</td>
                             <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
                           </tr>
                         ));
@@ -2015,6 +2031,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     onPlayerIdChange={(newId) => {
                       storePlayerId(newId);
                       setPlayerId(newId);
+                      // Sync entire music database to Supabase for new Player ID
+                      if (supabaseInitialized) {
+                        console.log('[PlayerWindow] Syncing music database to Supabase for new Player ID:', newId);
+                        getSupabaseService().indexLocalVideos(playlists);
+                      }
                     }}
                   />
                 </div>
@@ -2044,8 +2065,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                                 const { playlists: newPlaylists } = await (window as any).electronAPI.getPlaylists();
                                 setPlaylists(newPlaylists || {});
                                 localSearchService.indexVideos(newPlaylists || {});
-                                // Re-index to Supabase so Web Admin gets the updated playlists
-                                (window as any).electronAPI.controlPlayerWindow('indexPlaylists', newPlaylists || {});
+                                // Sync entire music database to Supabase for Web Admin/Kiosk
+                                if (supabaseInitialized) {
+                                  console.log('[PlayerWindow] Syncing music database to Supabase after directory change');
+                                  getSupabaseService().indexLocalVideos(newPlaylists || {});
+                                }
                               }
                             } catch (error) {
                               console.error('Failed to select playlists directory:', error);

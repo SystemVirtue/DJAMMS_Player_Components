@@ -99,6 +99,11 @@ class SupabaseService {
           params: {
             eventsPerSecond: 10
           }
+        },
+        global: {
+          headers: {
+            'Accept': 'application/json'
+          }
         }
       });
 

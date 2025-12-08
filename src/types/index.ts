@@ -14,6 +14,72 @@ export interface Video {
   filename?: string;
 }
 
+// ============================================================================
+// CROSSFADE / VIDEO PLAYER TYPES
+// ============================================================================
+
+/**
+ * Crossfade mode determines video transition behavior:
+ * - 'manual': Videos play to completion, next starts immediately (clean cut)
+ * - 'seamless': Next video starts X seconds before current ends (overlap crossfade)
+ */
+export type CrossfadeMode = 'manual' | 'seamless';
+
+/**
+ * Reason for a video transition - used for logging and debugging
+ */
+export type TransitionReason = 
+  | 'natural_end'      // Video ended naturally
+  | 'early_crossfade'  // Seamless mode: started overlap
+  | 'user_skip'        // User pressed skip
+  | 'manual_next'      // User pressed next/previous
+  | 'error';           // Video error
+
+/**
+ * Configuration for useVideoPlayer hook
+ */
+export interface VideoPlayerConfig {
+  videoRefs: React.RefObject<HTMLVideoElement>[];
+  initialVolume?: number;
+  crossfadeMode?: CrossfadeMode;
+  crossfadeDuration?: number; // seconds (1-5s range, user configurable)
+  onVideoEnd?: () => void;
+  onError?: (error: string) => void;
+  enableAudioNormalization?: boolean;
+}
+
+/**
+ * Return type from useVideoPlayer hook
+ */
+export interface VideoPlayerReturn {
+  // State
+  currentVideo: Video | null;
+  isPlaying: boolean;
+  isLoading: boolean;
+  error: string | null;
+  currentTime: number;
+  duration: number;
+  volume: number;
+  isMuted: boolean;
+  crossfadeMode: CrossfadeMode;
+  
+  // Playback controls
+  playVideo: (video: Video) => void;
+  pauseVideo: () => void;
+  resumeVideo: () => void;
+  skip: () => void;
+  
+  // Settings
+  setVolume: (volume: number) => void;
+  toggleMute: () => void;
+  seekTo: (time: number) => void;
+  retry: () => void;
+  setCrossfadeMode: (mode: CrossfadeMode) => void;
+  
+  // Direct access
+  activeVideoElement: HTMLVideoElement | null;
+}
+
 export interface PlayerState {
   currentVideo: Video | null;
   isPlaying: boolean;

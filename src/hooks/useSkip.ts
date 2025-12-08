@@ -1,93 +1,75 @@
 // hooks/useSkip.ts
+// REFACTORED: Simplified wrapper for backwards compatibility
+// Skip logic is now handled in useVideoPlayer - this is just a convenience wrapper
+
 import { useCallback } from 'react';
 import { VideoRefs } from '../types';
-import { fadeOut } from '../utils/crossfade';
 
 interface SkipConfig {
-  videoRefs: VideoRefs;
-  isPlaying: boolean;
+  videoRefs?: VideoRefs;  // Optional - kept for backwards compatibility but not used
+  isPlaying?: boolean;    // Optional - kept for backwards compatibility but not used
   onSkip?: () => void;
-  // Duration in milliseconds for the fade-out
-  fadeDurationMs?: number;
+  fadeDurationMs?: number; // Optional - kept for backwards compatibility but not used
 }
 
+/**
+ * Simple skip hook - delegates to a provided onSkip callback
+ * 
+ * MIGRATION NOTE: This hook is now just a thin wrapper for backwards compatibility.
+ * The actual skip logic (including fade-out) is handled in useVideoPlayer.
+ * 
+ * For new code, use the `skip` function returned from `useVideoPlayer` directly:
+ * 
+ * ```typescript
+ * const { skip } = useVideoPlayer({...});
+ * // Use skip() directly instead of useSkip
+ * ```
+ * 
+ * This wrapper exists to minimize breaking changes during migration.
+ */
 export function useSkip(config: SkipConfig) {
-  const { videoRefs, isPlaying, onSkip, fadeDurationMs } = config;
-
-  const skipImmediately = useCallback(() => {
-    const activeVideo = videoRefs.activeVideo?.current;
-    if (!activeVideo) return;
-
-    console.log('[useSkip] Skipping immediately - pausing video');
-
-    // Pause the video to prevent any further events
-    activeVideo.pause();
-    activeVideo.currentTime = 0;
-
-    onSkip?.();
-  }, [videoRefs, onSkip]);
-
-  const fadeOutAndSkip = useCallback(async () => {
-    const activeVideo = videoRefs.activeVideo?.current;
-    if (!activeVideo) return;
-
-    console.log('[useSkip] Starting fade-out');
-
-    // Mark skip-in-progress so UI can hide loading overlays during transition
-    try {
-      (window as any).__DJAMMS_SKIP_IN_PROGRESS__ = true;
-    } catch (e) {
-      /* ignore */
-    }
-
-    await fadeOut(activeVideo, fadeDurationMs ?? 1000,
-      (progress, volume, opacity) => {
-        // Progress callback if needed
-      },
-      () => {
-        // Fade complete
-        console.log('[useSkip] Fade-out complete');
-
-        // Call onSkip BEFORE pausing so the next playVideo() sees isPlaying=true
-        // and uses the crossfade path instead of direct play.
-        try {
-          onSkip?.();
-        } catch (err) {
-          console.error('[useSkip] onSkip handler threw:', err);
-        }
-
-        // Delay pausing/resetting the active video briefly to allow the
-        // next player to initiate crossfade. This prevents the next
-        // play from thinking playback was paused and doing a direct cut.
-        setTimeout(() => {
-          try {
-            activeVideo.pause();
-            activeVideo.currentTime = 0;
-          } catch (e) {
-            console.warn('[useSkip] Failed to pause/reset active video after skip:', e);
-          }
-          // Clear skip-in-progress flag after transition completes
-          try {
-            (window as any).__DJAMMS_SKIP_IN_PROGRESS__ = false;
-          } catch (e) {
-            /* ignore */
-          }
-        }, 250);
-      }
-    );
-  }, [videoRefs, onSkip]);
+  const { onSkip } = config;
 
   const skip = useCallback(() => {
-    console.log('[useSkip] skip() called');
+    console.log('[useSkip] Skip requested - delegating to onSkip callback');
+    onSkip?.();
+  }, [onSkip]);
 
-    const activeVideo = videoRefs.activeVideo?.current;
-    if (!activeVideo) return;
-
-    // Always perform fade-out when skipping, regardless of play state
-    fadeOutAndSkip();
-  }, [videoRefs, fadeOutAndSkip]);
-
-  return {
-    skip
-  };
+  return { skip };
 }
+
+// ============================================================================
+// MIGRATION EXAMPLE
+// ============================================================================
+
+/*
+// BEFORE (old pattern with separate useSkip):
+
+const { playVideo, skipWithFade } = useVideoPlayer({
+  videoRefs: [videoRef1, videoRef2],
+  onVideoEnd: loadNextVideo
+});
+
+const { skip } = useSkip({
+  videoRefs: videoRefsForSkip,
+  isPlaying,
+  onSkip: handleSkip,
+  fadeDurationMs: 2000
+});
+
+// AFTER (new pattern with built-in skip):
+
+const { 
+  playVideo, 
+  skip,  // Built-in with fade-out!
+  setCrossfadeMode 
+} = useVideoPlayer({
+  videoRefs: [videoRef1, videoRef2],
+  crossfadeMode: 'manual',    // or 'seamless'
+  crossfadeDuration: 2.0,     // seconds
+  onVideoEnd: loadNextVideo
+});
+
+// No need for separate useSkip hook!
+// Just call skip() directly
+*/

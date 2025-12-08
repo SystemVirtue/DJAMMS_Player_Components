@@ -6,12 +6,14 @@ import {
   validatePlayerId,
   MIN_PLAYER_ID_LENGTH 
 } from '../utils/playerUtils';
+import { CrossfadeMode } from '../types';
 
 interface Settings {
   autoShufflePlaylists: boolean;
   normalizeAudioLevels: boolean;
   enableFullscreenPlayer: boolean;
   fadeDuration: number;
+  crossfadeMode: CrossfadeMode;
 }
 
 interface SettingsTabProps {
@@ -227,6 +229,64 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       <div className="settings-section">
         <h3 className="settings-section-title">Playback</h3>
 
+        {/* Crossfade Mode */}
+        <div className="settings-item">
+          <div className="settings-item-info">
+            <div className="settings-item-label">Crossfade Mode</div>
+            <div className="settings-item-description">
+              {settings.crossfadeMode === 'manual' 
+                ? 'Videos play to completion, then next starts (clean cut)'
+                : 'Next video overlaps with current for smooth transitions'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => onUpdateSetting('crossfadeMode', 'manual')}
+              style={{
+                padding: '6px 14px',
+                fontSize: '13px',
+                backgroundColor: settings.crossfadeMode === 'manual' 
+                  ? 'var(--yt-spec-call-to-action)' 
+                  : 'var(--yt-spec-badge-chip-background)',
+                color: settings.crossfadeMode === 'manual' 
+                  ? 'white' 
+                  : 'var(--yt-text-secondary)',
+                border: settings.crossfadeMode === 'manual'
+                  ? 'none'
+                  : '1px solid var(--yt-spec-10-percent-layer)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: settings.crossfadeMode === 'manual' ? 600 : 400,
+                transition: 'all 0.2s'
+              }}
+            >
+              Manual
+            </button>
+            <button
+              onClick={() => onUpdateSetting('crossfadeMode', 'seamless')}
+              style={{
+                padding: '6px 14px',
+                fontSize: '13px',
+                backgroundColor: settings.crossfadeMode === 'seamless' 
+                  ? 'var(--yt-spec-call-to-action)' 
+                  : 'var(--yt-spec-badge-chip-background)',
+                color: settings.crossfadeMode === 'seamless' 
+                  ? 'white' 
+                  : 'var(--yt-text-secondary)',
+                border: settings.crossfadeMode === 'seamless'
+                  ? 'none'
+                  : '1px solid var(--yt-spec-10-percent-layer)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: settings.crossfadeMode === 'seamless' ? 600 : 400,
+                transition: 'all 0.2s'
+              }}
+            >
+              Seamless
+            </button>
+          </div>
+        </div>
+
         {/* Auto-shuffle Playlists */}
         <div className="settings-item">
           <div className="settings-item-info">
@@ -252,9 +312,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         {/* Fade Duration */}
         <div className="settings-item">
           <div className="settings-item-info">
-            <div className="settings-item-label">Crossfade Duration</div>
+            <div className="settings-item-label">
+              {settings.crossfadeMode === 'seamless' ? 'Crossfade Overlap' : 'Skip Fade Duration'}
+            </div>
             <div className="settings-item-description">
-              Duration of audio/video crossfade between tracks
+              {settings.crossfadeMode === 'seamless' 
+                ? 'How many seconds before video ends to start the next'
+                : 'Duration of fade-out when skipping tracks'}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -262,7 +326,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               type="range"
               className="settings-slider"
               min={0.5}
-              max={4.0}
+              max={5.0}
               step={0.5}
               value={settings.fadeDuration}
               onChange={(e) => onUpdateSetting('fadeDuration', parseFloat(e.target.value))}

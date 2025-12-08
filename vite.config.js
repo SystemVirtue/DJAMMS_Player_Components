@@ -20,19 +20,45 @@ try {
       const files = fs.readdirSync(playlistPath)
         .filter(file => file.endsWith('.mp4'))
         .map((file, index) => {
-          // Parse title from filename (format: "ID | Title.mp4" or just "Title.mp4")
-          const nameWithoutExt = file.replace(/\.mp4$/, '')
-          const parts = nameWithoutExt.split(' | ')
-          const title = parts.length > 1 ? parts.slice(1).join(' | ') : nameWithoutExt
+          // Parse filename format: "[Artist] - [Title] -- [YouTube_ID].mp4"
+          const nameWithoutExt = file.replace(/\.mp4$/i, '')
+          
+          // Extract YouTube ID (after " -- ")
+          const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ')
+          let artist = null
+          let title = nameWithoutExt
+          let youtubeId = null
+          
+          if (doubleHyphenIndex !== -1) {
+            youtubeId = nameWithoutExt.substring(doubleHyphenIndex + 4).trim()
+            const artistAndTitle = nameWithoutExt.substring(0, doubleHyphenIndex)
+            
+            // Extract Artist and Title (separated by " - ")
+            const singleHyphenIndex = artistAndTitle.indexOf(' - ')
+            if (singleHyphenIndex !== -1) {
+              artist = artistAndTitle.substring(0, singleHyphenIndex).trim()
+              title = artistAndTitle.substring(singleHyphenIndex + 3).trim()
+            } else {
+              title = artistAndTitle.trim()
+            }
+          } else {
+            // No YouTube ID, try to parse as "Artist - Title"
+            const singleHyphenIndex = nameWithoutExt.indexOf(' - ')
+            if (singleHyphenIndex !== -1) {
+              artist = nameWithoutExt.substring(0, singleHyphenIndex).trim()
+              title = nameWithoutExt.substring(singleHyphenIndex + 3).trim()
+            }
+          }
           
           return {
             id: `${playlistName}-${index}`,
             title,
-            artist: playlistName,
+            artist: artist || playlistName,
             filename: file,
             playlist: playlistName,
-            src: `/playlist/${encodeURIComponent(playlistName)}/${encodeURIComponent(file)}`, // Vite proxy URL
-            path: path.join(playlistPath, file) // Keep original path for reference
+            playlistDisplayName: playlistName.replace(/^PL[A-Za-z0-9_-]+[._]/, ''), // Strip YouTube playlist ID
+            src: `/playlist/${encodeURIComponent(playlistName)}/${encodeURIComponent(file)}`,
+            path: path.join(playlistPath, file)
           }
         })
         .sort((a, b) => a.title.localeCompare(b.title))
