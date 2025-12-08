@@ -2,21 +2,19 @@ import resolve from '@rollup/plugin-node-resolve';
 import typescript from '@rollup/plugin-typescript';
 import { babel } from '@rollup/plugin-babel';
 import dts from 'rollup-plugin-dts';
-import { readFileSync } from 'fs';
-
-const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 export default [
   {
     input: 'src/index.ts',
     output: [
       {
-        file: packageJson.main,
+        // Output CJS library to dist/, NOT to electron/main.cjs which is the Electron main process
+        file: 'dist/index.cjs.js',
         format: 'cjs',
         sourcemap: true,
       },
       {
-        file: packageJson.module,
+        file: 'dist/index.esm.js',
         format: 'esm',
         sourcemap: true,
       },
