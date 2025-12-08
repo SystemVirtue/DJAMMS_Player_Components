@@ -19,12 +19,15 @@ import type {
 } from './types';
 
 // DJAMMS_Obie_Server Project Configuration
-const SUPABASE_URL = 'https://lfvhgdbnecjeuciadimx.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdmhnZGJuZWNqZXVjaWFkaW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2OTc2MjIsImV4cCI6MjA3OTI3MzYyMn0.kSVtXnNVRofDol8L20oflgdo7A82BgAMco2FoFHRkG8';
+// Load from environment variables (Vite uses import.meta.env.VITE_*)
+// Fallback to defaults for development
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://lfvhgdbnecjeuciadimx.supabase.co';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdmhnZGJuZWNqZXVjaWFkaW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2OTc2MjIsImV4cCI6MjA3OTI3MzYyMn0.kSVtXnNVRofDol8L20oflgdo7A82BgAMco2FoFHRkG8';
 
-// Default player ID - can be customized by user
+// Default player ID - "DJAMMS_DEMO" (prompts user to change but allows app to continue)
 // Must be at least 6 characters and unique on Supabase
-export const DEFAULT_PLAYER_ID = 'DEMO_PLAYER';
+// Load from environment variable with fallback
+export const DEFAULT_PLAYER_ID = import.meta.env.VITE_DEFAULT_PLAYER_ID || 'DJAMMS_DEMO';
 export const MIN_PLAYER_ID_LENGTH = 6;
 
 // LocalStorage key for saved player ID
@@ -185,13 +188,14 @@ export async function getPlayerState(playerId: string = DEFAULT_PLAYER_ID): Prom
 
 /**
  * Subscribe to player state changes
+ * Uses server-side filtering for efficiency (requires Realtime filter enabled in Supabase dashboard)
  */
 export function subscribeToPlayerState(
   playerId: string = DEFAULT_PLAYER_ID,
   callback: (state: SupabasePlayerState) => void
 ): RealtimeChannel {
-  // Note: We subscribe to ALL changes and filter client-side because
-  // Supabase Realtime filter columns must be explicitly enabled in the dashboard
+  // Use server-side filter if Realtime filters are enabled in Supabase dashboard
+  // Falls back to client-side filtering if server-side filter fails
   const channel = supabase
     .channel(`player_state:${playerId}`)
     .on(
@@ -199,19 +203,21 @@ export function subscribeToPlayerState(
       {
         event: '*',
         schema: 'public',
-        table: 'player_state'
-        // Removed server-side filter - will filter client-side instead
+        table: 'player_state',
+        filter: `player_id=eq.${playerId}`
       },
       (payload) => {
-        // Filter client-side: only process updates for the target player
         const newState = payload.new as SupabasePlayerState;
-        if (newState && newState.player_id === playerId) {
+        if (newState) {
           callback(newState);
         }
       }
     )
     .subscribe((status) => {
       console.log(`[SupabaseClient] Player state subscription: ${status}`);
+      if (status === 'CHANNEL_ERROR') {
+        console.warn('[SupabaseClient] Realtime filter may not be enabled. Enable player_id filter in Supabase dashboard for better performance.');
+      }
     });
 
   return channel;
@@ -220,6 +226,7 @@ export function subscribeToPlayerState(
 /**
  * Subscribe to local_videos table changes (for when playlists are re-indexed)
  * This allows Web Admin to auto-refresh when the Electron player indexes new playlists
+ * Uses server-side filtering for efficiency
  */
 export function subscribeToLocalVideos(
   playerId: string = DEFAULT_PLAYER_ID,
@@ -232,19 +239,19 @@ export function subscribeToLocalVideos(
       {
         event: '*',
         schema: 'public',
-        table: 'local_videos'
+        table: 'local_videos',
+        filter: `player_id=eq.${playerId}`
       },
       (payload) => {
-        // Filter for this player's videos
-        const record = (payload.new || payload.old) as any;
-        if (record && record.player_id === playerId) {
-          console.log('[SupabaseClient] Local videos changed, triggering refresh');
-          callback();
-        }
+        console.log('[SupabaseClient] Local videos changed, triggering refresh');
+        callback();
       }
     )
     .subscribe((status) => {
       console.log(`[SupabaseClient] Local videos subscription: ${status}`);
+      if (status === 'CHANNEL_ERROR') {
+        console.warn('[SupabaseClient] Realtime filter may not be enabled. Enable player_id filter in Supabase dashboard for better performance.');
+      }
     });
 
   return channel;
@@ -296,7 +303,24 @@ export async function sendCommandAndWait(
       created_at: new Date().toISOString()
     };
 
-    // 2. Broadcast using persistent channel (no subscription overhead)
+    // 2. Insert to database FIRST (so we can subscribe to status changes)
+    const { error: insertError } = await supabase
+      .from('admin_commands')
+      .insert({
+        id: commandId,
+        player_id: playerId,
+        command_type: commandType,
+        command_data: commandData,
+        issued_by: issuedBy,
+        status: 'pending',
+        issued_at: new Date().toISOString()
+      });
+
+    if (insertError && insertError.code !== '42P01') {
+      console.warn('[SupabaseClient] DB insert failed:', insertError.message);
+    }
+
+    // 3. Broadcast using persistent channel (no subscription overhead)
     console.log(`[SupabaseClient] 📤 Broadcasting command: ${commandType} to player: ${playerId}`);
     
     const commandChannel = await getCommandChannel(playerId);
@@ -309,30 +333,118 @@ export async function sendCommandAndWait(
     
     console.log(`[SupabaseClient] ✅ Command ${commandType} broadcast sent (${commandId})`);
 
-    // 3. Insert to database for persistence/audit (fire-and-forget, don't block)
-    supabase
-      .from('admin_commands')
-      .insert({
-        id: commandId,
-        player_id: playerId,
-        command_type: commandType,
-        command_data: commandData,
-        issued_by: issuedBy,
-        status: 'pending',
-        issued_at: new Date().toISOString()
-      })
-      .then(({ error }) => {
-        if (error && error.code !== '42P01') {
-          console.warn('[SupabaseClient] DB insert failed (command already broadcast):', error.message);
+    // 4. Wait for command execution via Realtime subscription
+    return new Promise<CommandResult>((resolve) => {
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          console.warn(`[SupabaseClient] Command ${commandId} timeout after ${timeoutMs}ms`);
+          resolve({ success: false, error: 'Timeout waiting for command execution', commandId });
         }
-      });
+      }, timeoutMs);
 
-    return { success: true, commandId };
+      // Subscribe to command status changes
+      const statusChannel = supabase
+        .channel(`command-status:${commandId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'admin_commands',
+            filter: `id=eq.${commandId}`
+          },
+          (payload) => {
+            if (resolved) return;
+            
+            const updated = payload.new as any;
+            if (updated && updated.status) {
+              if (updated.status === 'executed' || updated.status === 'completed') {
+                resolved = true;
+                clearTimeout(timeout);
+                statusChannel.unsubscribe();
+                console.log(`[SupabaseClient] ✅ Command ${commandId} executed successfully`);
+                resolve({ success: true, commandId });
+              } else if (updated.status === 'failed') {
+                resolved = true;
+                clearTimeout(timeout);
+                statusChannel.unsubscribe();
+                const errorMsg = updated.error_message || updated.execution_result?.error || 'Command failed';
+                console.error(`[SupabaseClient] ❌ Command ${commandId} failed: ${errorMsg}`);
+                resolve({ success: false, error: errorMsg, commandId });
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[SupabaseClient] Subscribed to command status: ${commandId}`);
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            if (!resolved) {
+              // Fallback to polling if Realtime fails
+              console.warn(`[SupabaseClient] Realtime subscription failed, falling back to polling for ${commandId}`);
+              pollCommandStatus(commandId, timeoutMs).then(result => {
+                if (!resolved) {
+                  resolved = true;
+                  clearTimeout(timeout);
+                  resolve(result);
+                }
+              });
+            }
+          }
+        });
+    });
 
   } catch (err) {
     console.error('[SupabaseClient] Exception in sendCommandAndWait:', err);
     return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
   }
+}
+
+/**
+ * Poll command status as fallback if Realtime fails
+ */
+async function pollCommandStatus(
+  commandId: string,
+  timeoutMs: number
+): Promise<CommandResult> {
+  const startTime = Date.now();
+  const pollInterval = 500; // Poll every 500ms
+  
+  return new Promise<CommandResult>((resolve) => {
+    const poll = setInterval(async () => {
+      if (Date.now() - startTime > timeoutMs) {
+        clearInterval(poll);
+        resolve({ success: false, error: 'Timeout waiting for command execution', commandId });
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('admin_commands')
+        .select('status, error_message, execution_result')
+        .eq('id', commandId)
+        .single();
+
+      if (error) {
+        clearInterval(poll);
+        resolve({ success: false, error: error.message, commandId });
+        return;
+      }
+
+      if (data) {
+        if (data.status === 'executed' || data.status === 'completed') {
+          clearInterval(poll);
+          resolve({ success: true, commandId });
+        } else if (data.status === 'failed') {
+          clearInterval(poll);
+          const errorMsg = data.error_message || data.execution_result?.error || 'Command failed';
+          resolve({ success: false, error: errorMsg, commandId });
+        }
+        // Otherwise continue polling
+      }
+    }, pollInterval);
+  });
 }
 
 /**
@@ -478,64 +590,79 @@ export async function searchLocalVideos(
 ): Promise<SupabaseLocalVideo[]> {
   // Minimum query length before searching
   const MIN_QUERY_LENGTH = 2;
-  // Minimum word length to include in search (filters out single letters)
-  const MIN_WORD_LENGTH = 2;
   
   const trimmedQuery = query.trim();
-  
   if (trimmedQuery.length < MIN_QUERY_LENGTH) {
     return [];
   }
-  
-  // Split query into words and filter short words
-  const words = trimmedQuery
-    .split(/\s+/)
-    .filter(word => word.length >= MIN_WORD_LENGTH)
-    .map(word => word.replace(/[%_]/g, '')); // Escape SQL wildcards
-  
-  if (words.length === 0) {
-    // If all words were too short, fall back to original query
-    words.push(trimmedQuery);
-  }
-  
-  // Build OR filter: match ANY word in title OR artist
-  // Format: (title.ilike.%word1%,artist.ilike.%word1%),(title.ilike.%word2%,artist.ilike.%word2%)
-  const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
-  
-  console.log(`[SupabaseClient] Search query: "${query}" → words: [${words.join(', ')}]`);
-  
-  const { data, error } = await supabase
-    .from('local_videos')
-    .select('*')
-    .eq('player_id', playerId)
-    .eq('is_available', true)
-    .or(orClauses)
-    .order('title')
-    .limit(limit);
 
-  if (error) {
-    console.error('[SupabaseClient] Error searching videos:', error);
-    return [];
-  }
-  
-  console.log(`[SupabaseClient] Search returned ${data?.length || 0} results`);
+  // Prefer PostgreSQL FTS RPC for consistent relevance across clients
+  try {
+    const { data, error } = await supabase.rpc('search_videos', {
+      search_query: trimmedQuery,
+      scope: 'all',
+      result_limit: limit,
+      result_offset: 0,
+      p_player_id: playerId
+    });
 
-  return data || [];
+    if (error) {
+      console.warn('[SupabaseClient] FTS search_videos RPC failed, falling back to ILIKE:', error);
+      throw error;
+    }
+
+    // If RPC returns player_id, filter client-side to be safe
+    const filtered = (data || []).filter((row: any) => !row.player_id || row.player_id === playerId);
+    return filtered;
+  } catch (_) {
+    // Fallback: legacy ILIKE search (any word in title OR artist), scoped to player
+    const MIN_WORD_LENGTH = 2;
+    const words = trimmedQuery
+      .split(/\s+/)
+      .filter(word => word.length >= MIN_WORD_LENGTH)
+      .map(word => word.replace(/[%_]/g, '')); // Escape SQL wildcards
+    
+    if (words.length === 0) {
+      words.push(trimmedQuery);
+    }
+    
+    const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
+    
+    const { data, error } = await supabase
+      .from('local_videos')
+      .select('*')
+      .eq('player_id', playerId)
+      .eq('is_available', true)
+      .or(orClauses)
+      .order('title')
+      .limit(limit);
+
+    if (error) {
+      console.error('[SupabaseClient] Error searching videos (ILIKE fallback):', error);
+      return [];
+    }
+    
+    return data || [];
+  }
 }
 
 /**
  * Get all local videos (for browse)
+ * Supports pagination for large libraries
  * Also exported as queryLocalVideos for backwards compatibility
  */
 export async function getAllLocalVideos(
-  playerId: string = DEFAULT_PLAYER_ID
+  playerId: string = DEFAULT_PLAYER_ID,
+  limit: number = 1000,
+  offset: number = 0
 ): Promise<SupabaseLocalVideo[]> {
   const { data, error } = await supabase
     .from('local_videos')
     .select('*')
     .eq('player_id', playerId)
     .eq('is_available', true)
-    .order('title');
+    .order('title')
+    .range(offset, offset + limit - 1);
 
   if (error) {
     console.error('[SupabaseClient] Error fetching all videos:', error);
@@ -543,6 +670,26 @@ export async function getAllLocalVideos(
   }
 
   return data || [];
+}
+
+/**
+ * Get total count of available videos for a player (for pagination)
+ */
+export async function getLocalVideosCount(
+  playerId: string = DEFAULT_PLAYER_ID
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('local_videos')
+    .select('*', { count: 'exact', head: true })
+    .eq('player_id', playerId)
+    .eq('is_available', true);
+
+  if (error) {
+    console.error('[SupabaseClient] Error counting videos:', error);
+    return 0;
+  }
+
+  return count || 0;
 }
 
 /**

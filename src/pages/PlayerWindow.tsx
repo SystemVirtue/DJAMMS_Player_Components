@@ -3,17 +3,20 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Video } from '../types';
 import { localSearchService, SearchResult, getSupabaseService } from '../services';
 import { getPlaylistDisplayName, getDisplayArtist, cleanVideoTitle, formatDuration } from '../utils/playlistHelpers';
+import { shuffleArray } from '../utils/arrayUtils';
 import { useSupabase } from '../hooks/useSupabase';
 import { QueueVideoItem } from '../types/supabase';
 import { 
   getPlayerId, 
-  setPlayerId as storePlayerId, 
+  setPlayerId as storePlayerId,
+  clearPlayerId,
   initializePlayerId,
   DEFAULT_PLAYER_ID,
   isValidPlayerIdFormat,
   claimPlayerId,
   validatePlayerId,
-  MIN_PLAYER_ID_LENGTH
+  MIN_PLAYER_ID_LENGTH,
+  MAX_PLAYER_ID_LENGTH
 } from '../utils/playerUtils';
 import { useVideoPlayer } from '../hooks/useVideoPlayer';
 
@@ -44,9 +47,11 @@ const navItems: { id: TabId; icon: string; label: string }[] = [
 interface PlayerIdSettingProps {
   playerId: string;
   onPlayerIdChange: (newId: string) => void;
+  needsPlayerId?: boolean;
+  onPlayerIdSet?: () => void;
 }
 
-const PlayerIdSetting: React.FC<PlayerIdSettingProps> = ({ playerId, onPlayerIdChange }) => {
+const PlayerIdSetting: React.FC<PlayerIdSettingProps> = ({ playerId, onPlayerIdChange, needsPlayerId = false, onPlayerIdSet }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [newId, setNewId] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -67,8 +72,19 @@ const PlayerIdSetting: React.FC<PlayerIdSettingProps> = ({ playerId, onPlayerIdC
   const handleSave = useCallback(async () => {
     const clean = newId.trim().toUpperCase();
     
+    // Validation checks
+    if (!clean || clean === '') {
+      setError('Player ID cannot be empty');
+      return;
+    }
+
+    if (clean.length < MIN_PLAYER_ID_LENGTH || clean.length > MAX_PLAYER_ID_LENGTH) {
+      setError(`Player ID must be between ${MIN_PLAYER_ID_LENGTH} and ${MAX_PLAYER_ID_LENGTH} characters`);
+      return;
+    }
+
     if (!isValidPlayerIdFormat(clean)) {
-      setError(`Player ID must be at least ${MIN_PLAYER_ID_LENGTH} characters`);
+      setError('Player ID can only contain letters A-Z, numbers 0-9, and underscore (_)');
       return;
     }
 
@@ -81,27 +97,48 @@ const PlayerIdSetting: React.FC<PlayerIdSettingProps> = ({ playerId, onPlayerIdC
     setError(null);
 
     try {
-      // Check if exists
-      const exists = await validatePlayerId(clean);
+      // Check if Player ID already exists in Supabase
+      const supabaseService = getSupabaseService();
+      const client = supabaseService.getClient();
       
-      if (exists) {
-        // ID exists - switch to it
+      if (client) {
+        const { data, error: queryError } = await client
+          .from('player_state')
+          .select('player_id')
+          .eq('player_id', clean)
+          .maybeSingle();
+
+        if (queryError && queryError.code !== 'PGRST116') {
+          // PGRST116 = no rows found (not an error)
+          throw queryError;
+        }
+
+        if (data) {
+          // Player ID already exists
+          setError('The Player ID is already in use. Please enter a new Player ID.');
+          return;
+        }
+      }
+
+      // Player ID is unique - claim it
+      const result = await claimPlayerId(clean);
+      if (result.success) {
         onPlayerIdChange(clean);
         setIsEditing(false);
         setNewId('');
-      } else {
-        // Try to claim it
-        const result = await claimPlayerId(clean);
-        if (result.success) {
-          onPlayerIdChange(clean);
-          setIsEditing(false);
-          setNewId('');
-        } else {
-          setError(result.error || 'Failed to claim Player ID');
+        if (onPlayerIdSet) {
+          onPlayerIdSet();
         }
+      } else {
+        setError(result.error || 'Failed to claim Player ID');
       }
-    } catch (err) {
-      setError('Failed to change Player ID');
+    } catch (err: any) {
+      console.error('[PlayerIdSetting] Validation error:', err);
+      if (err.message && err.message.includes('already in use')) {
+        setError('The Player ID is already in use. Please enter a new Player ID.');
+      } else {
+        setError('Failed to validate Player ID. Please try again.');
+      }
     } finally {
       setIsChanging(false);
     }
@@ -145,11 +182,15 @@ const PlayerIdSetting: React.FC<PlayerIdSettingProps> = ({ playerId, onPlayerIdC
             type="text"
             value={newId}
             onChange={(e) => {
-              setNewId(e.target.value.toUpperCase());
+              // Only allow A-Z, 0-9, and underscore
+              const filtered = e.target.value.replace(/[^A-Za-z0-9_]/g, '').toUpperCase();
+              setNewId(filtered);
               setError(null);
             }}
             placeholder="Enter new Player ID"
             disabled={isChanging}
+            data-player-id-edit
+            autoFocus={needsPlayerId}
             style={{
               padding: '8px 12px',
               fontSize: '14px',
@@ -166,7 +207,6 @@ const PlayerIdSetting: React.FC<PlayerIdSettingProps> = ({ playerId, onPlayerIdC
               if (e.key === 'Enter' && !isChanging) handleSave();
               if (e.key === 'Escape') handleCancel();
             }}
-            autoFocus
           />
           <button 
             className="action-btn primary"
@@ -235,6 +275,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [showQueuePlayDialog, setShowQueuePlayDialog] = useState(false);
   const [queueVideoToPlay, setQueueVideoToPlay] = useState<{ video: Video; index: number } | null>(null);
   const [showSkipConfirmDialog, setShowSkipConfirmDialog] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [showPlayerIdAlert, setShowPlayerIdAlert] = useState(false);
+  const [needsPlayerId, setNeedsPlayerId] = useState(false);
+  const [showDefaultPlaylistAlert, setShowDefaultPlaylistAlert] = useState(false);
+  const [defaultPlaylistName, setDefaultPlaylistName] = useState<string | null>(null);
   
   // Track if current video is from priority queue (for skip confirmation)
   const [isFromPriorityQueue, setIsFromPriorityQueue] = useState(false);
@@ -242,6 +287,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Popover state for search video click
   const [popoverVideo, setPopoverVideo] = useState<Video | null>(null);
   const [popoverPosition, setPopoverPosition] = useState({ x: 0, y: 0 });
+  
+  // Processing progress state
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 });
 
   // Settings
   const [settings, setSettings] = useState({
@@ -297,6 +346,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [playerReady, setPlayerReady] = useState(false); // True after queue is loaded and ready
   const playerReadyRef = useRef(false); // Ref to avoid stale closure in IPC callbacks
   const hasIndexedRef = useRef(false); // Prevent multiple indexing calls during mount
+  const lastIndexedPlayerIdRef = useRef<string | null>(null); // Prevent redundant re-index for same playerId
   
   // Debounce refs to prevent infinite loop on rapid video end events
   const lastPlayNextTimeRef = useRef(0);
@@ -329,23 +379,35 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       try {
         // Check for stored ID first
         const storedId = getPlayerId();
-        if (storedId) {
+        if (storedId && storedId.trim() !== '' && storedId.trim() !== 'DJAMMS_DEMO') {
           console.log('[PlayerWindow] Using stored Player ID:', storedId);
           setPlayerId(storedId);
           setPlayerIdInitialized(true);
           return;
         }
         
-        // Initialize (will claim default or generate random)
+        // No Player ID set or using default - initialize with default and prompt user
         const id = await initializePlayerId();
-        setPlayerId(id);
-        setPlayerIdInitialized(true);
-        console.log('[PlayerWindow] Initialized Player ID:', id);
+        setPlayerId(id); // Set the ID (will be "DJAMMS_DEMO" if not set)
+        setPlayerIdInitialized(true); // Always set initialized to allow app to continue
+        
+        // If using default demo ID, show prompt (but app continues)
+        if (id === 'DJAMMS_DEMO') {
+          console.log('[PlayerWindow] Using default Player ID (DJAMMS_DEMO) - showing prompt to change');
+          setNeedsPlayerId(true);
+          setShowPlayerIdAlert(true);
+          setCurrentTab('settings'); // Auto-switch to Settings tab
+        } else {
+          console.log('[PlayerWindow] Initialized Player ID:', id);
+        }
       } catch (err) {
         console.error('[PlayerWindow] Failed to initialize Player ID:', err);
-        // Fall back to default
+        // On error, use default and prompt
         setPlayerId(DEFAULT_PLAYER_ID);
-        setPlayerIdInitialized(true);
+        setPlayerIdInitialized(true); // Set initialized even on error
+        setNeedsPlayerId(true);
+        setShowPlayerIdAlert(true);
+        setCurrentTab('settings');
       }
     };
     
@@ -354,9 +416,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Supabase integration - listen for remote commands from Web Admin / Kiosk
   // This runs in the main window so commands are received even without Player Window open
+  // Initialize Supabase with Player ID (even if it's "DJAMMS_DEMO" - allows app to continue)
   const { isInitialized: supabaseInitialized, isOnline: supabaseOnline, syncState } = useSupabase({
-    playerId, // Pass player ID for multi-tenancy
-    autoInit: isElectron && playerIdInitialized, // Only initialize after playerId is ready
+    playerId: playerId && playerId.trim() !== '' ? playerId : DEFAULT_PLAYER_ID, // Pass player ID (use default if not set)
+    autoInit: !!(isElectron && playerIdInitialized && playerId && playerId.trim() !== ''), // Initialize if Player ID is set (including DJAMMS_DEMO)
     onPlay: (video?: QueueVideoItem, queueIndex?: number) => {
       console.log('[PlayerWindow] Supabase play command received:', video?.title, 'queueIndex:', queueIndex);
       
@@ -494,15 +557,32 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           ? (shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks])
           : [];
         setActivePlaylist(playlistKey);
+        
+        // Load playlist into main process queue
+        if (isElectron && finalTracks.length > 0) {
+          // Clear queue in main process
+          (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+          
+          // Add all videos to main process queue
+          finalTracks.forEach((video) => {
+            (window as any).electronAPI.sendQueueCommand?.({ 
+              action: 'add_to_queue', 
+              payload: { video } 
+            });
+          });
+          
+          // Play the first video
+          setTimeout(() => {
+            (window as any).electronAPI.sendQueueCommand?.({ 
+              action: 'play_at_index', 
+              payload: { index: 0 } 
+            });
+          }, 100);
+        }
+        
+        // Update local state (will be synced from main process via queue-state event)
         setQueue(finalTracks);
         setQueueIndex(0);
-        if (finalTracks.length > 0) {
-          setCurrentVideo(finalTracks[0]);
-          setIsPlaying(true);
-          if (isElectron) {
-            (window as any).electronAPI.controlPlayerWindow('play', finalTracks[0]);
-          }
-        }
       }
     },
     onQueueMove: (fromIndex: number, toIndex: number) => {
@@ -590,16 +670,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     // other config
   });
 
-  // Shuffle helper
-  const shuffleArray = <T,>(array: T[]): T[] => {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-  };
-
   // Auto-collapse sidebar on small screens
   useEffect(() => {
     const handleResize = () => {
@@ -612,13 +682,86 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Track when indexing is complete (for auto-play logic)
+  const indexingCompleteRef = useRef(false);
+  
+  // Initialize indexingCompleteRef based on whether Supabase is available
+  useEffect(() => {
+    // If Supabase is not initialized, mark as complete immediately (no indexing needed)
+    if (!supabaseInitialized) {
+      indexingCompleteRef.current = true;
+    }
+  }, [supabaseInitialized]);
+  
   // Sync music database to Supabase when it becomes initialized and we have playlists
   useEffect(() => {
     if (supabaseInitialized && Object.keys(playlists).length > 0) {
       console.log('[PlayerWindow] Supabase initialized - syncing music database');
-      getSupabaseService().indexLocalVideos(playlists);
+      setIsProcessing(true);
+      setProcessingProgress({ current: 0, total: 0 });
+      indexingCompleteRef.current = false;
+      getSupabaseService().indexLocalVideos(
+        playlists,
+        (current, total) => {
+          setProcessingProgress({ current, total });
+        }
+      ).finally(() => {
+        setIsProcessing(false);
+        setProcessingProgress({ current: 0, total: 0 });
+        indexingCompleteRef.current = true;
+        console.log('[PlayerWindow] Playlist indexing complete - ready for playback');
+      });
     }
   }, [supabaseInitialized, playlists]);
+
+  /**
+   * After Player ID is validated/changed, re-parse playlists and upload search data to Supabase.
+   * This ensures Admin/Kiosk search stays in sync with the active player instance.
+   */
+  useEffect(() => {
+    const shouldSync = isElectron && playerIdInitialized && playerId && playerId.trim() !== '';
+    if (!shouldSync) return;
+
+    // Avoid re-indexing repeatedly for the same playerId
+    if (lastIndexedPlayerIdRef.current === playerId) return;
+
+    lastIndexedPlayerIdRef.current = playerId;
+
+    const reloadAndSync = async () => {
+      try {
+        // Re-parse playlists from disk
+        const { playlists: loadedPlaylists } = await (window as any).electronAPI.getPlaylists();
+        setPlaylists(loadedPlaylists || {});
+        localSearchService.indexVideos(loadedPlaylists || {});
+
+        // Upload search data to Supabase once we have a client
+        if (supabaseInitialized && loadedPlaylists) {
+          console.log('[PlayerWindow] Player ID validated - syncing playlists/search to Supabase');
+          setIsProcessing(true);
+          setProcessingProgress({ current: 0, total: 0 });
+          indexingCompleteRef.current = false;
+          getSupabaseService().indexLocalVideos(
+            loadedPlaylists,
+            (current, total) => {
+              setProcessingProgress({ current, total });
+            }
+          ).finally(() => {
+            setIsProcessing(false);
+            setProcessingProgress({ current: 0, total: 0 });
+            indexingCompleteRef.current = true;
+            console.log('[PlayerWindow] Playlist indexing complete after Player ID validation');
+          });
+        } else {
+          // If Supabase is not initialized, mark as complete (no indexing needed)
+          indexingCompleteRef.current = true;
+        }
+      } catch (error) {
+        console.error('[PlayerWindow] Failed to reload playlists after Player ID validation:', error);
+      }
+    };
+
+    reloadAndSync();
+  }, [isElectron, playerIdInitialized, playerId, supabaseInitialized]);
 
   // Load playlists and settings on mount
   useEffect(() => {
@@ -632,6 +775,25 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           const { playlists: loadedPlaylists } = await (window as any).electronAPI.getPlaylists();
           setPlaylists(loadedPlaylists || {});
           localSearchService.indexVideos(loadedPlaylists || {});
+          
+          // Check for default playlist name and prompt to change if found
+          if (loadedPlaylists) {
+            const defaultPlaylistKey = Object.keys(loadedPlaylists).find(name => 
+              name.includes('DJAMMS_Default') || name.toLowerCase().includes('djamms default')
+            );
+            if (defaultPlaylistKey) {
+              // Check if user has already been prompted (stored setting)
+              const hasBeenPrompted = await (window as any).electronAPI.getSetting('defaultPlaylistPromptShown');
+              if (!hasBeenPrompted) {
+                console.log('[PlayerWindow] Found default playlist - showing prompt to rename');
+                setDefaultPlaylistName(defaultPlaylistKey);
+                setShowDefaultPlaylistAlert(true);
+                setCurrentTab('search'); // Auto-switch to Search tab (where playlists are shown)
+                // Mark as prompted so it only shows once
+                await (window as any).electronAPI.setSetting('defaultPlaylistPromptShown', true);
+              }
+            }
+          }
           
           // Note: Supabase sync happens automatically via the useEffect hook when supabaseInitialized becomes true
           
@@ -660,6 +822,18 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             playlistsDirectory: savedPlaylistsDir ?? s.playlistsDirectory
           }));
           
+          // Open player window on startup if enabled
+          if (savedEnablePlayer && isElectron) {
+            setTimeout(async () => {
+              try {
+                await (window as any).electronAPI.createPlayerWindow(savedDisplayId ?? undefined);
+                setPlayerWindowOpen(true);
+              } catch (error) {
+                console.error('[PlayerWindow] Failed to open player window on startup:', error);
+              }
+            }, 1000); // Delay to ensure main window is ready
+          }
+          
           // Load saved overlay settings
           const savedOverlaySettings = await (window as any).electronAPI.getSetting('overlaySettings');
           if (savedOverlaySettings) {
@@ -674,33 +848,84 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             setKioskSettings(prev => ({ ...prev, ...savedKioskSettings }));
           }
           
-          // Load last active playlist and auto-play
-          const savedActivePlaylist = await (window as any).electronAPI.getSetting('activePlaylist');
-          const playlistToLoad = savedActivePlaylist || findDefaultPlaylist(loadedPlaylists);
-          
-          if (playlistToLoad && loadedPlaylists[playlistToLoad]) {
-            console.log('[PlayerWindow] Auto-loading playlist:', playlistToLoad);
-            setActivePlaylist(playlistToLoad);
-            const playlistTracks = loadedPlaylists[playlistToLoad] || [];
-            const shouldShuffle = savedAutoShuffle ?? true;
-            const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
-            setQueue(finalTracks);
-            setQueueIndex(0);
-            if (finalTracks.length > 0) {
-              // Delay to ensure Player Window is fully loaded and ready to receive IPC
-              // Player Window is created at 500ms, needs time to load and register handlers
-              setTimeout(() => {
-                console.log('[PlayerWindow] Sending initial play command to Player Window');
-                setCurrentVideo(finalTracks[0]);
-                setIsPlaying(true);
-                // Mark player as ready since we have a queue loaded
-                if (!playerReadyRef.current) {
-                  playerReadyRef.current = true;
-                  setPlayerReady(true);
-                }
-                // Send play command to Player Window (the ONLY player)
-                (window as any).electronAPI.controlPlayerWindow('play', finalTracks[0]);
-              }, 1500);
+          // Load saved queue state (active queue, priority queue, queueIndex, currentVideo)
+          const savedQueueState = await (window as any).electronAPI.getSetting('savedQueueState');
+          if (savedQueueState && savedQueueState.activeQueue && savedQueueState.activeQueue.length > 0) {
+            console.log('[PlayerWindow] Restoring saved queue state:', {
+              activeQueueLength: savedQueueState.activeQueue.length,
+              priorityQueueLength: savedQueueState.priorityQueue?.length || 0,
+              queueIndex: savedQueueState.queueIndex,
+              currentVideo: savedQueueState.currentVideo?.title
+            });
+            setQueue(savedQueueState.activeQueue);
+            setQueueIndex(savedQueueState.queueIndex || 0);
+            setPriorityQueue(savedQueueState.priorityQueue || []);
+            if (savedQueueState.currentVideo) {
+              setCurrentVideo(savedQueueState.currentVideo);
+            }
+            if (savedQueueState.activePlaylist) {
+              setActivePlaylist(savedQueueState.activePlaylist);
+            }
+            // Resume playback if it was playing - wait for indexing to complete first
+            if (savedQueueState.isPlaying && savedQueueState.currentVideo) {
+              // Wait for indexing to complete before starting playback
+              waitForIndexingComplete().then(() => {
+                console.log('[PlayerWindow] Indexing complete - resuming saved playback');
+                setTimeout(() => {
+                  (window as any).electronAPI.controlPlayerWindow('play', savedQueueState.currentVideo);
+                  setIsPlaying(true);
+                }, 500);
+              });
+            }
+          } else {
+            // No saved queue - load last active playlist and auto-play
+            const savedActivePlaylist = await (window as any).electronAPI.getSetting('activePlaylist');
+            const playlistToLoad = savedActivePlaylist || findDefaultPlaylist(loadedPlaylists);
+            
+            if (playlistToLoad && loadedPlaylists[playlistToLoad]) {
+              console.log('[PlayerWindow] Auto-loading playlist:', playlistToLoad);
+              setActivePlaylist(playlistToLoad);
+              const playlistTracks = loadedPlaylists[playlistToLoad] || [];
+              const shouldShuffle = savedAutoShuffle ?? true;
+              const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
+              
+              // Load playlist into main process queue
+              if (isElectron && finalTracks.length > 0) {
+                // Clear queue in main process
+                (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+                
+                // Add all videos to main process queue
+                finalTracks.forEach((video) => {
+                  (window as any).electronAPI.sendQueueCommand?.({ 
+                    action: 'add_to_queue', 
+                    payload: { video } 
+                  });
+                });
+                
+                // Wait for indexing to complete, then start playback
+                waitForIndexingComplete().then(() => {
+                  console.log('[PlayerWindow] Indexing complete - starting auto-play');
+                  // Delay to ensure Player Window is fully loaded and ready to receive IPC
+                  // Player Window is created at 500ms, needs time to load and register handlers
+                  setTimeout(() => {
+                    console.log('[PlayerWindow] Sending initial play command to Player Window');
+                    // Mark player as ready since we have a queue loaded
+                    if (!playerReadyRef.current) {
+                      playerReadyRef.current = true;
+                      setPlayerReady(true);
+                    }
+                    // Play first video via main process orchestrator
+                    (window as any).electronAPI.sendQueueCommand?.({ 
+                      action: 'play_at_index', 
+                      payload: { index: 0 } 
+                    });
+                  }, 500);
+                });
+              }
+              
+              // Update local state (will be synced from main process via queue-state event)
+              setQueue(finalTracks);
+              setQueueIndex(0);
             }
           }
         } catch (error) {
@@ -716,7 +941,41 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     };
     loadData();
   }, [isElectron]);
+
+  // Save queue state whenever it changes (for persistence across app restarts)
+  useEffect(() => {
+    if (!isElectron || !playerIdInitialized) return;
+    
+    const saveQueueState = async () => {
+      try {
+        const queueState = {
+          activeQueue: queue,
+          priorityQueue: priorityQueue,
+          queueIndex: queueIndex,
+          currentVideo: currentVideo,
+          activePlaylist: activePlaylist,
+          isPlaying: isPlaying
+        };
+        await (window as any).electronAPI.setSetting('savedQueueState', queueState);
+      } catch (error) {
+        console.warn('[PlayerWindow] Failed to save queue state:', error);
+      }
+    };
+
+    // Debounce saves to avoid excessive writes
+    const timeoutId = setTimeout(saveQueueState, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [queue, priorityQueue, queueIndex, currentVideo, activePlaylist, isPlaying, isElectron, playerIdInitialized]);
   
+  // Helper function to wait for indexing to complete
+  const waitForIndexingComplete = async (maxWaitMs: number = 30000): Promise<boolean> => {
+    const startTime = Date.now();
+    while (!indexingCompleteRef.current && (Date.now() - startTime) < maxWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, 100)); // Check every 100ms
+    }
+    return indexingCompleteRef.current;
+  };
+
   // Helper function to find DJAMMS Default playlist
   const findDefaultPlaylist = (playlists: Record<string, Video[]>): string | null => {
     const playlistNames = Object.keys(playlists);
@@ -747,7 +1006,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     loadDisplays();
   }, [isElectron]);
 
-  // Listen for player window closed event
+  // Listen for player window closed/opened events
   useEffect(() => {
     if (!isElectron) return;
     const api = (window as any).electronAPI;
@@ -756,8 +1015,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       setPlayerWindowOpen(false);
     });
     
+    // Listen for player window opened event
+    const handlePlayerOpened = () => {
+      setPlayerWindowOpen(true);
+    };
+    const unsubPlayerOpened = api.onPlayerWindowOpened?.(handlePlayerOpened);
+    
     return () => {
       unsubPlayerClosed?.();
+      unsubPlayerOpened?.();
     };
   }, [isElectron]);
 
@@ -788,7 +1054,17 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       // Sync entire music database to Supabase for Web Admin/Kiosk
       if (supabaseInitialized) {
         console.log('[PlayerWindow] Syncing music database to Supabase after directory change (IPC)');
-        getSupabaseService().indexLocalVideos(newPlaylists || {});
+        setIsProcessing(true);
+        setProcessingProgress({ current: 0, total: 0 });
+        getSupabaseService().indexLocalVideos(
+          newPlaylists || {},
+          (current, total) => {
+            setProcessingProgress({ current, total });
+          }
+        ).finally(() => {
+          setIsProcessing(false);
+          setProcessingProgress({ current: 0, total: 0 });
+        });
       }
       // Update settings state
       setSettings(s => ({ ...s, playlistsDirectory: newPath }));
@@ -876,148 +1152,42 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
   }, [isElectron]);
 
-  // Unified function to play the next video - ALWAYS checks priority queue first
+  // Request next video from main orchestrator (source of truth)
   const playNextVideo = useCallback(() => {
-    // DEBOUNCE: Prevent rapid-fire calls that cause infinite loop on video load failure
-    // Use both time-based debounce AND video-based deduplication
+    // DEBOUNCE: Prevent rapid-fire calls
     const now = Date.now();
     const timeSinceLastCall = now - lastPlayNextTimeRef.current;
-    const currentVideoId = currentVideoRef.current?.id || currentVideoRef.current?.src || '';
-    
-    // If same video and less than 500ms, debounce
-    // But allow calls for DIFFERENT videos to proceed (handles quick succession of priority queue)
-    if (timeSinceLastCall < 500 && lastAdvancedFromVideoRef.current === currentVideoId && currentVideoId !== '') {
-      console.warn('[PlayerWindow] playNextVideo debounced - same video within 500ms (' + timeSinceLastCall + 'ms since last call)');
+    if (timeSinceLastCall < 500) {
+      console.warn('[PlayerWindow] playNextVideo debounced - too soon (' + timeSinceLastCall + 'ms since last call)');
       return;
     }
-    
-    // Track which video we're advancing from
-    lastAdvancedFromVideoRef.current = currentVideoId;
     lastPlayNextTimeRef.current = now;
     
-    console.log('[PlayerWindow] 🎬 playNextVideo called at', new Date().toISOString());
-    console.log('[PlayerWindow] └─ priorityQueue:', priorityQueueRef.current.length, 'activeQueue:', queueRef.current.length, 'currentIndex:', queueIndexRef.current);
+    console.log('[PlayerWindow] 🎬 Requesting next video from orchestrator');
     
     // Reset watchdog state since we're initiating a new video
     watchdogCheckCountRef.current = 0;
     lastPlaybackTimeRef.current = 0;
     
-    // ALWAYS check priority queue first (KIOSK requests take precedence)
-    if (priorityQueueRef.current.length > 0) {
-      const nextVideo = priorityQueueRef.current[0];
-      const newPriorityQueue = priorityQueueRef.current.slice(1);
-      console.log('[PlayerWindow] Playing from priority queue:', nextVideo.title);
-      
-      // Update ref SYNCHRONOUSLY before state update to prevent race conditions
-      priorityQueueRef.current = newPriorityQueue;
-      
-      // Track video for failure detection
-      const videoId = nextVideo.id || nextVideo.src;
-      if (lastPlayedVideoIdRef.current === videoId) {
-        consecutiveFailuresRef.current++;
-        console.warn('[PlayerWindow] Same video played again, consecutive failures:', consecutiveFailuresRef.current);
-      } else {
-        consecutiveFailuresRef.current = 0;
-        lastPlayedVideoIdRef.current = videoId;
-      }
-      
-      setPriorityQueue(newPriorityQueue);
-      setCurrentVideo(nextVideo);
-      setIsPlaying(true);
-      setIsFromPriorityQueue(true); // Mark as priority queue video
-      sendPlayCommand(nextVideo);
-      // Immediate sync so Web Admin sees the update right away
-      setTimeout(() => {
-        syncState({
-          status: 'playing',
-          isPlaying: true,
-          currentVideo: nextVideo,
-          priorityQueue: newPriorityQueue
-        }, true);
-      }, 0);
-      return;
+    // Send IPC command to main orchestrator - it will handle queue rotation and broadcast state
+    if (isElectron) {
+      (window as any).electronAPI.sendQueueCommand?.({ action: 'next' });
     }
-    
-    // Fall back to active queue - advance to next track or loop
-    const currentQueue = queueRef.current;
-    const currentIndex = queueIndexRef.current;
-    
-    if (currentQueue.length === 0) {
-      console.log('[PlayerWindow] Both queues empty, nothing to play');
-      return;
-    }
-    
-    let nextIndex = currentIndex < currentQueue.length - 1 ? currentIndex + 1 : 0;
-    let nextVideo = currentQueue[nextIndex];
-    
-    // Track video for failure detection - if same video fails multiple times, skip it
-    if (nextVideo) {
-      const videoId = nextVideo.id || nextVideo.src;
-      if (lastPlayedVideoIdRef.current === videoId) {
-        consecutiveFailuresRef.current++;
-        console.warn('[PlayerWindow] Same video attempted again, consecutive failures:', consecutiveFailuresRef.current);
-        
-        // If we've failed too many times on this video, skip to the next one
-        if (consecutiveFailuresRef.current >= MAX_CONSECUTIVE_FAILURES) {
-          console.error('[PlayerWindow] Too many consecutive failures for video:', nextVideo.title, '- skipping');
-          nextIndex = nextIndex < currentQueue.length - 1 ? nextIndex + 1 : 0;
-          nextVideo = currentQueue[nextIndex];
-          consecutiveFailuresRef.current = 0;
-          lastPlayedVideoIdRef.current = nextVideo ? (nextVideo.id || nextVideo.src) : null;
-        }
-      } else {
-        consecutiveFailuresRef.current = 0;
-        lastPlayedVideoIdRef.current = videoId;
-      }
-    }
-    
-    if (nextVideo) {
-      console.log('[PlayerWindow] Playing from active queue index:', nextIndex, nextVideo.title);
-      
-      // Update ref SYNCHRONOUSLY before state update to prevent race conditions
-      queueIndexRef.current = nextIndex;
-      
-      setQueueIndex(nextIndex);
-      setCurrentVideo(nextVideo);
-      setIsPlaying(true);
-      setIsFromPriorityQueue(false); // Not from priority queue
-      sendPlayCommand(nextVideo);
-      // Immediate sync so Web Admin sees the update right away
-      setTimeout(() => {
-        syncState({
-          status: 'playing',
-          isPlaying: true,
-          currentVideo: nextVideo,
-          queueIndex: nextIndex
-        }, true);
-      }, 0);
-    }
-  }, [sendPlayCommand, syncState]);
+  }, [isElectron]);
 
   const toggleShuffle = () => {
-    if (!playerReady) return; // Ignore until player is ready
-    // Shuffle the current queue (keeping current video at position 0)
-    if (queue.length > 1) {
-      const currentTrack = queue[queueIndex];
-      const otherTracks = queue.filter((_, i) => i !== queueIndex);
-      const shuffledOthers = shuffleArray(otherTracks);
-      const newQueue = [currentTrack, ...shuffledOthers];
-      setQueue(newQueue);
-      setQueueIndex(0); // Current track is now at index 0
-      setCurrentTab('queue'); // Auto-switch to Queue tab
-    }
+    if (!playerReady || !isElectron) return;
+    // Request main orchestrator to shuffle queue - it will broadcast updated state
+    (window as any).electronAPI.sendQueueCommand?.({ action: 'shuffle_queue', payload: { keepFirst: true } });
+    setCurrentTab('queue'); // Auto-switch to Queue tab
   };
 
   const playVideoAtIndex = useCallback((index: number) => {
-    const video = queue[index];
-    if (video) {
-      setQueueIndex(index);
-      setCurrentVideo(video);
-      setIsPlaying(true);
-      // Send to Player Window (the ONLY player)
-      sendPlayCommand(video);
+    // Request main orchestrator to play at index - it will broadcast state update
+    if (isElectron) {
+      (window as any).electronAPI.sendQueueCommand?.({ action: 'play_at_index', payload: { index } });
     }
-  }, [queue, sendPlayCommand]);
+  }, [isElectron]);
 
   // Show confirmation dialog before playing from queue
   const handleQueueItemClick = useCallback((index: number) => {
@@ -1031,15 +1201,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Confirm and play the selected queue video
   const confirmQueuePlay = useCallback(() => {
-    if (queueVideoToPlay) {
-      // Move selected video to top of active queue
-      const video = queueVideoToPlay.video;
-      const filteredQueue = queue.filter(v => v.id !== video.id);
-      const newQueue = [video, ...filteredQueue];
-      setQueue(newQueue);
-      setQueueIndex(0);
-      // Trigger skip (fade-out)
-      if (video.id !== currentVideo?.id) {
+    if (queueVideoToPlay && isElectron) {
+      // Request main orchestrator to play at index - it will handle queue reordering and broadcast state
+      (window as any).electronAPI.sendQueueCommand?.({ action: 'play_at_index', payload: { index: queueVideoToPlay.index } });
+      setShowQueuePlayDialog(false);
+      setQueueVideoToPlay(null);
+      // Trigger skip (fade-out) if different video
+      if (queueVideoToPlay.video.id !== currentVideo?.id) {
         videoPlayer.skip();
       }
     }
@@ -1049,51 +1217,29 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Move selected queue video to play next (position after current)
   const moveQueueVideoToNext = useCallback(() => {
-    if (queueVideoToPlay && queue.length > 1) {
-      const { index } = queueVideoToPlay;
-      const targetIndex = queueIndex + 1; // Position right after current
-      
-      // Don't move if already in the next position or is the current video
-      if (index === targetIndex || index === queueIndex) {
-        setShowQueuePlayDialog(false);
-        setQueueVideoToPlay(null);
-        return;
-      }
-      
-      const newQueue = [...queue];
-      const [movedVideo] = newQueue.splice(index, 1);
-      // If we removed from before the target, adjust target index
-      const adjustedTarget = index < targetIndex ? targetIndex - 1 : targetIndex;
-      newQueue.splice(adjustedTarget, 0, movedVideo);
-      setQueue(newQueue);
+    if (queueVideoToPlay && isElectron) {
+      // Request main orchestrator to move video - it will broadcast updated state
+      (window as any).electronAPI.sendQueueCommand?.({ 
+        action: 'move_queue_item', 
+        payload: { fromIndex: queueVideoToPlay.index, toIndex: queueIndex + 1 } 
+      });
     }
     setShowQueuePlayDialog(false);
     setQueueVideoToPlay(null);
-  }, [queueVideoToPlay, queue, queueIndex]);
+  }, [queueVideoToPlay, queueIndex, isElectron]);
 
   // Remove selected video from queue
   const removeQueueVideo = useCallback(() => {
-    if (queueVideoToPlay) {
-      const { index } = queueVideoToPlay;
-      
-      // Don't remove the currently playing video
-      if (index === queueIndex) {
-        setShowQueuePlayDialog(false);
-        setQueueVideoToPlay(null);
-        return;
-      }
-      
-      const newQueue = queue.filter((_, i) => i !== index);
-      setQueue(newQueue);
-      
-      // Adjust queueIndex if we removed a video before the current one
-      if (index < queueIndex) {
-        setQueueIndex(prev => prev - 1);
-      }
+    if (queueVideoToPlay && isElectron) {
+      // Request main orchestrator to remove video - it will broadcast updated state
+      (window as any).electronAPI.sendQueueCommand?.({ 
+        action: 'remove_from_queue', 
+        payload: { index: queueVideoToPlay.index } 
+      });
     }
     setShowQueuePlayDialog(false);
     setQueueVideoToPlay(null);
-  }, [queueVideoToPlay, queue, queueIndex]);
+  }, [queueVideoToPlay, isElectron]);
 
   // Playlist functions
   const handlePlaylistClick = (playlistName: string) => {
@@ -1117,14 +1263,33 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       const finalTracks = Array.isArray(playlistTracks)
         ? (settings.autoShufflePlaylists ? shuffleArray(playlistTracks) : [...playlistTracks])
         : [];
+      
+      // Clear the main process queue first, then add all videos
+      if (isElectron && finalTracks.length > 0) {
+        // Clear queue in main process
+        (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+        
+        // Add all videos to main process queue
+        finalTracks.forEach((video) => {
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'add_to_queue', 
+            payload: { video } 
+          });
+        });
+        
+        // Play the first video
+        setTimeout(() => {
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'play_at_index', 
+            payload: { index: 0 } 
+          });
+        }, 100);
+      }
+      
+      // Update local state (will be synced from main process via queue-state event)
       setQueue(finalTracks);
       setQueueIndex(0);
-      if (finalTracks.length > 0) {
-        setCurrentVideo(finalTracks[0]);
-        setIsPlaying(true);
-        // Send to Player Window (the ONLY player)
-        sendPlayCommand(finalTracks[0]);
-      }
+      
       // Save active playlist to persist between sessions
       if (isElectron) {
         (window as any).electronAPI.setSetting('activePlaylist', playlistToLoad);
@@ -1279,19 +1444,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const getAllVideos = (): Video[] => allVideos;
   const getSearchResults = (): Video[] => searchResults;
 
-  // Queue management
+  // Queue management via IPC (main orchestrator is source of truth)
   const handleClearQueue = () => {
-    if (currentVideo && isPlaying) {
-      setQueue([currentVideo]);
-      setQueueIndex(0);
-    } else {
-      setQueue([]);
-      setQueueIndex(0);
-    }
+    if (!isElectron) return;
+    (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
   };
 
   const handleAddToQueue = (video: Video) => {
-    setQueue(prev => [...prev, video]);
+    if (!isElectron) return;
+    (window as any).electronAPI.sendQueueCommand?.({ action: 'add_to_queue', payload: { video } });
   };
 
   // Video click handler for search - opens popover to add to priority queue
@@ -1353,22 +1514,35 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   }, [priorityQueue, queue, queueIndex]);
 
   // Preload the next video when it changes (after current video starts playing)
+  // This maintains a single queue buffer (up-next video) for smoother playback
   useEffect(() => {
-    if (!nextVideoToPreload || !isElectron || !isPlaying) return;
+    if (!nextVideoToPreload || !isElectron) return;
     
-    // Small delay to let current video start loading first
+    // Only preload if we have a current video playing or about to play
+    // This prevents unnecessary preloads when queue is empty
+    if (!currentVideo && !isPlaying) return;
+    
+    // Small delay to let current video start loading first (if playing)
+    // If not playing yet, preload immediately
+    const delay = isPlaying ? 1000 : 100;
     const preloadTimer = setTimeout(() => {
       console.log('[PlayerWindow] 📥 Preloading next video:', nextVideoToPreload.title);
-      (window as any).electronAPI.controlPlayerWindow('preload', nextVideoToPreload);
-    }, 1000); // 1 second delay after video starts
+      try {
+        (window as any).electronAPI.controlPlayerWindow('preload', nextVideoToPreload);
+      } catch (error) {
+        console.warn('[PlayerWindow] Preload failed:', error);
+      }
+    }, delay);
     
     return () => clearTimeout(preloadTimer);
-  }, [nextVideoToPreload, isElectron, isPlaying, currentVideo]); // Also re-preload when currentVideo changes
+  }, [nextVideoToPreload, isElectron, isPlaying, currentVideo]); // Re-preload when any of these change
 
   const handleVideoEnd = useCallback(() => {
     console.log('[PlayerWindow] Video ended - calling playNextVideo');
     // Use unified playNextVideo which checks priority queue first
     playNextVideo();
+    // Note: Preloading of next video is handled automatically by the useEffect
+    // that watches nextVideoToPreload, which updates when queue advances
   }, [playNextVideo]);
 
   // Set up IPC listener to receive video end events from Player Window
@@ -1474,18 +1648,93 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     };
   }, [isElectron, playerReady, isPlaying, currentVideo, playbackTime, playbackDuration, playNextVideo]);
 
-  // Sync queue to Player Window for Supabase state sync
-  // The Player Window will update Supabase with the queue state
+  // Subscribe to authoritative queue state from main orchestrator
   useEffect(() => {
     if (!isElectron) return;
     
-    // Send queue update to Player Window
-    (window as any).electronAPI.controlPlayerWindow('updateQueue', {
-      activeQueue: queue,
-      priorityQueue: priorityQueue,
-      queueIndex: queueIndex
+    let previousVideoId: string | null = null;
+    
+    const unsubscribe = (window as any).electronAPI.onQueueState?.((state: any) => {
+      if (state) {
+        // Update local state from authoritative main process state
+        if (state.activeQueue) {
+          setQueue(state.activeQueue);
+          queueRef.current = state.activeQueue;
+        }
+        if (state.priorityQueue) {
+          setPriorityQueue(state.priorityQueue);
+          priorityQueueRef.current = state.priorityQueue;
+        }
+        if (typeof state.queueIndex === 'number') {
+          setQueueIndex(state.queueIndex);
+          queueIndexRef.current = state.queueIndex;
+        }
+        
+        // Handle current video change - send play command if video changed
+        if (state.currentVideo || state.nowPlaying) {
+          const newVideo = state.currentVideo || state.nowPlaying;
+          const newVideoId = newVideo.id || newVideo.src;
+          
+          if (newVideoId !== previousVideoId) {
+            console.log('[PlayerWindow] Queue state update - new video:', newVideo.title);
+            setCurrentVideo(newVideo);
+            currentVideoRef.current = newVideo;
+            previousVideoId = newVideoId;
+            
+            // Send play command if video changed and is playing
+            if (state.isPlaying && newVideo) {
+              sendPlayCommand(newVideo);
+            }
+            
+            // Update refs for debounce checks
+            lastPlayedVideoIdRef.current = newVideoId;
+            consecutiveFailuresRef.current = 0; // Reset failure count on new video
+          }
+        } else {
+          // No video playing
+          setCurrentVideo(null);
+          currentVideoRef.current = null;
+          previousVideoId = null;
+        }
+        
+        if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
+        if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
+      }
     });
-  }, [isElectron, queue, priorityQueue, queueIndex]);
+    
+    // Request initial state
+    (window as any).electronAPI.getQueueState?.().then((state: any) => {
+      if (state) {
+        if (state.activeQueue) {
+          setQueue(state.activeQueue);
+          queueRef.current = state.activeQueue;
+        }
+        if (state.priorityQueue) {
+          setPriorityQueue(state.priorityQueue);
+          priorityQueueRef.current = state.priorityQueue;
+        }
+        if (typeof state.queueIndex === 'number') {
+          setQueueIndex(state.queueIndex);
+          queueIndexRef.current = state.queueIndex;
+        }
+        if (state.currentVideo || state.nowPlaying) {
+          const video = state.currentVideo || state.nowPlaying;
+          setCurrentVideo(video);
+          currentVideoRef.current = video;
+          previousVideoId = video.id || video.src;
+          if (state.isPlaying) {
+            sendPlayCommand(video);
+          }
+        }
+        if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
+        if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
+      }
+    });
+    
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [isElectron, sendPlayCommand]);
 
   // Sync overlay settings to Player Window when they change
   useEffect(() => {
@@ -1543,10 +1792,133 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       // Sync entire music database to Supabase for Web Admin/Kiosk
       if (supabaseInitialized) {
         console.log('[PlayerWindow] Syncing music database to Supabase after manual refresh');
-        getSupabaseService().indexLocalVideos(newPlaylists || {});
+        setIsProcessing(true);
+        setProcessingProgress({ current: 0, total: 0 });
+        getSupabaseService().indexLocalVideos(
+          newPlaylists || {},
+          (current, total) => {
+            setProcessingProgress({ current, total });
+          },
+          true // forceIndex = true for manual refresh
+        ).finally(() => {
+          setIsProcessing(false);
+          setProcessingProgress({ current: 0, total: 0 });
+        });
       }
     }
   }, [isElectron, supabaseInitialized]);
+
+  const handleReindexMusicDatabase = useCallback(async () => {
+    if (isElectron && supabaseInitialized) {
+      console.log('[PlayerWindow] Manual re-index of music database requested');
+      setIsProcessing(true);
+      setProcessingProgress({ current: 0, total: 0 });
+      getSupabaseService().indexLocalVideos(
+        playlists,
+        (current, total) => {
+          setProcessingProgress({ current, total });
+        },
+        true // forceIndex = true for manual re-index
+      ).finally(() => {
+        setIsProcessing(false);
+        setProcessingProgress({ current: 0, total: 0 });
+      });
+    }
+  }, [isElectron, supabaseInitialized, playlists]);
+
+  // Reset Application handler
+  const handleResetApplication = useCallback(async () => {
+    if (!isElectron) return;
+    
+    try {
+      setShowResetDialog(false);
+      
+      // Reset all settings to defaults
+      const defaultSettings = {
+        volume: 0.7,
+        muted: false,
+        playerDisplayId: null,
+        playerWindowFullscreen: false,
+        autoShufflePlaylists: true,
+        normalizeAudioLevels: false,
+        enableFullscreenPlayer: true,
+        fadeDuration: 3,
+        crossfadeMode: 'manual',
+        overlaySettings: {
+          showNowPlaying: true,
+          showUpcoming: true,
+          showWatermark: false,
+          watermarkText: '',
+          watermarkImage: '',
+          watermarkSize: 50,
+          watermarkX: 90,
+          watermarkY: 90,
+          watermarkOpacity: 50
+        },
+        kioskSettings: {
+          mode: 'freeplay',
+          uiMode: 'classic',
+          searchAllMusic: true,
+          searchYoutube: false
+        },
+        activePlaylist: null,
+        savedQueueState: null
+      };
+
+      // Reset Player ID to default (DJAMMS_DEMO) instead of clearing
+      setPlayerId(DEFAULT_PLAYER_ID);
+      storePlayerId(DEFAULT_PLAYER_ID);
+      storePlayerId(DEFAULT_PLAYER_ID);
+      setPlayerId('');
+      
+      // Reset all settings via IPC
+      for (const [key, value] of Object.entries(defaultSettings)) {
+        await (window as any).electronAPI.setSetting(key, value);
+      }
+
+      // Clear queue state
+      setQueue([]);
+      setQueueIndex(0);
+      setPriorityQueue([]);
+      setCurrentVideo(null);
+      setIsPlaying(false);
+      setActivePlaylist('');
+
+      // Reset local state
+      setSettings({
+        autoShufflePlaylists: true,
+        normalizeAudioLevels: false,
+        enableFullscreenPlayer: true,
+        fadeDuration: 3,
+        crossfadeMode: 'manual',
+        playerDisplayId: null,
+        playerFullscreen: false,
+        playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
+      });
+
+      // Delete player profile from Supabase if connected
+      if (supabaseInitialized && playerId) {
+        try {
+          const supabaseService = getSupabaseService();
+          const client = supabaseService.getClient();
+          if (client) {
+            // Delete player_state row
+            await client.from('player_state').delete().eq('player_id', playerId);
+            console.log('[PlayerWindow] Deleted player profile from Supabase');
+          }
+        } catch (err) {
+          console.warn('[PlayerWindow] Failed to delete player profile from Supabase:', err);
+        }
+      }
+
+      // Restart application
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } catch (error) {
+      console.error('[PlayerWindow] Failed to reset application:', error);
+    }
+  }, [isElectron, supabaseInitialized, playerId]);
 
   // Get playlist counts with display names (strips YouTube Playlist ID prefix)
   const getPlaylistList = () => {
@@ -2054,14 +2426,29 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                   <h2><span className="section-icon">🆔</span> Player Identity</h2>
                   <PlayerIdSetting 
                     playerId={playerId}
+                    needsPlayerId={needsPlayerId}
                     onPlayerIdChange={(newId) => {
                       storePlayerId(newId);
                       setPlayerId(newId);
                       // Sync entire music database to Supabase for new Player ID
                       if (supabaseInitialized) {
                         console.log('[PlayerWindow] Syncing music database to Supabase for new Player ID:', newId);
-                        getSupabaseService().indexLocalVideos(playlists);
+                        setIsProcessing(true);
+                        setProcessingProgress({ current: 0, total: 0 });
+                        getSupabaseService().indexLocalVideos(
+                          playlists,
+                          (current, total) => {
+                            setProcessingProgress({ current, total });
+                          }
+                        ).finally(() => {
+                          setIsProcessing(false);
+                          setProcessingProgress({ current: 0, total: 0 });
+                        });
                       }
+                    }}
+                    onPlayerIdSet={() => {
+                      setNeedsPlayerId(false);
+                      setShowPlayerIdAlert(false);
                     }}
                   />
                 </div>
@@ -2094,7 +2481,17 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                                 // Sync entire music database to Supabase for Web Admin/Kiosk
                                 if (supabaseInitialized) {
                                   console.log('[PlayerWindow] Syncing music database to Supabase after directory change');
-                                  getSupabaseService().indexLocalVideos(newPlaylists || {});
+                                  setIsProcessing(true);
+                                  setProcessingProgress({ current: 0, total: 0 });
+                                  getSupabaseService().indexLocalVideos(
+                                    newPlaylists || {},
+                                    (current, total) => {
+                                      setProcessingProgress({ current, total });
+                                    }
+                                  ).finally(() => {
+                                    setIsProcessing(false);
+                                    setProcessingProgress({ current: 0, total: 0 });
+                                  });
                                 }
                               }
                             } catch (error) {
@@ -2927,8 +3324,380 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               </div>
             </div>
           )}
+
+          {/* Tools Tab */}
+          {currentTab === 'tools' && (
+            <div className="tab-content active">
+              <div className="tools-container">
+                <h1>Tools</h1>
+                
+                <div className="tools-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px', marginTop: '24px' }}>
+                  {/* Reset Application Tool */}
+                  <div 
+                    className="tool-card" 
+                    onClick={() => setShowResetDialog(true)}
+                    style={{
+                      padding: '20px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border-color)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'var(--bg-secondary)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>🔄</div>
+                    <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Reset Application</div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                      Reset all settings to defaults and clear Player ID
+                    </div>
+                  </div>
+
+                  {/* Clear Queue Tool */}
+                  <div 
+                    className="tool-card" 
+                    onClick={handleClearQueue}
+                    style={{
+                      padding: '20px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border-color)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'var(--bg-secondary)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>🗑️</div>
+                    <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Clear Queue</div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                      Remove all videos from the current playback queue
+                    </div>
+                  </div>
+
+                  {/* Refresh Playlists Tool */}
+                  {isElectron && (
+                    <div 
+                      className="tool-card" 
+                      onClick={handleRefreshPlaylists}
+                      style={{
+                        padding: '20px',
+                        backgroundColor: 'var(--bg-secondary)',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)';
+                        e.currentTarget.style.transform = 'translateY(-2px)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-secondary)';
+                        e.currentTarget.style.transform = 'translateY(0)';
+                      }}
+                    >
+                      <div style={{ fontSize: '32px', marginBottom: '12px' }}>🔄</div>
+                      <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Refresh Playlists</div>
+                      <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        Rescan the playlists directory for changes
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Re-index Music Database Tool */}
+                  {isElectron && supabaseInitialized && (
+                    <div 
+                      className="tool-card" 
+                      onClick={handleReindexMusicDatabase}
+                      style={{
+                        padding: '20px',
+                        backgroundColor: 'var(--bg-secondary)',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)';
+                        e.currentTarget.style.transform = 'translateY(-2px)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-secondary)';
+                        e.currentTarget.style.transform = 'translateY(0)';
+                      }}
+                    >
+                      <div style={{ fontSize: '32px', marginBottom: '12px' }}>📊</div>
+                      <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Re-index Music Database</div>
+                      <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        Force re-index of all videos to Supabase (bypasses count check)
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
+
+      {/* Reset Application Confirmation Dialog */}
+      {showResetDialog && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000
+        }}>
+          <div style={{
+            backgroundColor: 'var(--bg-primary)',
+            borderRadius: '12px',
+            padding: '32px',
+            maxWidth: '500px',
+            width: '90%',
+            border: '1px solid var(--border-color)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+          }}>
+            <div style={{ fontSize: '24px', fontWeight: 700, marginBottom: '16px', color: 'var(--yt-spec-brand-button-background)' }}>
+              ⚠️ WARNING ⚠️
+            </div>
+            <div style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '24px', color: 'var(--text-primary)' }}>
+              All settings will be set to DEFAULT
+              <br /><br />
+              Current PLAYER_ID will be removed,
+              <br />
+              and Data Profile will be deleted from Server
+              <br /><br />
+              Are you SURE you want to proceed?
+            </div>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowResetDialog(false)}
+                style={{
+                  padding: '10px 24px',
+                  fontSize: '14px',
+                  backgroundColor: 'var(--bg-secondary)',
+                  color: 'var(--text-primary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 500
+                }}
+              >
+                NO - Cancel
+              </button>
+              <button
+                onClick={handleResetApplication}
+                style={{
+                  padding: '10px 24px',
+                  fontSize: '14px',
+                  backgroundColor: 'var(--yt-spec-brand-button-background)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                YES - Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Player ID First-Run Alert */}
+      {showPlayerIdAlert && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000
+        }}>
+          <div style={{
+            backgroundColor: 'var(--bg-primary)',
+            borderRadius: '12px',
+            padding: '32px',
+            maxWidth: '500px',
+            width: '90%',
+            border: '1px solid var(--border-color)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+          }}>
+            <div style={{ fontSize: '20px', fontWeight: 700, marginBottom: '16px', color: 'var(--text-primary)' }}>
+              Please enter a unique PLAYER ID for your application.
+            </div>
+            <div style={{ fontSize: '14px', lineHeight: '1.6', marginBottom: '24px', color: 'var(--text-secondary)' }}>
+              <strong>Note:</strong>
+              <br />
+              • You are currently using the default Player ID: <strong>DJAMMS_DEMO</strong>
+              <br />
+              • Must be between 4 and 20 characters long
+              <br />
+              • Only contain the letters A-Z, numbers 0-9, or underscore character
+              <br />
+              • You can keep "DJAMMS_DEMO" if you want, but a unique ID is recommended
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setShowPlayerIdAlert(false);
+                  // Auto-select the Player ID edit button in Settings
+                  setTimeout(() => {
+                    const editButton = document.querySelector('[data-player-id-edit]') as HTMLElement;
+                    if (editButton) {
+                      editButton.click();
+                    }
+                  }, 100);
+                }}
+                style={{
+                  padding: '10px 24px',
+                  fontSize: '14px',
+                  backgroundColor: 'var(--yt-spec-call-to-action)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Default Playlist Name Alert */}
+      {showDefaultPlaylistAlert && defaultPlaylistName && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000
+        }}>
+          <div style={{
+            backgroundColor: 'var(--bg-primary)',
+            borderRadius: '12px',
+            padding: '32px',
+            maxWidth: '500px',
+            width: '90%',
+            border: '1px solid var(--border-color)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+          }}>
+            <div style={{ fontSize: '20px', fontWeight: 700, marginBottom: '16px', color: 'var(--text-primary)' }}>
+              Consider Renaming Your Default Playlist
+            </div>
+            <div style={{ fontSize: '14px', lineHeight: '1.6', marginBottom: '24px', color: 'var(--text-secondary)' }}>
+              <strong>Note:</strong>
+              <br />
+              • You have a playlist named: <strong>{getPlaylistDisplayName(defaultPlaylistName)}</strong>
+              <br />
+              • This is the default playlist name
+              <br />
+              • Consider renaming it to something more descriptive
+              <br />
+              • You can rename playlists by renaming the folder in your PLAYLISTS directory
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setShowDefaultPlaylistAlert(false);
+                  setDefaultPlaylistName(null);
+                }}
+                style={{
+                  padding: '10px 24px',
+                  fontSize: '14px',
+                  backgroundColor: 'var(--yt-spec-call-to-action)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Processing Progress Popover */}
+      {isProcessing && (
+        <div
+          onClick={() => setIsProcessing(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            cursor: 'pointer'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--bg-primary)',
+              borderRadius: '12px',
+              padding: '32px',
+              maxWidth: '400px',
+              width: '90%',
+              border: '1px solid var(--border-color)',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+              cursor: 'default'
+            }}
+          >
+            <div style={{ fontSize: '18px', fontWeight: 700, marginBottom: '16px', color: 'var(--text-primary)' }}>
+              Processing PLAYLISTS ... one moment ...
+            </div>
+            <div style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
+              Processing : {processingProgress.current} of {processingProgress.total}
+              {processingProgress.total > 0 && processingProgress.current > 0 && (
+                <span style={{ marginLeft: '8px', color: 'var(--yt-spec-call-to-action)' }}>
+                  ({Math.round((processingProgress.current / processingProgress.total) * 100)}% complete)
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

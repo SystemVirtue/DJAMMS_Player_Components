@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
 
-// Read all playlist directories
+// Read all playlist directories (optimized for large playlists)
 const playlistsDir = '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
 let playlists = {}
 
@@ -17,53 +17,62 @@ try {
 
     playlistDirs.forEach(playlistName => {
       const playlistPath = path.join(playlistsDir, playlistName)
-      const files = fs.readdirSync(playlistPath)
-        .filter(file => file.endsWith('.mp4'))
-        .map((file, index) => {
-          // Parse filename format: "[Artist] - [Title] -- [YouTube_ID].mp4"
-          const nameWithoutExt = file.replace(/\.mp4$/i, '')
-          
-          // Extract YouTube ID (after " -- ")
-          const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ')
-          let artist = null
-          let title = nameWithoutExt
-          let youtubeId = null
-          
-          if (doubleHyphenIndex !== -1) {
-            youtubeId = nameWithoutExt.substring(doubleHyphenIndex + 4).trim()
-            const artistAndTitle = nameWithoutExt.substring(0, doubleHyphenIndex)
+      
+      try {
+        const allFiles = fs.readdirSync(playlistPath)
+          .filter(file => file.endsWith('.mp4'))
+        
+        const files = allFiles
+          .map((file, index) => {
+            // Parse filename format: "[Artist] - [Title] -- [YouTube_ID].mp4"
+            const nameWithoutExt = file.replace(/\.mp4$/i, '')
             
-            // Extract Artist and Title (separated by " - ")
-            const singleHyphenIndex = artistAndTitle.indexOf(' - ')
-            if (singleHyphenIndex !== -1) {
-              artist = artistAndTitle.substring(0, singleHyphenIndex).trim()
-              title = artistAndTitle.substring(singleHyphenIndex + 3).trim()
+            // Extract YouTube ID (after " -- ")
+            const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ')
+            let artist = null
+            let title = nameWithoutExt
+            let youtubeId = null
+            
+            if (doubleHyphenIndex !== -1) {
+              youtubeId = nameWithoutExt.substring(doubleHyphenIndex + 4).trim()
+              const artistAndTitle = nameWithoutExt.substring(0, doubleHyphenIndex)
+              
+              // Extract Artist and Title (separated by " - ")
+              const singleHyphenIndex = artistAndTitle.indexOf(' - ')
+              if (singleHyphenIndex !== -1) {
+                artist = artistAndTitle.substring(0, singleHyphenIndex).trim()
+                title = artistAndTitle.substring(singleHyphenIndex + 3).trim()
+              } else {
+                title = artistAndTitle.trim()
+              }
             } else {
-              title = artistAndTitle.trim()
+              // No YouTube ID, try to parse as "Artist - Title"
+              const singleHyphenIndex = nameWithoutExt.indexOf(' - ')
+              if (singleHyphenIndex !== -1) {
+                artist = nameWithoutExt.substring(0, singleHyphenIndex).trim()
+                title = nameWithoutExt.substring(singleHyphenIndex + 3).trim()
+              }
             }
-          } else {
-            // No YouTube ID, try to parse as "Artist - Title"
-            const singleHyphenIndex = nameWithoutExt.indexOf(' - ')
-            if (singleHyphenIndex !== -1) {
-              artist = nameWithoutExt.substring(0, singleHyphenIndex).trim()
-              title = nameWithoutExt.substring(singleHyphenIndex + 3).trim()
+            
+            return {
+              id: `${playlistName}-${index}`,
+              title,
+              artist: artist || playlistName,
+              filename: file,
+              playlist: playlistName,
+              playlistDisplayName: playlistName.replace(/^PL[A-Za-z0-9_-]+[._]/, ''), // Strip YouTube playlist ID
+              src: `/playlist/${encodeURIComponent(playlistName)}/${encodeURIComponent(file)}`,
+              path: path.join(playlistPath, file)
             }
-          }
-          
-          return {
-            id: `${playlistName}-${index}`,
-            title,
-            artist: artist || playlistName,
-            filename: file,
-            playlist: playlistName,
-            playlistDisplayName: playlistName.replace(/^PL[A-Za-z0-9_-]+[._]/, ''), // Strip YouTube playlist ID
-            src: `/playlist/${encodeURIComponent(playlistName)}/${encodeURIComponent(file)}`,
-            path: path.join(playlistPath, file)
-          }
-        })
-        .sort((a, b) => a.title.localeCompare(b.title))
-      playlists[playlistName] = files
-      console.log(`Playlist ${playlistName}: ${files.length} files`)
+          })
+          .sort((a, b) => a.title.localeCompare(b.title))
+        
+        playlists[playlistName] = files
+        console.log(`Playlist ${playlistName}: ${files.length} files`)
+      } catch (error) {
+        console.warn(`Error reading playlist ${playlistName}:`, error.message)
+        playlists[playlistName] = []
+      }
     })
     console.log('Final playlists object:', Object.keys(playlists))
   } else {

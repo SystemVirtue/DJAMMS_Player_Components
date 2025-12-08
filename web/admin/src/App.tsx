@@ -26,6 +26,7 @@ import type {
 } from '@shared/types';
 import { ConnectPlayerModal, usePlayer } from '@shared/ConnectPlayerModal';
 import { cleanVideoTitle } from '@shared/video-utils';
+import { shuffleArray } from '@shared/array-utils';
 
 // Helper to strip YouTube Playlist ID prefix from folder name
 // Handles both underscore and dot separators: PLxxxxxx_Name or PLxxxxxx.Name
@@ -438,16 +439,6 @@ function AdminApp() {
     const debounce = setTimeout(performSearch, 300);
     return () => clearTimeout(debounce);
   }, [searchQuery, searchLimit, allVideos, playerId]);
-
-  // Shuffle helper
-  const shuffleArray = <T,>(array: T[]): T[] => {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-  };
 
   // Send command to player via Supabase (fire-and-forget for non-critical)
   const sendCommand = useCallback(async (type: CommandType, payload?: any) => {

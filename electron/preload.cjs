@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('player-window-closed', subscription);
     return () => ipcRenderer.removeListener('player-window-closed', subscription);
   },
+  onPlayerWindowOpened: (callback) => {
+    const subscription = () => callback();
+    ipcRenderer.on('player-window-opened', subscription);
+    return () => ipcRenderer.removeListener('player-window-opened', subscription);
+  },
   
   // Player Settings Updates (sends settings to main process for window positioning)
   sendPlayerSettings: (settings) => ipcRenderer.send('player-settings-updated', settings),
@@ -109,6 +114,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('control-player', subscription);
     return () => ipcRenderer.removeListener('control-player', subscription);
   },
+
+  // Queue Orchestrator (main as source of truth)
+  sendQueueCommand: (command) => ipcRenderer.send('queue-command', command),
+  onQueueState: (callback) => {
+    const subscription = (_event, state) => callback(state);
+    ipcRenderer.on('queue-state', subscription);
+    return () => ipcRenderer.removeListener('queue-state', subscription);
+  },
+  getQueueState: () => ipcRenderer.invoke('get-queue-state'),
 
   // Search
   getRecentSearches: () => ipcRenderer.invoke('get-recent-searches'),

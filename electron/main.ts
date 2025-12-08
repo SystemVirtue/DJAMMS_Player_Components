@@ -1,11 +1,31 @@
-// electron/main.js - Electron Main Process
-const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const Store = require('electron-store').default || require('electron-store');
+// electron/main.ts - Electron Main Process (TypeScript)
+import { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+import Store from 'electron-store';
+
+// Type definitions for Electron Store
+interface StoreDefaults {
+  volume: number;
+  muted: boolean;
+  playlistsDirectory: string;
+  recentSearches: string[];
+  windowBounds: { width: number; height: number };
+}
+
+// Type-safe store interface (flexible for dynamic keys)
+interface TypedStore {
+  get<K extends keyof StoreDefaults>(key: K): StoreDefaults[K];
+  get<K extends keyof StoreDefaults>(key: K, defaultValue: StoreDefaults[K]): StoreDefaults[K];
+  get(key: string): any;
+  get(key: string, defaultValue: any): any;
+  set<K extends keyof StoreDefaults>(key: K, value: StoreDefaults[K]): void;
+  set(key: string, value: any): void;
+  store: StoreDefaults;
+}
 
 // Initialize persistent storage
-const store = new Store({
+const store = new Store<StoreDefaults>({
   name: 'djamms-config',
   defaults: {
     volume: 0.7,
@@ -14,49 +34,48 @@ const store = new Store({
     recentSearches: [],
     windowBounds: { width: 1200, height: 800 }
   }
-});
+}) as unknown as TypedStore;
 
 // Keep global references to prevent garbage collection
-let mainWindow = null;
-let fullscreenWindow = null;
-let adminConsoleWindow = null;
-let queueState = {
-  activeQueue: [],
-  priorityQueue: [],
-  nowPlaying: null,
-  nowPlayingSource: null,
-  queueIndex: 0,
-  isPlaying: false
-};
-
-// Helper to broadcast queue state to renderer
-function broadcastQueueState() {
-  // Include currentVideo as alias for nowPlaying for renderer compatibility
-  const stateToSend = {
-    ...queueState,
-    currentVideo: queueState.nowPlaying
-  };
-  if (mainWindow) {
-    mainWindow.webContents.send('queue-state', stateToSend);
-  }
-  if (fullscreenWindow) {
-    fullscreenWindow.webContents.send('queue-state', stateToSend);
-  }
-}
+let mainWindow: BrowserWindow | null = null;
+let fullscreenWindow: BrowserWindow | null = null;
+let adminConsoleWindow: BrowserWindow | null = null;
 
 // Determine if running in development
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const VITE_DEV_SERVER_URL = 'http://localhost:3000';
 
-function getAssetPath(...paths) {
+// Handle EPIPE errors gracefully (broken pipe - stream closed)
+// This is common when logging after process termination
+process.on('uncaughtException', (error: Error) => {
+  // Suppress EPIPE errors (expected during shutdown/stream closure)
+  if ((error as any).code === 'EPIPE' || (error as any).code === 'ENOTCONN') {
+    return; // Silently ignore - stream is closed, nothing we can do
+  }
+  // Log other uncaught exceptions
+  console.error('[Main] Uncaught Exception:', error);
+  console.error(error.stack);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason: any) => {
+  // Suppress EPIPE errors
+  if (reason?.code === 'EPIPE' || reason?.code === 'ENOTCONN') {
+    return; // Silently ignore
+  }
+  console.error('[Main] Unhandled Rejection:', reason);
+});
+
+function getAssetPath(...paths: string[]): string {
   if (isDev) {
     return path.join(__dirname, '..', ...paths);
   }
   return path.join(process.resourcesPath, 'app', ...paths);
 }
 
-function createMainWindow() {
-  const { width, height } = store.get('windowBounds');
+function createMainWindow(): void {
+  const windowBounds = store.get('windowBounds');
+  const { width, height } = windowBounds;
   
   mainWindow = new BrowserWindow({
     width,
@@ -83,8 +102,10 @@ function createMainWindow() {
 
   // Save window bounds on resize
   mainWindow.on('resize', () => {
-    const { width, height } = mainWindow.getBounds();
-    store.set('windowBounds', { width, height });
+    if (mainWindow) {
+      const { width, height } = mainWindow.getBounds();
+      store.set('windowBounds', { width, height });
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -104,7 +125,7 @@ function createMainWindow() {
   createApplicationMenu();
 }
 
-function createFullscreenWindow(displayId) {
+function createFullscreenWindow(displayId?: number): BrowserWindow {
   const displays = screen.getAllDisplays();
   const targetDisplay = displays.find(d => d.id === displayId) || displays[displays.length - 1];
 
@@ -135,15 +156,20 @@ function createFullscreenWindow(displayId) {
     fullscreenWindow = null;
     // Notify main window
     if (mainWindow) {
-      mainWindow.webContents.send('fullscreen-closed');
+      mainWindow.webContents.send('player-window-closed');
     }
   });
+  
+  // Notify main window that player window was opened
+  if (mainWindow) {
+    mainWindow.webContents.send('player-window-opened');
+  }
 
   return fullscreenWindow;
 }
 
-function createAdminConsoleWindow() {
-  if (adminConsoleWindow) {
+function createAdminConsoleWindow(): BrowserWindow {
+  if (adminConsoleWindow && !adminConsoleWindow.isDestroyed()) {
     adminConsoleWindow.focus();
     return adminConsoleWindow;
   }
@@ -176,10 +202,10 @@ function createAdminConsoleWindow() {
   return adminConsoleWindow;
 }
 
-function createApplicationMenu() {
-  const template = [
+function createApplicationMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: app.name,
+      label: app.getName(),
       submenu: [
         { role: 'about' },
         { type: 'separator' },
@@ -209,6 +235,7 @@ function createApplicationMenu() {
           label: 'Open Playlists Folder...',
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
+            if (!mainWindow) return;
             const result = await dialog.showOpenDialog(mainWindow, {
               properties: ['openDirectory'],
               title: 'Select Playlists Directory'
@@ -323,237 +350,12 @@ function createApplicationMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-// Queue command handler
-ipcMain.on('queue-command', async (_event, command) => {
-  try {
-    const { action, payload } = command || {};
-    switch (action) {
-      case 'clear_queue':
-        // Only clear active queue - preserve priority queue
-        queueState.activeQueue = [];
-        // DO NOT clear priorityQueue - it should persist until explicitly cleared
-        queueState.queueIndex = 0;
-        // Only clear nowPlaying if it was from active queue
-        if (queueState.nowPlayingSource === 'active') {
-          queueState.nowPlaying = null;
-          queueState.nowPlayingSource = null;
-          queueState.isPlaying = false;
-        }
-        // If nowPlaying is from priority queue, keep it playing
-        break;
-      case 'add_to_queue':
-        if (payload?.video) {
-          queueState.activeQueue.push(payload.video);
-        }
-        break;
-      case 'add_to_priority_queue':
-        if (payload?.video) {
-          queueState.priorityQueue.push(payload.video);
-        }
-        break;
-      case 'play_at_index': {
-        const idx = payload?.index ?? 0;
-        if (queueState.activeQueue[idx]) {
-          queueState.queueIndex = idx;
-          queueState.nowPlaying = queueState.activeQueue[idx];
-          queueState.nowPlayingSource = 'active';
-          queueState.isPlaying = true;
-          if (fullscreenWindow) {
-            fullscreenWindow.webContents.send('control-player', { action: 'play', data: queueState.nowPlaying });
-          }
-        }
-        break;
-      }
-      case 'shuffle_queue': {
-        const keepFirst = payload?.keepFirst ?? false;
-        if (queueState.activeQueue.length === 0) {
-          // Nothing to shuffle
-          break;
-        }
-        
-        if (queueState.activeQueue.length === 1) {
-          // Only one item, no need to shuffle, just ensure queueIndex is correct
-          queueState.queueIndex = 0;
-          break;
-        }
-        
-        // Find the currently playing video in the queue (if any)
-        let currentPlayingIndex = -1;
-        if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
-          currentPlayingIndex = queueState.activeQueue.findIndex(
-            v => v && queueState.nowPlaying && 
-            (v.path === queueState.nowPlaying.path || v.id === queueState.nowPlaying.id)
-          );
-        }
-        
-        if (keepFirst && currentPlayingIndex >= 0) {
-          // Keep the currently playing video at its position, shuffle the rest
-          const currentVideo = queueState.activeQueue[currentPlayingIndex];
-          const before = queueState.activeQueue.slice(0, currentPlayingIndex);
-          const after = queueState.activeQueue.slice(currentPlayingIndex + 1);
-          const rest = [...before, ...after];
-          
-          // Shuffle the rest
-          for (let i = rest.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [rest[i], rest[j]] = [rest[j], rest[i]];
-          }
-          
-          // Reconstruct queue with current video at its position
-          queueState.activeQueue = [...rest.slice(0, currentPlayingIndex), currentVideo, ...rest.slice(currentPlayingIndex)];
-          // queueIndex stays the same since we kept the current video at its position
-        } else if (keepFirst) {
-          // Keep first item, shuffle the rest
-          const first = queueState.activeQueue[0];
-          const rest = queueState.activeQueue.slice(1);
-          for (let i = rest.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [rest[i], rest[j]] = [rest[j], rest[i]];
-          }
-          queueState.activeQueue = [first, ...rest];
-          queueState.queueIndex = 0;
-        } else {
-          // Full shuffle - find where current video ends up
-          for (let i = queueState.activeQueue.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [queueState.activeQueue[i], queueState.activeQueue[j]] = [queueState.activeQueue[j], queueState.activeQueue[i]];
-          }
-          
-          // Update queueIndex to point to currently playing video (if it exists)
-          if (currentPlayingIndex >= 0 && queueState.nowPlaying) {
-            const newIndex = queueState.activeQueue.findIndex(
-              v => v && queueState.nowPlaying && 
-              (v.path === queueState.nowPlaying.path || v.id === queueState.nowPlaying.id)
-            );
-            queueState.queueIndex = newIndex >= 0 ? newIndex : 0;
-          } else {
-            queueState.queueIndex = 0;
-          }
-        }
-        break;
-      }
-      case 'move_queue_item': {
-        const fromIndex = payload?.fromIndex ?? -1;
-        const toIndex = payload?.toIndex ?? -1;
-        if (fromIndex >= 0 && toIndex >= 0 && fromIndex < queueState.activeQueue.length && toIndex <= queueState.activeQueue.length) {
-          const [movedVideo] = queueState.activeQueue.splice(fromIndex, 1);
-          const adjustedTarget = fromIndex < toIndex ? toIndex - 1 : toIndex;
-          queueState.activeQueue.splice(adjustedTarget, 0, movedVideo);
-          // Update queueIndex if needed
-          if (fromIndex === queueState.queueIndex) {
-            queueState.queueIndex = adjustedTarget;
-          } else if (fromIndex < queueState.queueIndex && toIndex > queueState.queueIndex) {
-            queueState.queueIndex--;
-          } else if (fromIndex > queueState.queueIndex && toIndex <= queueState.queueIndex) {
-            queueState.queueIndex++;
-          }
-        }
-        break;
-      }
-      case 'remove_from_queue': {
-        const idx = payload?.index ?? -1;
-        if (idx >= 0 && idx < queueState.activeQueue.length) {
-          // Don't remove currently playing video
-          if (idx === queueState.queueIndex) {
-            break;
-          }
-          queueState.activeQueue.splice(idx, 1);
-          // Adjust queueIndex if we removed a video before the current one
-          if (idx < queueState.queueIndex) {
-            queueState.queueIndex--;
-          }
-        }
-        break;
-      }
-      case 'next': {
-        console.log('[main] next command - priorityQueue.length:', queueState.priorityQueue.length, 'activeQueue.length:', queueState.activeQueue.length, 'nowPlayingSource:', queueState.nowPlayingSource);
-        // Priority queue takes precedence - ALWAYS check first before active queue
-        if (queueState.priorityQueue.length > 0) {
-          console.log('[main] Playing from priority queue');
-          // Recycle current active queue video if it was playing (before priority interrupts)
-          if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
-            queueState.activeQueue.push(queueState.nowPlaying);
-          }
-          // Play next priority video (one-time, not recycled)
-          const nextVideo = queueState.priorityQueue.shift();
-          console.log('[main] Priority queue video:', nextVideo?.title, 'Remaining priority:', queueState.priorityQueue.length);
-          queueState.nowPlaying = nextVideo || null;
-          queueState.nowPlayingSource = nextVideo ? 'priority' : null;
-          queueState.isPlaying = !!nextVideo;
-          if (nextVideo && fullscreenWindow) {
-            fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
-          }
-        } else if (queueState.activeQueue.length > 0) {
-          console.log('[main] Playing from active queue');
-          // No priority queue items - play from active queue
-          // Recycle the current video to the end if it was from active queue
-          if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
-            // Recycle current video to end
-            queueState.activeQueue.push(queueState.nowPlaying);
-            // Advance index to next video (circular, using new length after recycling)
-            queueState.queueIndex = (queueState.queueIndex + 1) % queueState.activeQueue.length;
-          } else if (queueState.nowPlaying && queueState.nowPlayingSource === 'priority') {
-            // Current video was from priority queue (just finished) - don't recycle it
-            // Priority videos are one-time, so just continue with active queue
-            // queueIndex should already point to the next active queue video to play
-            // (it was preserved when priority video interrupted)
-          }
-          
-          // Use queueIndex to get the next video to play
-          // queueIndex should point to the currently playing video
-          const nextVideo = queueState.activeQueue[queueState.queueIndex];
-          
-          if (nextVideo) {
-            queueState.nowPlaying = nextVideo;
-            queueState.nowPlayingSource = 'active';
-            queueState.isPlaying = true;
-            // queueIndex already points to the currently playing video
-            
-            if (fullscreenWindow) {
-              fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
-            }
-          } else {
-            // Shouldn't happen, but handle gracefully
-            queueState.nowPlaying = null;
-            queueState.nowPlayingSource = null;
-            queueState.isPlaying = false;
-            queueState.queueIndex = 0;
-          }
-        } else {
-          // No videos in either queue
-          queueState.nowPlaying = null;
-          queueState.nowPlayingSource = null;
-          queueState.isPlaying = false;
-          queueState.queueIndex = 0;
-        }
-        break;
-      }
-      case 'refresh_playlists':
-        if (mainWindow) {
-          mainWindow.webContents.send('refresh-playlists-request');
-        }
-        break;
-      default:
-        console.warn('[main] Unknown queue command:', action);
-    }
-    broadcastQueueState();
-  } catch (error) {
-    console.error('[main] queue-command error:', error);
-  }
-});
-
-// Allow renderer to request current queue state snapshot
-ipcMain.handle('get-queue-state', async () => {
-  return {
-    ...queueState,
-    currentVideo: queueState.nowPlaying
-  };
-});
 // ==================== IPC Handlers ====================
 
 // File System Operations
-// Select playlists directory via dialog
 ipcMain.handle('select-playlists-directory', async () => {
+  if (!mainWindow) return { success: false, path: store.get('playlistsDirectory') };
+  
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select Playlists Folder',
     properties: ['openDirectory'],
@@ -572,13 +374,11 @@ ipcMain.handle('select-playlists-directory', async () => {
   return { success: false, path: store.get('playlistsDirectory') };
 });
 
-// Get current playlists directory path
 ipcMain.handle('get-playlists-directory', async () => {
   return store.get('playlistsDirectory');
 });
 
-// Set playlists directory path
-ipcMain.handle('set-playlists-directory', async (event, newPath) => {
+ipcMain.handle('set-playlists-directory', async (_event, newPath: string) => {
   if (newPath && typeof newPath === 'string') {
     store.set('playlistsDirectory', newPath);
     if (mainWindow) {
@@ -589,9 +389,21 @@ ipcMain.handle('set-playlists-directory', async (event, newPath) => {
   return { success: false, path: store.get('playlistsDirectory') };
 });
 
+interface VideoFile {
+  id: string;
+  title: string;
+  artist: string | null;
+  filename: string;
+  path: string;
+  src: string;
+  size: number;
+  playlist: string;
+  playlistDisplayName: string;
+}
+
 ipcMain.handle('get-playlists', async () => {
   const playlistsDir = store.get('playlistsDirectory');
-  const playlists = {};
+  const playlists: Record<string, VideoFile[]> = {};
 
   try {
     if (!fs.existsSync(playlistsDir)) {
@@ -606,7 +418,7 @@ ipcMain.handle('get-playlists', async () => {
         const playlistPath = path.join(playlistsDir, entry.name);
         const files = fs.readdirSync(playlistPath)
           .filter(file => /\.(mp4|webm|mkv|avi|mov)$/i.test(file))
-          .map((file, index) => {
+          .map((file, index): VideoFile => {
             const filePath = path.join(playlistPath, file);
             const stats = fs.statSync(filePath);
             
@@ -615,9 +427,9 @@ ipcMain.handle('get-playlists', async () => {
             
             // Extract YouTube ID (after " -- ")
             const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ');
-            let artist = null;
+            let artist: string | null = null;
             let title = nameWithoutExt;
-            let youtubeId = null;
+            let youtubeId: string | null = null;
             
             if (doubleHyphenIndex !== -1) {
               youtubeId = nameWithoutExt.substring(doubleHyphenIndex + 4).trim();
@@ -659,13 +471,13 @@ ipcMain.handle('get-playlists', async () => {
     }
 
     return { playlists, playlistsDirectory: playlistsDir };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error reading playlists:', error);
     return { playlists: {}, playlistsDirectory: playlistsDir, error: error.message };
   }
 });
 
-ipcMain.handle('get-video-metadata', async (event, filePath) => {
+ipcMain.handle('get-video-metadata', async (_event, filePath: string) => {
   try {
     const stats = fs.statSync(filePath);
     return {
@@ -673,7 +485,7 @@ ipcMain.handle('get-video-metadata', async (event, filePath) => {
       created: stats.birthtime,
       modified: stats.mtime
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error getting video metadata:', error);
     return null;
   }
@@ -692,7 +504,7 @@ ipcMain.handle('get-displays', async () => {
   }));
 });
 
-ipcMain.handle('create-fullscreen-window', async (event, displayId) => {
+ipcMain.handle('create-fullscreen-window', async (_event, displayId?: number) => {
   const win = createFullscreenWindow(displayId);
   return { success: true, windowId: win.id };
 });
@@ -705,7 +517,7 @@ ipcMain.handle('close-fullscreen-window', async () => {
   return { success: true };
 });
 
-ipcMain.handle('control-fullscreen-player', async (event, action, data) => {
+ipcMain.handle('control-fullscreen-player', async (_event, action: string, data?: any) => {
   if (fullscreenWindow) {
     fullscreenWindow.webContents.send('control-player', { action, data });
     return { success: true };
@@ -713,8 +525,8 @@ ipcMain.handle('control-fullscreen-player', async (event, action, data) => {
   return { success: false, error: 'No fullscreen window' };
 });
 
-// Player window control (new handler)
-ipcMain.handle('control-player-window', async (event, action, data) => {
+// Player window control
+ipcMain.handle('control-player-window', async (_event, action: string, data?: any) => {
   if (fullscreenWindow) {
     fullscreenWindow.webContents.send('control-player', { action, data });
     return { success: true };
@@ -722,7 +534,6 @@ ipcMain.handle('control-player-window', async (event, action, data) => {
   return { success: false, error: 'No player window open' };
 });
 
-// Get player window status (new handler)
 ipcMain.handle('get-player-window-status', async () => {
   return {
     isOpen: fullscreenWindow !== null,
@@ -730,18 +541,16 @@ ipcMain.handle('get-player-window-status', async () => {
   };
 });
 
-// Create player window (maps to fullscreen window)
-ipcMain.handle('create-player-window', async (event, displayId) => {
+ipcMain.handle('create-player-window', async (_event, displayId?: number) => {
   try {
     const win = createFullscreenWindow(displayId);
     return { success: true, windowId: win.id };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating player window:', error);
     return { success: false, error: error.message };
   }
 });
 
-// Close player window
 ipcMain.handle('close-player-window', async () => {
   if (fullscreenWindow) {
     fullscreenWindow.close();
@@ -754,8 +563,7 @@ ipcMain.handle('close-player-window', async () => {
   return { success: true };
 });
 
-// Toggle player window (create if not exists, close if exists)
-ipcMain.handle('toggle-player-window', async (event, displayId) => {
+ipcMain.handle('toggle-player-window', async (_event, displayId?: number) => {
   if (fullscreenWindow) {
     fullscreenWindow.close();
     fullscreenWindow = null;
@@ -767,15 +575,14 @@ ipcMain.handle('toggle-player-window', async (event, displayId) => {
     try {
       const win = createFullscreenWindow(displayId);
       return { success: true, isOpen: true, windowId: win.id };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating player window:', error);
       return { success: false, error: error.message };
     }
   }
 });
 
-// Move player window to a different display
-ipcMain.handle('move-player-to-display', async (event, displayId) => {
+ipcMain.handle('move-player-to-display', async (_event, displayId: number) => {
   if (!fullscreenWindow) {
     return { success: false, error: 'No player window open' };
   }
@@ -797,8 +604,7 @@ ipcMain.handle('move-player-to-display', async (event, displayId) => {
   return { success: true };
 });
 
-// Set player window fullscreen mode
-ipcMain.handle('set-player-fullscreen', async (event, fullscreen) => {
+ipcMain.handle('set-player-fullscreen', async (_event, fullscreen: boolean) => {
   if (!fullscreenWindow) {
     return { success: false, error: 'No player window open' };
   }
@@ -807,8 +613,7 @@ ipcMain.handle('set-player-fullscreen', async (event, fullscreen) => {
   return { success: true };
 });
 
-// Refresh player window (recreate on specified display)
-ipcMain.handle('refresh-player-window', async (event, displayId) => {
+ipcMain.handle('refresh-player-window', async (_event, displayId?: number) => {
   if (fullscreenWindow) {
     fullscreenWindow.close();
     fullscreenWindow = null;
@@ -817,18 +622,18 @@ ipcMain.handle('refresh-player-window', async (event, displayId) => {
   try {
     const win = createFullscreenWindow(displayId);
     return { success: true, windowId: win.id };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error refreshing player window:', error);
     return { success: false, error: error.message };
   }
 });
 
 // Settings/Store Operations
-ipcMain.handle('get-setting', async (event, key) => {
+ipcMain.handle('get-setting', async (_event, key: string) => {
   return store.get(key);
 });
 
-ipcMain.handle('set-setting', async (event, key, value) => {
+ipcMain.handle('set-setting', async (_event, key: string, value: any) => {
   store.set(key, value);
   return { success: true };
 });
@@ -844,6 +649,8 @@ ipcMain.handle('open-admin-console', async () => {
 });
 
 ipcMain.handle('select-directory', async () => {
+  if (!mainWindow) return { success: false };
+  
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
     title: 'Select Playlists Directory'
@@ -857,13 +664,13 @@ ipcMain.handle('select-directory', async () => {
 });
 
 // Playback State Sync (between windows)
-ipcMain.on('playback-state-update', (event, state) => {
+ipcMain.on('playback-state-update', (_event, state: any) => {
   // Forward to fullscreen window if it exists
-  if (fullscreenWindow && event.sender !== fullscreenWindow.webContents) {
+  if (fullscreenWindow && _event.sender !== fullscreenWindow.webContents) {
     fullscreenWindow.webContents.send('playback-state-sync', state);
   }
   // Forward to main window if from fullscreen
-  if (mainWindow && event.sender !== mainWindow.webContents) {
+  if (mainWindow && _event.sender !== mainWindow.webContents) {
     mainWindow.webContents.send('playback-state-sync', state);
   }
 });
@@ -879,9 +686,9 @@ ipcMain.handle('get-recent-searches', async () => {
   return store.get('recentSearches', []);
 });
 
-ipcMain.handle('add-recent-search', async (event, query) => {
+ipcMain.handle('add-recent-search', async (_event, query: string) => {
   const recent = store.get('recentSearches', []);
-  const filtered = recent.filter(s => s.toLowerCase() !== query.toLowerCase());
+  const filtered = recent.filter((s: string) => s.toLowerCase() !== query.toLowerCase());
   const updated = [query, ...filtered].slice(0, 10);
   store.set('recentSearches', updated);
   return updated;
@@ -916,8 +723,9 @@ app.on('before-quit', () => {
 
 // Handle certificate errors in development
 if (isDev) {
-  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-    event.preventDefault();
+  app.on('certificate-error', (_event, _webContents, _url, _error, _certificate, callback) => {
+    _event.preventDefault();
     callback(true);
   });
 }
+

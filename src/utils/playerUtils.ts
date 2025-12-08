@@ -18,11 +18,12 @@ const getSupabaseServiceLazy = async () => {
 // Storage key for localStorage (used in renderer process)
 const STORAGE_KEY = 'djamms_player_id';
 
-// Default Player ID
-export const DEFAULT_PLAYER_ID = 'DEMO_PLAYER';
+// Default Player ID - "DJAMMS_DEMO" (prompts user to change but allows app to continue)
+export const DEFAULT_PLAYER_ID = 'DJAMMS_DEMO';
 
 // Minimum length for Player IDs
-export const MIN_PLAYER_ID_LENGTH = 6;
+export const MIN_PLAYER_ID_LENGTH = 4;
+export const MAX_PLAYER_ID_LENGTH = 20;
 
 /**
  * Get stored Player ID from localStorage
@@ -56,10 +57,22 @@ export function clearPlayerId(): void {
 
 /**
  * Validate Player ID format (local check only)
+ * Rules:
+ * - Must be between 4 and 20 characters
+ * - Only A-Z, 0-9, and underscore (_) allowed
+ * - No spaces or special characters
  */
 export function isValidPlayerIdFormat(id: string): boolean {
   const clean = id.trim().toUpperCase();
-  return clean.length >= MIN_PLAYER_ID_LENGTH;
+  
+  // Check length
+  if (clean.length < MIN_PLAYER_ID_LENGTH || clean.length > MAX_PLAYER_ID_LENGTH) {
+    return false;
+  }
+  
+  // Check characters: only A-Z, 0-9, and underscore
+  const validPattern = /^[A-Z0-9_]+$/;
+  return validPattern.test(clean);
 }
 
 /**
@@ -192,20 +205,19 @@ export function generateRandomPlayerId(): string {
 /**
  * Initialize Player ID on app startup
  * - If stored ID exists, use it (skip validation to avoid errors during startup)
- * - Otherwise, just use DEFAULT_PLAYER_ID
+ * - Otherwise, return "DJAMMS_DEMO" (allows app to continue, but prompts user to change)
  * 
- * Simplified to avoid errors when Supabase isn't ready yet
+ * Returns "DJAMMS_DEMO" if no Player ID is set (triggers first-run prompt)
  */
 export async function initializePlayerId(): Promise<string> {
   // Check for stored ID
   const storedId = getPlayerId();
-  if (storedId) {
+  if (storedId && storedId.trim() !== '' && storedId.trim() !== 'DJAMMS_DEMO') {
     console.log('[playerUtils] Using stored Player ID:', storedId);
     return storedId;
   }
 
-  // Use default ID
-  console.log('[playerUtils] Using default Player ID:', DEFAULT_PLAYER_ID);
-  setPlayerId(DEFAULT_PLAYER_ID);
+  // No Player ID set - return "DJAMMS_DEMO" to allow app to continue (but prompt user)
+  console.log('[playerUtils] No Player ID set - using default DJAMMS_DEMO');
   return DEFAULT_PLAYER_ID;
 }

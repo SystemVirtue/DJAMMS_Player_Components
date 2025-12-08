@@ -11,6 +11,7 @@
 
 import { Video } from '../types';
 import { getSupabaseService } from './SupabaseService';
+import { shuffleArrayInPlace } from '../utils/arrayUtils';
 
 export interface QueueState {
   /** Active queue - continuously rotates */
@@ -163,10 +164,10 @@ class QueueService {
     if (keepFirst) {
       const first = this.state.activeQueue[0];
       const rest = this.state.activeQueue.slice(1);
-      this.shuffleArray(rest);
+      shuffleArrayInPlace(rest);
       this.state.activeQueue = [first, ...rest];
     } else {
-      this.shuffleArray(this.state.activeQueue);
+      shuffleArrayInPlace(this.state.activeQueue);
     }
     this.syncToSupabase();
   }
@@ -307,15 +308,6 @@ class QueueService {
 
   // ==================== Private Helpers ====================
 
-  /**
-   * Shuffle array in place (Fisher-Yates algorithm)
-   */
-  private shuffleArray<T>(array: T[]): void {
-    for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [array[i], array[j]] = [array[j], array[i]];
-    }
-  }
 
   /**
    * Sync current state to Supabase

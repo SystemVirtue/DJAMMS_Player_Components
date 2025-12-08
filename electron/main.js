@@ -1,0 +1,672 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+// electron/main.ts - Electron Main Process (TypeScript)
+const electron_1 = require("electron");
+const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
+const electron_store_1 = __importDefault(require("electron-store"));
+// Initialize persistent storage
+const store = new electron_store_1.default({
+    name: 'djamms-config',
+    defaults: {
+        volume: 0.7,
+        muted: false,
+        playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS',
+        recentSearches: [],
+        windowBounds: { width: 1200, height: 800 }
+    }
+});
+// Keep global references to prevent garbage collection
+let mainWindow = null;
+let fullscreenWindow = null;
+let adminConsoleWindow = null;
+// Determine if running in development
+const isDev = process.env.NODE_ENV === 'development' || !electron_1.app.isPackaged;
+const VITE_DEV_SERVER_URL = 'http://localhost:3000';
+// Handle EPIPE errors gracefully (broken pipe - stream closed)
+// This is common when logging after process termination
+process.on('uncaughtException', (error) => {
+    // Suppress EPIPE errors (expected during shutdown/stream closure)
+    if (error.code === 'EPIPE' || error.code === 'ENOTCONN') {
+        return; // Silently ignore - stream is closed, nothing we can do
+    }
+    // Log other uncaught exceptions
+    console.error('[Main] Uncaught Exception:', error);
+    console.error(error.stack);
+});
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason) => {
+    // Suppress EPIPE errors
+    if (reason?.code === 'EPIPE' || reason?.code === 'ENOTCONN') {
+        return; // Silently ignore
+    }
+    console.error('[Main] Unhandled Rejection:', reason);
+});
+function getAssetPath(...paths) {
+    if (isDev) {
+        return path.join(__dirname, '..', ...paths);
+    }
+    return path.join(process.resourcesPath, 'app', ...paths);
+}
+function createMainWindow() {
+    const windowBounds = store.get('windowBounds');
+    const { width, height } = windowBounds;
+    mainWindow = new electron_1.BrowserWindow({
+        width,
+        height,
+        minWidth: 800,
+        minHeight: 600,
+        backgroundColor: '#1a1a2e',
+        titleBarStyle: 'hiddenInset',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: false,
+            preload: path.join(__dirname, 'preload.cjs')
+        }
+    });
+    // Load the app
+    if (isDev) {
+        mainWindow.loadURL(VITE_DEV_SERVER_URL);
+        mainWindow.webContents.openDevTools();
+    }
+    else {
+        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
+    // Save window bounds on resize
+    mainWindow.on('resize', () => {
+        if (mainWindow) {
+            const { width, height } = mainWindow.getBounds();
+            store.set('windowBounds', { width, height });
+        }
+    });
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+        // Close all other windows when main closes
+        if (fullscreenWindow) {
+            fullscreenWindow.close();
+            fullscreenWindow = null;
+        }
+        if (adminConsoleWindow) {
+            adminConsoleWindow.close();
+            adminConsoleWindow = null;
+        }
+    });
+    // Create application menu
+    createApplicationMenu();
+}
+function createFullscreenWindow(displayId) {
+    const displays = electron_1.screen.getAllDisplays();
+    const targetDisplay = displays.find(d => d.id === displayId) || displays[displays.length - 1];
+    fullscreenWindow = new electron_1.BrowserWindow({
+        x: targetDisplay.bounds.x,
+        y: targetDisplay.bounds.y,
+        width: targetDisplay.size.width,
+        height: targetDisplay.size.height,
+        fullscreen: true,
+        frame: false,
+        backgroundColor: '#000000',
+        alwaysOnTop: true,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: false,
+            preload: path.join(__dirname, 'preload.cjs')
+        }
+    });
+    if (isDev) {
+        fullscreenWindow.loadURL(`${VITE_DEV_SERVER_URL}/fullscreen.html`);
+    }
+    else {
+        fullscreenWindow.loadFile(path.join(__dirname, '../dist/fullscreen.html'));
+    }
+    fullscreenWindow.on('closed', () => {
+        fullscreenWindow = null;
+        // Notify main window
+        if (mainWindow) {
+            mainWindow.webContents.send('player-window-closed');
+        }
+    });
+    // Notify main window that player window was opened
+    if (mainWindow) {
+        mainWindow.webContents.send('player-window-opened');
+    }
+    return fullscreenWindow;
+}
+function createAdminConsoleWindow() {
+    if (adminConsoleWindow && !adminConsoleWindow.isDestroyed()) {
+        adminConsoleWindow.focus();
+        return adminConsoleWindow;
+    }
+    adminConsoleWindow = new electron_1.BrowserWindow({
+        width: 1400,
+        height: 900,
+        minWidth: 1000,
+        minHeight: 700,
+        backgroundColor: '#1a1a2e',
+        titleBarStyle: 'hiddenInset',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: false,
+            preload: path.join(__dirname, 'preload.cjs')
+        }
+    });
+    if (isDev) {
+        adminConsoleWindow.loadURL(`${VITE_DEV_SERVER_URL}#/admin`);
+    }
+    else {
+        adminConsoleWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: '/admin' });
+    }
+    adminConsoleWindow.on('closed', () => {
+        adminConsoleWindow = null;
+    });
+    return adminConsoleWindow;
+}
+function createApplicationMenu() {
+    const template = [
+        {
+            label: electron_1.app.getName(),
+            submenu: [
+                { role: 'about' },
+                { type: 'separator' },
+                {
+                    label: 'Preferences...',
+                    accelerator: 'CmdOrCtrl+,',
+                    click: () => {
+                        if (mainWindow) {
+                            mainWindow.webContents.send('open-settings');
+                        }
+                    }
+                },
+                { type: 'separator' },
+                { role: 'services' },
+                { type: 'separator' },
+                { role: 'hide' },
+                { role: 'hideOthers' },
+                { role: 'unhide' },
+                { type: 'separator' },
+                { role: 'quit' }
+            ]
+        },
+        {
+            label: 'File',
+            submenu: [
+                {
+                    label: 'Open Playlists Folder...',
+                    accelerator: 'CmdOrCtrl+O',
+                    click: async () => {
+                        if (!mainWindow)
+                            return;
+                        const result = await electron_1.dialog.showOpenDialog(mainWindow, {
+                            properties: ['openDirectory'],
+                            title: 'Select Playlists Directory'
+                        });
+                        if (!result.canceled && result.filePaths[0]) {
+                            store.set('playlistsDirectory', result.filePaths[0]);
+                            if (mainWindow) {
+                                mainWindow.webContents.send('playlists-directory-changed', result.filePaths[0]);
+                            }
+                        }
+                    }
+                },
+                { type: 'separator' },
+                {
+                    label: 'Admin Console',
+                    accelerator: 'CmdOrCtrl+Shift+A',
+                    click: () => createAdminConsoleWindow()
+                }
+            ]
+        },
+        {
+            label: 'Edit',
+            submenu: [
+                { role: 'undo' },
+                { role: 'redo' },
+                { type: 'separator' },
+                { role: 'cut' },
+                { role: 'copy' },
+                { role: 'paste' },
+                { role: 'selectAll' }
+            ]
+        },
+        {
+            label: 'Playback',
+            submenu: [
+                {
+                    label: 'Play/Pause',
+                    accelerator: 'Space',
+                    click: () => {
+                        if (mainWindow) {
+                            mainWindow.webContents.send('toggle-playback');
+                        }
+                    }
+                },
+                {
+                    label: 'Skip',
+                    accelerator: 'CmdOrCtrl+Right',
+                    click: () => {
+                        if (mainWindow) {
+                            mainWindow.webContents.send('skip-video');
+                        }
+                    }
+                },
+                { type: 'separator' },
+                {
+                    label: 'Volume Up',
+                    accelerator: 'CmdOrCtrl+Up',
+                    click: () => {
+                        if (mainWindow) {
+                            mainWindow.webContents.send('volume-up');
+                        }
+                    }
+                },
+                {
+                    label: 'Volume Down',
+                    accelerator: 'CmdOrCtrl+Down',
+                    click: () => {
+                        if (mainWindow) {
+                            mainWindow.webContents.send('volume-down');
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            label: 'View',
+            submenu: [
+                { role: 'reload' },
+                { role: 'forceReload' },
+                { role: 'toggleDevTools' },
+                { type: 'separator' },
+                { role: 'resetZoom' },
+                { role: 'zoomIn' },
+                { role: 'zoomOut' },
+                { type: 'separator' },
+                { role: 'togglefullscreen' }
+            ]
+        },
+        {
+            label: 'Window',
+            submenu: [
+                { role: 'minimize' },
+                { role: 'zoom' },
+                { type: 'separator' },
+                { role: 'front' },
+                { type: 'separator' },
+                { role: 'window' }
+            ]
+        },
+        {
+            role: 'help',
+            submenu: [
+                {
+                    label: 'Learn More',
+                    click: () => electron_1.shell.openExternal('https://github.com/SystemVirtue/DJAMMS_Player_Components')
+                }
+            ]
+        }
+    ];
+    const menu = electron_1.Menu.buildFromTemplate(template);
+    electron_1.Menu.setApplicationMenu(menu);
+}
+// ==================== IPC Handlers ====================
+// File System Operations
+electron_1.ipcMain.handle('select-playlists-directory', async () => {
+    if (!mainWindow)
+        return { success: false, path: store.get('playlistsDirectory') };
+    const result = await electron_1.dialog.showOpenDialog(mainWindow, {
+        title: 'Select Playlists Folder',
+        properties: ['openDirectory'],
+        defaultPath: store.get('playlistsDirectory')
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+        const newPath = result.filePaths[0];
+        store.set('playlistsDirectory', newPath);
+        // Notify renderer of the change
+        if (mainWindow) {
+            mainWindow.webContents.send('playlists-directory-changed', newPath);
+        }
+        return { success: true, path: newPath };
+    }
+    return { success: false, path: store.get('playlistsDirectory') };
+});
+electron_1.ipcMain.handle('get-playlists-directory', async () => {
+    return store.get('playlistsDirectory');
+});
+electron_1.ipcMain.handle('set-playlists-directory', async (_event, newPath) => {
+    if (newPath && typeof newPath === 'string') {
+        store.set('playlistsDirectory', newPath);
+        if (mainWindow) {
+            mainWindow.webContents.send('playlists-directory-changed', newPath);
+        }
+        return { success: true, path: newPath };
+    }
+    return { success: false, path: store.get('playlistsDirectory') };
+});
+electron_1.ipcMain.handle('get-playlists', async () => {
+    const playlistsDir = store.get('playlistsDirectory');
+    const playlists = {};
+    try {
+        if (!fs.existsSync(playlistsDir)) {
+            console.log('Playlists directory does not exist:', playlistsDir);
+            return { playlists: {}, playlistsDirectory: playlistsDir };
+        }
+        const entries = fs.readdirSync(playlistsDir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                const playlistPath = path.join(playlistsDir, entry.name);
+                const files = fs.readdirSync(playlistPath)
+                    .filter(file => /\.(mp4|webm|mkv|avi|mov)$/i.test(file))
+                    .map((file, index) => {
+                    const filePath = path.join(playlistPath, file);
+                    const stats = fs.statSync(filePath);
+                    // Parse filename format: "[Artist] - [Title] -- [YouTube_ID].mp4"
+                    const nameWithoutExt = file.replace(/\.[^/.]+$/i, '');
+                    // Extract YouTube ID (after " -- ")
+                    const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ');
+                    let artist = null;
+                    let title = nameWithoutExt;
+                    let youtubeId = null;
+                    if (doubleHyphenIndex !== -1) {
+                        youtubeId = nameWithoutExt.substring(doubleHyphenIndex + 4).trim();
+                        const artistAndTitle = nameWithoutExt.substring(0, doubleHyphenIndex);
+                        // Extract Artist and Title (separated by " - ")
+                        const singleHyphenIndex = artistAndTitle.indexOf(' - ');
+                        if (singleHyphenIndex !== -1) {
+                            artist = artistAndTitle.substring(0, singleHyphenIndex).trim();
+                            title = artistAndTitle.substring(singleHyphenIndex + 3).trim();
+                        }
+                        else {
+                            title = artistAndTitle.trim();
+                        }
+                    }
+                    else {
+                        // No YouTube ID, try to parse as "Artist - Title"
+                        const singleHyphenIndex = nameWithoutExt.indexOf(' - ');
+                        if (singleHyphenIndex !== -1) {
+                            artist = nameWithoutExt.substring(0, singleHyphenIndex).trim();
+                            title = nameWithoutExt.substring(singleHyphenIndex + 3).trim();
+                        }
+                    }
+                    return {
+                        id: `${entry.name}-${index}`,
+                        title,
+                        artist: artist || entry.name,
+                        filename: file,
+                        path: filePath,
+                        src: `file://${filePath}`,
+                        size: stats.size,
+                        playlist: entry.name,
+                        playlistDisplayName: entry.name.replace(/^PL[A-Za-z0-9_-]+[._]/, '')
+                    };
+                })
+                    .sort((a, b) => a.title.localeCompare(b.title));
+                playlists[entry.name] = files;
+            }
+        }
+        return { playlists, playlistsDirectory: playlistsDir };
+    }
+    catch (error) {
+        console.error('Error reading playlists:', error);
+        return { playlists: {}, playlistsDirectory: playlistsDir, error: error.message };
+    }
+});
+electron_1.ipcMain.handle('get-video-metadata', async (_event, filePath) => {
+    try {
+        const stats = fs.statSync(filePath);
+        return {
+            size: stats.size,
+            created: stats.birthtime,
+            modified: stats.mtime
+        };
+    }
+    catch (error) {
+        console.error('Error getting video metadata:', error);
+        return null;
+    }
+});
+// Display Management
+electron_1.ipcMain.handle('get-displays', async () => {
+    const displays = electron_1.screen.getAllDisplays();
+    return displays.map(display => ({
+        id: display.id,
+        label: display.label || `Display ${display.id}`,
+        width: display.size.width,
+        height: display.size.height,
+        bounds: display.bounds,
+        isPrimary: display.bounds.x === 0 && display.bounds.y === 0
+    }));
+});
+electron_1.ipcMain.handle('create-fullscreen-window', async (_event, displayId) => {
+    const win = createFullscreenWindow(displayId);
+    return { success: true, windowId: win.id };
+});
+electron_1.ipcMain.handle('close-fullscreen-window', async () => {
+    if (fullscreenWindow) {
+        fullscreenWindow.close();
+        fullscreenWindow = null;
+    }
+    return { success: true };
+});
+electron_1.ipcMain.handle('control-fullscreen-player', async (_event, action, data) => {
+    if (fullscreenWindow) {
+        fullscreenWindow.webContents.send('control-player', { action, data });
+        return { success: true };
+    }
+    return { success: false, error: 'No fullscreen window' };
+});
+// Player window control
+electron_1.ipcMain.handle('control-player-window', async (_event, action, data) => {
+    if (fullscreenWindow) {
+        fullscreenWindow.webContents.send('control-player', { action, data });
+        return { success: true };
+    }
+    return { success: false, error: 'No player window open' };
+});
+electron_1.ipcMain.handle('get-player-window-status', async () => {
+    return {
+        isOpen: fullscreenWindow !== null,
+        displayId: fullscreenWindow ? null : null
+    };
+});
+electron_1.ipcMain.handle('create-player-window', async (_event, displayId) => {
+    try {
+        const win = createFullscreenWindow(displayId);
+        return { success: true, windowId: win.id };
+    }
+    catch (error) {
+        console.error('Error creating player window:', error);
+        return { success: false, error: error.message };
+    }
+});
+electron_1.ipcMain.handle('close-player-window', async () => {
+    if (fullscreenWindow) {
+        fullscreenWindow.close();
+        fullscreenWindow = null;
+        // Notify main window
+        if (mainWindow) {
+            mainWindow.webContents.send('player-window-closed');
+        }
+    }
+    return { success: true };
+});
+electron_1.ipcMain.handle('toggle-player-window', async (_event, displayId) => {
+    if (fullscreenWindow) {
+        fullscreenWindow.close();
+        fullscreenWindow = null;
+        if (mainWindow) {
+            mainWindow.webContents.send('player-window-closed');
+        }
+        return { success: true, isOpen: false };
+    }
+    else {
+        try {
+            const win = createFullscreenWindow(displayId);
+            return { success: true, isOpen: true, windowId: win.id };
+        }
+        catch (error) {
+            console.error('Error creating player window:', error);
+            return { success: false, error: error.message };
+        }
+    }
+});
+electron_1.ipcMain.handle('move-player-to-display', async (_event, displayId) => {
+    if (!fullscreenWindow) {
+        return { success: false, error: 'No player window open' };
+    }
+    const displays = electron_1.screen.getAllDisplays();
+    const targetDisplay = displays.find(d => d.id === displayId);
+    if (!targetDisplay) {
+        return { success: false, error: 'Display not found' };
+    }
+    fullscreenWindow.setBounds({
+        x: targetDisplay.bounds.x,
+        y: targetDisplay.bounds.y,
+        width: targetDisplay.size.width,
+        height: targetDisplay.size.height
+    });
+    return { success: true };
+});
+electron_1.ipcMain.handle('set-player-fullscreen', async (_event, fullscreen) => {
+    if (!fullscreenWindow) {
+        return { success: false, error: 'No player window open' };
+    }
+    fullscreenWindow.setFullScreen(fullscreen);
+    return { success: true };
+});
+electron_1.ipcMain.handle('refresh-player-window', async (_event, displayId) => {
+    if (fullscreenWindow) {
+        fullscreenWindow.close();
+        fullscreenWindow = null;
+    }
+    try {
+        const win = createFullscreenWindow(displayId);
+        return { success: true, windowId: win.id };
+    }
+    catch (error) {
+        console.error('Error refreshing player window:', error);
+        return { success: false, error: error.message };
+    }
+});
+// Settings/Store Operations
+electron_1.ipcMain.handle('get-setting', async (_event, key) => {
+    return store.get(key);
+});
+electron_1.ipcMain.handle('set-setting', async (_event, key, value) => {
+    store.set(key, value);
+    return { success: true };
+});
+electron_1.ipcMain.handle('get-all-settings', async () => {
+    return store.store;
+});
+// Window Operations
+electron_1.ipcMain.handle('open-admin-console', async () => {
+    createAdminConsoleWindow();
+    return { success: true };
+});
+electron_1.ipcMain.handle('select-directory', async () => {
+    if (!mainWindow)
+        return { success: false };
+    const result = await electron_1.dialog.showOpenDialog(mainWindow, {
+        properties: ['openDirectory'],
+        title: 'Select Playlists Directory'
+    });
+    if (!result.canceled && result.filePaths[0]) {
+        store.set('playlistsDirectory', result.filePaths[0]);
+        return { success: true, path: result.filePaths[0] };
+    }
+    return { success: false };
+});
+// Playback State Sync (between windows)
+electron_1.ipcMain.on('playback-state-update', (_event, state) => {
+    // Forward to fullscreen window if it exists
+    if (fullscreenWindow && _event.sender !== fullscreenWindow.webContents) {
+        fullscreenWindow.webContents.send('playback-state-sync', state);
+    }
+    // Forward to main window if from fullscreen
+    if (mainWindow && _event.sender !== mainWindow.webContents) {
+        mainWindow.webContents.send('playback-state-sync', state);
+    }
+});
+electron_1.ipcMain.on('video-ended', () => {
+    if (mainWindow) {
+        mainWindow.webContents.send('request-next-video');
+    }
+});
+// Recent Searches
+electron_1.ipcMain.handle('get-recent-searches', async () => {
+    return store.get('recentSearches', []);
+});
+electron_1.ipcMain.handle('add-recent-search', async (_event, query) => {
+    const recent = store.get('recentSearches', []);
+    const filtered = recent.filter((s) => s.toLowerCase() !== query.toLowerCase());
+    const updated = [query, ...filtered].slice(0, 10);
+    store.set('recentSearches', updated);
+    return updated;
+});
+electron_1.ipcMain.handle('clear-recent-searches', async () => {
+    store.set('recentSearches', []);
+    return [];
+});
+// ==================== App Lifecycle ====================
+electron_1.app.whenReady().then(() => {
+    createMainWindow();
+    electron_1.app.on('activate', () => {
+        if (electron_1.BrowserWindow.getAllWindows().length === 0) {
+            createMainWindow();
+        }
+    });
+});
+electron_1.app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        electron_1.app.quit();
+    }
+});
+electron_1.app.on('before-quit', () => {
+    // Clean up any resources
+});
+// Handle certificate errors in development
+if (isDev) {
+    electron_1.app.on('certificate-error', (_event, _webContents, _url, _error, _certificate, callback) => {
+        _event.preventDefault();
+        callback(true);
+    });
+}
+//# sourceMappingURL=main.js.map
