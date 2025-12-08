@@ -481,6 +481,99 @@ ipcMain.handle('get-player-window-status', async () => {
   };
 });
 
+// Create player window (maps to fullscreen window)
+ipcMain.handle('create-player-window', async (event, displayId) => {
+  try {
+    const win = createFullscreenWindow(displayId);
+    return { success: true, windowId: win.id };
+  } catch (error) {
+    console.error('Error creating player window:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Close player window
+ipcMain.handle('close-player-window', async () => {
+  if (fullscreenWindow) {
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+    // Notify main window
+    if (mainWindow) {
+      mainWindow.webContents.send('player-window-closed');
+    }
+  }
+  return { success: true };
+});
+
+// Toggle player window (create if not exists, close if exists)
+ipcMain.handle('toggle-player-window', async (event, displayId) => {
+  if (fullscreenWindow) {
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+    if (mainWindow) {
+      mainWindow.webContents.send('player-window-closed');
+    }
+    return { success: true, isOpen: false };
+  } else {
+    try {
+      const win = createFullscreenWindow(displayId);
+      return { success: true, isOpen: true, windowId: win.id };
+    } catch (error) {
+      console.error('Error creating player window:', error);
+      return { success: false, error: error.message };
+    }
+  }
+});
+
+// Move player window to a different display
+ipcMain.handle('move-player-to-display', async (event, displayId) => {
+  if (!fullscreenWindow) {
+    return { success: false, error: 'No player window open' };
+  }
+  
+  const displays = screen.getAllDisplays();
+  const targetDisplay = displays.find(d => d.id === displayId);
+  
+  if (!targetDisplay) {
+    return { success: false, error: 'Display not found' };
+  }
+  
+  fullscreenWindow.setBounds({
+    x: targetDisplay.bounds.x,
+    y: targetDisplay.bounds.y,
+    width: targetDisplay.size.width,
+    height: targetDisplay.size.height
+  });
+  
+  return { success: true };
+});
+
+// Set player window fullscreen mode
+ipcMain.handle('set-player-fullscreen', async (event, fullscreen) => {
+  if (!fullscreenWindow) {
+    return { success: false, error: 'No player window open' };
+  }
+  
+  fullscreenWindow.setFullScreen(fullscreen);
+  return { success: true };
+});
+
+// Refresh player window (recreate on specified display)
+ipcMain.handle('refresh-player-window', async (event, displayId) => {
+  if (fullscreenWindow) {
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+  }
+  
+  try {
+    const win = createFullscreenWindow(displayId);
+    return { success: true, windowId: win.id };
+  } catch (error) {
+    console.error('Error refreshing player window:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // Settings/Store Operations
 ipcMain.handle('get-setting', async (event, key) => {
   return store.get(key);
