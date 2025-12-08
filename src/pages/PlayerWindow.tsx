@@ -298,9 +298,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   
   // Debounce refs to prevent infinite loop on rapid video end events
   const lastPlayNextTimeRef = useRef(0);
+  const lastAdvancedFromVideoRef = useRef<string | null>(null); // Track which video we advanced FROM
+  const currentVideoRef = useRef<Video | null>(null); // Ref for current video (for debounce check)
   const lastPlayedVideoIdRef = useRef<string | null>(null);
   const consecutiveFailuresRef = useRef(0);
   const MAX_CONSECUTIVE_FAILURES = 3; // Skip video after this many rapid failures
+
+  // Keep currentVideoRef in sync with currentVideo state
+  useEffect(() => {
+    currentVideoRef.current = currentVideo;
+  }, [currentVideo]);
 
   // Playback watchdog - detects when playback stalls after video transition
   const watchdogTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -846,13 +853,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Unified function to play the next video - ALWAYS checks priority queue first
   const playNextVideo = useCallback(() => {
     // DEBOUNCE: Prevent rapid-fire calls that cause infinite loop on video load failure
+    // Use both time-based debounce AND video-based deduplication
     const now = Date.now();
     const timeSinceLastCall = now - lastPlayNextTimeRef.current;
+    const currentVideoId = currentVideoRef.current?.id || currentVideoRef.current?.src || '';
     
-    if (timeSinceLastCall < 500) {
-      console.warn('[PlayerWindow] playNextVideo debounced - too rapid (' + timeSinceLastCall + 'ms since last call)');
+    // If same video and less than 500ms, debounce
+    // But allow calls for DIFFERENT videos to proceed (handles quick succession of priority queue)
+    if (timeSinceLastCall < 500 && lastAdvancedFromVideoRef.current === currentVideoId && currentVideoId !== '') {
+      console.warn('[PlayerWindow] playNextVideo debounced - same video within 500ms (' + timeSinceLastCall + 'ms since last call)');
       return;
     }
+    
+    // Track which video we're advancing from
+    lastAdvancedFromVideoRef.current = currentVideoId;
     lastPlayNextTimeRef.current = now;
     
     console.log('[PlayerWindow] 🎬 playNextVideo called at', new Date().toISOString());
@@ -1615,7 +1629,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               <div style={{width: '100%', height: '100%', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'}}></div>
             </div>
             <div className="track-info">
-              <div className="track-title">{currentTrack?.title || 'No track playing'}</div>
+              <div className="track-title">{cleanVideoTitle(currentTrack?.title) || 'No track playing'}</div>
               <div className="track-artist">{getDisplayArtist(currentTrack?.artist) || '—'}</div>
             </div>
           </div>

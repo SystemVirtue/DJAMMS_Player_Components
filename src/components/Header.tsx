@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Video } from '../types';
 import { formatTime } from '../utils/time';
+import { cleanVideoTitle } from '../utils/playlistHelpers';
 
 interface HeaderProps {
   currentVideo: Video | null;
@@ -128,7 +129,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
         <div className="now-playing-info">
           <div className="now-playing-title">
-            {currentVideo?.title || 'No video playing'}
+            {cleanVideoTitle(currentVideo?.title) || 'No video playing'}
           </div>
           <div className="now-playing-artist">
             {currentVideo?.artist || 'Select a video to play'}

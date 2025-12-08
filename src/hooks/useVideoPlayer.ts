@@ -66,6 +66,10 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   const lastVideoEndTimeRef = useRef(0);
   const VIDEO_END_DEBOUNCE_MS = 500;
 
+  // Track if early crossfade has been triggered for the current video
+  const earlyCrossfadeTriggeredRef = useRef(false);
+  const currentVideoIdRef = useRef<string | null>(null);
+
   // Refs for audio normalization
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -179,6 +183,12 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     const handleVideoEnd = (video: HTMLVideoElement) => {
       if (video === activeVideoRef.current) {
+        // If early crossfade already triggered, just log and return
+        if (earlyCrossfadeTriggeredRef.current) {
+          console.log('[useVideoPlayer] Video ended - early crossfade already triggered, skipping callback');
+          return;
+        }
+        
         // DEBOUNCE: Prevent rapid-fire video end events (e.g., from failed video loads)
         const now = Date.now();
         const timeSinceLastEnd = now - lastVideoEndTimeRef.current;
@@ -189,7 +199,7 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
         }
         lastVideoEndTimeRef.current = now;
         
-        // SIMPLIFIED: Video ended naturally - trigger next video
+        // Video ended naturally - trigger next video
         console.log('[useVideoPlayer] Video ended naturally - advancing to next');
         onVideoEnd?.();
         ipcAdapter.send('playback-ended', {
@@ -210,10 +220,41 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       setDuration(video.duration);
     };
 
-    // SIMPLIFIED: Just update current time, no early crossfade trigger
+    // Update current time and check for early crossfade trigger
     const handleTimeUpdate = (video: HTMLVideoElement) => {
       if (video === activeVideoRef.current && isPlaying) {
         setCurrentTime(video.currentTime);
+        
+        // Early crossfade trigger: when remaining time <= fadeDuration, trigger next video
+        // This ensures seamless transitions even if the 'ended' event is delayed
+        const duration = video.duration;
+        const currentTime = video.currentTime;
+        const fadeTime = fadeDuration || 2.0;
+        const remainingTime = duration - currentTime;
+        
+        // Only trigger if:
+        // - Duration is valid (> 0)
+        // - Remaining time is less than or equal to fade duration
+        // - We haven't already triggered for this video
+        // - Not currently skipping (user-initiated skip handles its own fade)
+        if (
+          duration > 0 && 
+          remainingTime <= fadeTime && 
+          remainingTime > 0 && 
+          !earlyCrossfadeTriggeredRef.current &&
+          !isSkippingRef.current
+        ) {
+          console.log(`[useVideoPlayer] ⏱️ Early crossfade trigger: ${remainingTime.toFixed(2)}s remaining (fade: ${fadeTime}s)`);
+          earlyCrossfadeTriggeredRef.current = true;
+          
+          // Trigger the next video callback
+          onVideoEnd?.();
+          ipcAdapter.send('playback-ended', {
+            videoId: currentVideo?.id,
+            title: currentVideo?.title,
+            earlyCrossfade: true
+          });
+        }
       }
     };
 
@@ -246,7 +287,7 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
         video.removeEventListener('playing', handlePlaying);
       });
     };
-  }, [activeVideoRef, currentVideo, ipcAdapter, onVideoEnd, isPlaying]);
+  }, [activeVideoRef, currentVideo, ipcAdapter, onVideoEnd, isPlaying, fadeDuration]);
 
   const handleVideoError = useCallback((video: HTMLVideoElement, error: Event) => {
     console.error('[useVideoPlayer] Handling video error, retry:', retryCountRef.current);
@@ -265,6 +306,12 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
   const playVideo = useCallback((video: Video) => {
     const videoId = video.id || video.path || video.src || '';
+    
+    // Reset early crossfade flag for new video
+    if (currentVideoIdRef.current !== videoId) {
+      earlyCrossfadeTriggeredRef.current = false;
+      currentVideoIdRef.current = videoId;
+    }
     
     // Prevent duplicate play requests for the same video
     if (isLoadingRef.current && lastPlayRequestRef.current === videoId) {

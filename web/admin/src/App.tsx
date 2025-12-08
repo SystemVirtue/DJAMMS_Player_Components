@@ -25,6 +25,7 @@ import type {
   CommandType 
 } from '@shared/types';
 import { ConnectPlayerModal, usePlayer } from '@shared/ConnectPlayerModal';
+import { cleanVideoTitle } from '@shared/video-utils';
 
 // Helper to strip YouTube Playlist ID prefix from folder name
 // Handles both underscore and dot separators: PLxxxxxx_Name or PLxxxxxx.Name
@@ -133,7 +134,7 @@ const VideoPopover: React.FC<VideoPopoverProps> = ({ video, position, onAddToPri
           marginBottom: '4px',
           wordBreak: 'break-word'
         }}>
-          {artistDisplay ? `${artistDisplay} - ${video.title}` : video.title}
+          {artistDisplay ? `${artistDisplay} - ${cleanVideoTitle(video.title)}` : cleanVideoTitle(video.title)}
         </div>
         <div style={{ 
           fontSize: '14px', 
@@ -759,7 +760,7 @@ function AdminApp() {
       {showQueuePlayDialog && queueVideoToPlay && (
         <div className="dialog-overlay" onClick={() => { setShowQueuePlayDialog(false); setQueueVideoToPlay(null); }}>
           <div className="dialog-box dialog-box-wide" onClick={(e) => e.stopPropagation()}>
-            <h3>{queueVideoToPlay.video.title}{queueVideoToPlay.video.artist ? ` - ${getDisplayArtist(queueVideoToPlay.video.artist)}` : ''}</h3>
+            <h3>{cleanVideoTitle(queueVideoToPlay.video.title)}{queueVideoToPlay.video.artist ? ` - ${getDisplayArtist(queueVideoToPlay.video.artist)}` : ''}</h3>
             <div className="dialog-actions dialog-actions-grid">
               <button className="dialog-btn dialog-btn-primary" onClick={confirmQueuePlay}>▶ PLAY NOW</button>
               <button className="dialog-btn dialog-btn-secondary" onClick={moveQueueVideoToNext}>⏭ PLAY NEXT</button>
@@ -787,7 +788,7 @@ function AdminApp() {
               <div style={{width: '100%', height: '100%', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'}}></div>
             </div>
             <div className="track-info">
-              <div className="track-title">{currentVideo?.title || 'No track playing'}</div>
+              <div className="track-title">{cleanVideoTitle(currentVideo?.title) || 'No track playing'}</div>
               <div className="track-artist">{getDisplayArtist(currentVideo?.artist) || '—'}</div>
             </div>
           </div>
@@ -845,7 +846,7 @@ function AdminApp() {
             <div className="priority-queue-ticker">
               {priorityQueue.map((item, idx) => (
                 <span key={`${item.id}-${idx}`} className="priority-queue-item">
-                  {item.title}{getDisplayArtist(item.artist) ? ` - ${getDisplayArtist(item.artist)}` : ''}
+                  {cleanVideoTitle(item.title)}{getDisplayArtist(item.artist) ? ` - ${getDisplayArtist(item.artist)}` : ''}
                 </span>
               ))}
             </div>
@@ -938,7 +939,7 @@ function AdminApp() {
                     </div>
                     <div className="now-playing-content">
                       <div className="now-playing-info">
-                        <div className="now-playing-title">{currentVideo.title}</div>
+                        <div className="now-playing-title">{cleanVideoTitle(currentVideo.title)}</div>
                         <div className="now-playing-artist">{getDisplayArtist(currentVideo.artist)}</div>
                         <div className="now-playing-playlist">{getPlaylistDisplayName(currentVideo.playlist || '')}</div>
                       </div>
@@ -975,7 +976,7 @@ function AdminApp() {
                             className="priority-item"
                           >
                             <td className="col-index">P{index + 1}</td>
-                            <td className="col-title">{track.title}</td>
+                            <td className="col-title">{cleanVideoTitle(track.title)}</td>
                             <td>{getDisplayArtist(track.artist)}</td>
                             <td>{track.duration || '—'}</td>
                             <td>{getPlaylistDisplayName(track.playlist || '')}</td>
@@ -1037,7 +1038,7 @@ function AdminApp() {
                             style={{ cursor: 'pointer' }}
                           >
                             <td>{displayIndex + 1}</td>
-                            <td className="col-title">{track.title}</td>
+                            <td className="col-title">{cleanVideoTitle(track.title)}</td>
                             <td>{getDisplayArtist(track.artist)}</td>
                             <td>{track.duration || '—'}</td>
                             <td>{getPlaylistDisplayName(track.playlist || '')}</td>
@@ -1109,7 +1110,7 @@ function AdminApp() {
                       getSearchResults().map((track, index) => (
                         <tr key={`${track.id}-${index}`} onClick={(e) => handleVideoClick(track, e)} style={{ cursor: 'pointer' }}>
                           <td>{index + 1}</td>
-                          <td className="col-title">{track.title}</td>
+                          <td className="col-title">{cleanVideoTitle(track.title)}</td>
                           <td>{getDisplayArtist(track.artist)}</td>
                           <td>{track.duration || '—'}</td>
                           <td>{getPlaylistDisplayName(getVideoPlaylist(track))}</td>
