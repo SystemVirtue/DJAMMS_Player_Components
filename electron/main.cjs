@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const Store = require('electron-store');
+const Store = require('electron-store').default;
 
 // Initialize persistent storage
 const store = new Store({
@@ -23,7 +23,7 @@ let adminConsoleWindow = null;
 
 // Determine if running in development
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-const VITE_DEV_SERVER_URL = 'http://localhost:3000';
+const VITE_DEV_SERVER_URL = 'http://localhost:3003';
 
 function getAssetPath(...paths) {
   if (isDev) {
@@ -436,6 +436,77 @@ ipcMain.handle('control-fullscreen-player', async (event, action, data) => {
     return { success: true };
   }
   return { success: false, error: 'No fullscreen window' };
+});
+
+// Player Window Management (alias for fullscreen window)
+ipcMain.handle('create-player-window', async (event, displayId) => {
+  const win = createFullscreenWindow(displayId);
+  return { success: !!win };
+});
+
+ipcMain.handle('close-player-window', async () => {
+  if (fullscreenWindow) {
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+    return { success: true };
+  }
+  return { success: false, error: 'No player window' };
+});
+
+ipcMain.handle('toggle-player-window', async () => {
+  if (fullscreenWindow) {
+    if (fullscreenWindow.isVisible()) {
+      fullscreenWindow.hide();
+      return { success: true, visible: false };
+    } else {
+      fullscreenWindow.show();
+      return { success: true, visible: true };
+    }
+  }
+  return { success: false, error: 'No player window' };
+});
+
+ipcMain.handle('get-player-window-status', async () => {
+  return {
+    exists: !!fullscreenWindow,
+    visible: fullscreenWindow ? fullscreenWindow.isVisible() : false,
+    displayId: null // Could track this if needed
+  };
+});
+
+ipcMain.handle('control-player-window', async (event, action, data) => {
+  if (fullscreenWindow) {
+    fullscreenWindow.webContents.send('control-player', { action, data });
+    return { success: true };
+  }
+  return { success: false, error: 'No player window' };
+});
+
+ipcMain.handle('move-player-to-display', async (event, displayId) => {
+  // For now, just recreate on the new display
+  if (fullscreenWindow) {
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+  }
+  const win = createFullscreenWindow(displayId);
+  return { success: !!win };
+});
+
+ipcMain.handle('set-player-fullscreen', async (event, fullscreen) => {
+  if (fullscreenWindow) {
+    fullscreenWindow.setFullScreen(fullscreen);
+    return { success: true };
+  }
+  return { success: false, error: 'No player window' };
+});
+
+ipcMain.handle('refresh-player-window', async (event, displayId) => {
+  if (fullscreenWindow) {
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+  }
+  const win = createFullscreenWindow(displayId);
+  return { success: !!win };
 });
 
 // Settings/Store Operations

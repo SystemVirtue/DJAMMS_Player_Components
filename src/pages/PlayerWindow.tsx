@@ -319,37 +319,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
-  // Initialize Player ID on mount
-  useEffect(() => {
-    if (!isElectron) return;
-    
-    const init = async () => {
-      try {
-        // Check for stored ID first
-        const storedId = getPlayerId();
-        if (storedId) {
-          console.log('[PlayerWindow] Using stored Player ID:', storedId);
-          setPlayerId(storedId);
-          setPlayerIdInitialized(true);
-          return;
-        }
-        
-        // Initialize (will claim default or generate random)
-        const id = await initializePlayerId();
-        setPlayerId(id);
-        setPlayerIdInitialized(true);
-        console.log('[PlayerWindow] Initialized Player ID:', id);
-      } catch (err) {
-        console.error('[PlayerWindow] Failed to initialize Player ID:', err);
-        // Fall back to default
-        setPlayerId(DEFAULT_PLAYER_ID);
-        setPlayerIdInitialized(true);
-      }
-    };
-    
-    init();
-  }, [isElectron]);
-
   // Supabase integration - listen for remote commands from Web Admin / Kiosk
   // This runs in the main window so commands are received even without Player Window open
   const { isInitialized: supabaseInitialized, isOnline: supabaseOnline, syncState } = useSupabase({
@@ -416,165 +385,126 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onSkip: () => {
       console.log('[PlayerWindow] Supabase skip command received');
-      // Send skip command to Player Window - triggers fade-out, then video end
       if (isElectron) {
         (window as any).electronAPI.controlPlayerWindow('skip');
       }
     },
-    onSetVolume: (newVolume: number) => {
-      console.log('[PlayerWindow] Supabase volume command received:', newVolume);
-      setVolume(Math.round(newVolume * 100));
+    onSetVolume: (volume: number) => {
+      console.log('[PlayerWindow] Supabase volume command received:', volume);
+      setVolume(volume);
       if (isElectron) {
-        (window as any).electronAPI.controlPlayerWindow('setVolume', newVolume);
-        (window as any).electronAPI.saveSetting('volume', newVolume);
+        (window as any).electronAPI.controlPlayerWindow('setVolume', volume);
       }
     },
     onSeekTo: (position: number) => {
       console.log('[PlayerWindow] Supabase seek command received:', position);
+      setCurrentTime(position);
       if (isElectron) {
         (window as any).electronAPI.controlPlayerWindow('seekTo', position);
       }
     },
     onQueueAdd: (video: QueueVideoItem, queueType: 'active' | 'priority') => {
-      console.log('[PlayerWindow] Supabase queue_add command received:', video.title, queueType);
-      const videoToAdd: Video = {
-        id: video.id,
-        src: video.src,
-        title: video.title,
-        artist: video.artist,
-        path: video.path,
-        playlist: video.playlist,
-        playlistDisplayName: video.playlistDisplayName,
-        duration: video.duration
-      };
+      console.log('[PlayerWindow] Supabase queue add command received:', video.title, 'type:', queueType);
+      // Add to queue - this will be handled by the queue management logic
       if (queueType === 'priority') {
-        // Add to separate priority queue (consumed first on skip)
-        setPriorityQueue(prev => [...prev, videoToAdd]);
+        // Add to priority queue
+        setPriorityQueue(prev => [...prev, video]);
       } else {
-        // Add to end of active queue
-        setQueue(prev => [...prev, videoToAdd]);
+        // Add to active queue
+        setActiveQueue(prev => [...prev, video]);
       }
     },
     onQueueShuffle: () => {
-      console.log('[PlayerWindow] Supabase queue_shuffle command received');
-      setQueue(prev => {
-        // Keep the current video at index 0, shuffle the rest
-        const currentIdx = queueIndexRef.current;
-        const currentVideo = prev[currentIdx];
-        const otherVideos = prev.filter((_, idx) => idx !== currentIdx);
-        const shuffledOthers = shuffleArray(otherVideos);
-        // Put current video at index 0, shuffled rest after
-        const newQueue = [currentVideo, ...shuffledOthers];
-        setQueueIndex(0); // Current video is now at index 0
-        
-        // Trigger immediate sync so Web Admin sees the shuffled queue right away
-        // We call syncState inside the setter to access the new queue value
-        setTimeout(() => {
-          syncState({
-            activeQueue: newQueue,
-            queueIndex: 0
-          }, true); // immediate = true to bypass debounce
-        }, 0);
-        
-        return newQueue;
+      console.log('[PlayerWindow] Supabase queue shuffle command received');
+      // Shuffle the active queue
+      setActiveQueue(prev => {
+        const shuffled = [...prev];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
       });
     },
-    onLoadPlaylist: (playlistName: string, shuffle?: boolean) => {
-      console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
-      // Find the playlist (may have YouTube ID prefix)
-      const playlistKey = Object.keys(playlists).find(key => 
-        key === playlistName || key.includes(playlistName)
-      );
-      if (playlistKey && playlists[playlistKey]) {
-        const playlistTracks = playlists[playlistKey];
-        const shouldShuffle = shuffle ?? settings.autoShufflePlaylists;
-        const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
-        setActivePlaylist(playlistKey);
-        setQueue(finalTracks);
-        setQueueIndex(0);
-        if (finalTracks.length > 0) {
-          setCurrentVideo(finalTracks[0]);
-          setIsPlaying(true);
-          if (isElectron) {
-            (window as any).electronAPI.controlPlayerWindow('play', finalTracks[0]);
-          }
-        }
-      }
+    onLoadPlaylist: (playlistName: string, shuffle: boolean = false) => {
+      console.log('[PlayerWindow] Supabase load playlist command received:', playlistName, 'shuffle:', shuffle);
+      // Load playlist - this would need to be implemented
+      // For now, just log
     },
     onQueueMove: (fromIndex: number, toIndex: number) => {
-      console.log('[PlayerWindow] Supabase queue_move command received:', fromIndex, '->', toIndex);
-      setQueue(prev => {
-        const newQueue = [...prev];
-        const currentIdx = queueIndexRef.current;
-        
-        // Validate indices
-        if (fromIndex < 0 || fromIndex >= newQueue.length || toIndex < 0 || toIndex >= newQueue.length) {
-          console.warn('[PlayerWindow] Invalid queue move indices');
-          return prev;
-        }
-        
-        // Remove item from old position and insert at new position
-        const [movedItem] = newQueue.splice(fromIndex, 1);
-        newQueue.splice(toIndex, 0, movedItem);
-        
-        // Adjust queueIndex if needed to keep current video playing
-        let newQueueIdx = currentIdx;
-        if (fromIndex === currentIdx) {
-          // Moving the current video
-          newQueueIdx = toIndex;
-        } else if (fromIndex < currentIdx && toIndex >= currentIdx) {
-          // Moving item from before current to after current
-          newQueueIdx = currentIdx - 1;
-        } else if (fromIndex > currentIdx && toIndex <= currentIdx) {
-          // Moving item from after current to before current
-          newQueueIdx = currentIdx + 1;
-        }
-        
-        setQueueIndex(newQueueIdx);
-        
-        // Sync immediately
-        setTimeout(() => {
-          syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true);
-        }, 0);
-        
-        return newQueue;
-      });
+      console.log('[PlayerWindow] Supabase queue move command received:', fromIndex, 'to', toIndex);
+      // Move item in queue - this would need to be implemented
     },
     onQueueRemove: (videoId: string, queueType: 'active' | 'priority') => {
-      console.log('[PlayerWindow] Supabase queue_remove command received:', videoId, queueType);
-      
+      console.log('[PlayerWindow] Supabase queue remove command received:', videoId, 'type:', queueType);
       if (queueType === 'priority') {
-        setPriorityQueue(prev => {
-          const newQueue = prev.filter(v => v.id !== videoId);
-          setTimeout(() => syncState({ priorityQueue: newQueue }, true), 0);
-          return newQueue;
-        });
+        setPriorityQueue(prev => prev.filter(v => v.id !== videoId));
       } else {
-        setQueue(prev => {
-          const currentIdx = queueIndexRef.current;
-          const removeIdx = prev.findIndex(v => v.id === videoId);
-          
-          // Don't remove if it's the currently playing video or not found
-          if (removeIdx === -1 || removeIdx === currentIdx) {
-            console.warn('[PlayerWindow] Cannot remove: video not found or currently playing');
-            return prev;
-          }
-          
-          const newQueue = prev.filter(v => v.id !== videoId);
-          
-          // Adjust queueIndex if removing item before current
-          let newQueueIdx = currentIdx;
-          if (removeIdx < currentIdx) {
-            newQueueIdx = currentIdx - 1;
-            setQueueIndex(newQueueIdx);
-          }
-          
-          setTimeout(() => syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true), 0);
-          return newQueue;
-        });
+        setActiveQueue(prev => prev.filter(v => v.id !== videoId));
       }
+    },
+    onPlayerWindowToggle: (show: boolean) => {
+      console.log('[PlayerWindow] Supabase player window toggle command received:', show);
+      if (isElectron) {
+        if (show) {
+          (window as any).electronAPI.createPlayerWindow();
+        } else {
+          (window as any).electronAPI.closePlayerWindow();
+        }
+      }
+    },
+    onPlayerFullscreenToggle: (fullscreen: boolean) => {
+      console.log('[PlayerWindow] Supabase fullscreen toggle command received:', fullscreen);
+      if (isElectron) {
+        (window as any).electronAPI.setPlayerFullscreen(fullscreen);
+      }
+    },
+    onPlayerRefresh: () => {
+      console.log('[PlayerWindow] Supabase player refresh command received');
+      if (isElectron) {
+        (window as any).electronAPI.refreshPlayerWindow();
+      }
+    },
+    onOverlaySettingsUpdate: (settings: Record<string, unknown>) => {
+      console.log('[PlayerWindow] Supabase overlay settings update received:', settings);
+      // Update overlay settings - this would need to be implemented
+    },
+    onKioskSettingsUpdate: (settings: Record<string, unknown>) => {
+      console.log('[PlayerWindow] Supabase kiosk settings update received:', settings);
+      // Update kiosk settings - this would need to be implemented
     }
   });
+
+  // Initialize Player ID on mount (after Supabase is ready)
+  useEffect(() => {
+    if (!isElectron || !supabaseInitialized) return;
+    
+    const init = async () => {
+      try {
+        // Check for stored ID first
+        const storedId = getPlayerId();
+        if (storedId) {
+          console.log('[PlayerWindow] Using stored Player ID:', storedId);
+          setPlayerId(storedId);
+          setPlayerIdInitialized(true);
+          return;
+        }
+        
+        // Initialize (will claim default or generate random)
+        const id = await initializePlayerId();
+        setPlayerId(id);
+        setPlayerIdInitialized(true);
+        console.log('[PlayerWindow] Initialized Player ID:', id);
+      } catch (err) {
+        console.error('[PlayerWindow] Failed to initialize Player ID:', err);
+        // Fall back to default
+        setPlayerId(DEFAULT_PLAYER_ID);
+        setPlayerIdInitialized(true);
+      }
+    };
+    
+    init();
+  }, [isElectron, supabaseInitialized]);
 
   // Shuffle helper
   const shuffleArray = <T,>(array: T[]): T[] => {

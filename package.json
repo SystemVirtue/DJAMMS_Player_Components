@@ -2,7 +2,7 @@
   "name": "djamms-player",
   "version": "2.0.0",
   "description": "DJAMMS Video Player - Crossfading video player with search and browse functionality",
-  "main": "electron/main.mjs",
+  "main": "electron/main.cjs",
   "module": "dist/index.esm.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .",
+    "dev:electron": "wait-on http://localhost:3003 && cross-env NODE_ENV=development electron .",
     "build": "npm run build:vite && npm run build:rollup",
     "build:vite": "vite build",
     "build:rollup": "rollup -c",
@@ -63,7 +63,7 @@
     "@types/react-dom": "^18.0.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
-    "@vitejs/plugin-react": "^5.1.1",
+    "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.22",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
@@ -81,7 +81,7 @@
     "ts-jest": "^29.4.6",
     "tslib": "^2.0.0",
     "typescript": "^5.0.0",
-    "vite": "^7.2.4",
+    "vite": "^6.0.0",
     "wait-on": "^9.0.3"
   },
   "repository": {
