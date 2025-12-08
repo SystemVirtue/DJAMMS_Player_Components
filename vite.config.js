@@ -121,8 +121,8 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3000,
-    strictPort: true,  // Force port 3000 so Electron wait-on works
+    port: 3003,
+    strictPort: true,  // Force port 3003 so Electron wait-on works
     open: false  // Don't auto-open browser when running with Electron
   },
   define: {
