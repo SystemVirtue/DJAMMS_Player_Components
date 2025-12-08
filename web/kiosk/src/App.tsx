@@ -17,9 +17,9 @@ import {
   getPlayerState,
   subscribeToPlayerState,
   isPlayerOnline,
-  onConnectionChange,
-  DEFAULT_PLAYER_ID
+  onConnectionChange
 } from '@shared/supabase-client';
+import ConnectPlayerModal, { usePlayer } from '@shared/ConnectPlayerModal';
 import type { SupabasePlayerState, QueueVideoItem } from '@shared/types';
 
 // Get UI mode from URL parameter: ?ui=classic or ?ui=jukebox (default: jukebox)
@@ -29,7 +29,10 @@ function getUIMode(): 'classic' | 'jukebox' {
   return ui === 'classic' ? 'classic' : 'jukebox';
 }
 
-function App() {
+// Inner app component that has access to Player context
+function KioskApp() {
+  const { playerId } = usePlayer();
+  
   const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
@@ -42,25 +45,25 @@ function App() {
   // Load initial player state
   useEffect(() => {
     const loadState = async () => {
-      const state = await getPlayerState(DEFAULT_PLAYER_ID);
+      const state = await getPlayerState(playerId);
       if (state) {
         setPlayerState(state);
         setIsOnline(isPlayerOnline(state));
       }
     };
     loadState();
-  }, []);
+  }, [playerId]);
 
   // Subscribe to real-time player state updates
   useEffect(() => {
-    const channel = subscribeToPlayerState(DEFAULT_PLAYER_ID, (state) => {
+    const channel = subscribeToPlayerState(playerId, (state) => {
       setPlayerState(state);
       setIsOnline(isPlayerOnline(state));
     });
 
     // unsubscribe() returns a Promise but cleanup must be sync - ignore return value
     return () => { channel.unsubscribe(); };
-  }, []);
+  }, [playerId]);
 
   // Monitor Supabase Realtime connection status
   useEffect(() => {
@@ -92,6 +95,7 @@ function App() {
           onCreditsChange={setCredits}
           onSongQueued={handleSongRequested}
           isFreePlay={true}
+          playerId={playerId}
         />
       ) : (
         <>
@@ -133,6 +137,7 @@ function App() {
                 <SearchInterface 
                   onSongRequested={handleSongRequested}
                   credits={credits}
+                  playerId={playerId}
                 />
               </div>
             </div>
@@ -162,6 +167,19 @@ function App() {
         </div>
       )}
     </div>
+  );
+}
+
+// Main App wrapped with ConnectPlayerModal
+function App() {
+  return (
+    <ConnectPlayerModal
+      title="Connect to DJAMMS Player"
+      description="Enter the Player ID to connect to the jukebox"
+      appName="DJAMMS Kiosk"
+    >
+      <KioskApp />
+    </ConnectPlayerModal>
   );
 }
 

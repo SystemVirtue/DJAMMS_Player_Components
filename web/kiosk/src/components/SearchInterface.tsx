@@ -16,9 +16,10 @@ import type { SupabaseLocalVideo, QueueVideoItem } from '@shared/types';
 interface SearchInterfaceProps {
   onSongRequested?: (video: QueueVideoItem) => void;
   credits?: number; // For future implementation
+  playerId: string; // Required - Player ID to search/queue against
 }
 
-export function SearchInterface({ onSongRequested, credits = 999 }: SearchInterfaceProps) {
+export function SearchInterface({ onSongRequested, credits = 999, playerId }: SearchInterfaceProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<SupabaseLocalVideo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -36,7 +37,7 @@ export function SearchInterface({ onSongRequested, credits = 999 }: SearchInterf
     const timer = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const searchResults = await searchLocalVideos(searchQuery);
+        const searchResults = await searchLocalVideos(searchQuery, 50, playerId);
         setResults(searchResults);
       } catch (error) {
         console.error('Search error:', error);
@@ -76,7 +77,7 @@ export function SearchInterface({ onSongRequested, credits = 999 }: SearchInterf
       const queueItem = localVideoToQueueItem(selectedVideo);
       
       // Send command to add to priority queue (using blocking command for feedback)
-      const result = await blockingCommands.queueAdd(queueItem, 'priority', 'kiosk');
+      const result = await blockingCommands.queueAdd(queueItem, 'priority', 'kiosk', playerId);
       
       if (result.success) {
         onSongRequested?.(queueItem);
@@ -93,7 +94,7 @@ export function SearchInterface({ onSongRequested, credits = 999 }: SearchInterf
     } finally {
       setIsRequesting(false);
     }
-  }, [selectedVideo, onSongRequested]);
+  }, [selectedVideo, onSongRequested, playerId]);
 
   const handleCancelRequest = useCallback(() => {
     setShowConfirm(false);

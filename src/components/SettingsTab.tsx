@@ -1,5 +1,11 @@
 // components/SettingsTab.tsx
-import React from 'react';
+import React, { useState, useCallback } from 'react';
+import { 
+  isValidPlayerIdFormat, 
+  claimPlayerId, 
+  validatePlayerId,
+  MIN_PLAYER_ID_LENGTH 
+} from '../utils/playerUtils';
 
 interface Settings {
   autoShufflePlaylists: boolean;
@@ -11,14 +17,212 @@ interface Settings {
 interface SettingsTabProps {
   settings: Settings;
   onUpdateSetting: (key: keyof Settings, value: any) => void;
+  playerId: string;
+  onPlayerIdChange: (newId: string) => void;
 }
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({
   settings,
-  onUpdateSetting
+  onUpdateSetting,
+  playerId,
+  onPlayerIdChange
 }) => {
+  const [isEditingPlayerId, setIsEditingPlayerId] = useState(false);
+  const [newPlayerId, setNewPlayerId] = useState('');
+  const [playerIdError, setPlayerIdError] = useState<string | null>(null);
+  const [isChangingPlayerId, setIsChangingPlayerId] = useState(false);
+
+  const handleStartEdit = useCallback(() => {
+    setNewPlayerId('');
+    setPlayerIdError(null);
+    setIsEditingPlayerId(true);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setIsEditingPlayerId(false);
+    setNewPlayerId('');
+    setPlayerIdError(null);
+  }, []);
+
+  const handleChangePlayerId = useCallback(async () => {
+    const clean = newPlayerId.trim().toUpperCase();
+    
+    // Validate format
+    if (!isValidPlayerIdFormat(clean)) {
+      setPlayerIdError(`Player ID must be at least ${MIN_PLAYER_ID_LENGTH} characters`);
+      return;
+    }
+
+    // Same as current?
+    if (clean === playerId) {
+      setPlayerIdError('This is already your current Player ID');
+      return;
+    }
+
+    setIsChangingPlayerId(true);
+    setPlayerIdError(null);
+
+    try {
+      // First check if the ID already exists
+      const exists = await validatePlayerId(clean);
+      
+      if (exists) {
+        // ID exists - just switch to it (assume user owns it or it's shared)
+        onPlayerIdChange(clean);
+        setIsEditingPlayerId(false);
+        setNewPlayerId('');
+      } else {
+        // ID doesn't exist - try to claim it
+        const result = await claimPlayerId(clean);
+        if (result.success) {
+          onPlayerIdChange(clean);
+          setIsEditingPlayerId(false);
+          setNewPlayerId('');
+        } else {
+          setPlayerIdError(result.error || 'Failed to claim Player ID');
+        }
+      }
+    } catch (err) {
+      setPlayerIdError('Failed to change Player ID');
+    } finally {
+      setIsChangingPlayerId(false);
+    }
+  }, [newPlayerId, playerId, onPlayerIdChange]);
+
   return (
     <div className="settings-container">
+      {/* Player Identity Section */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">Player Identity</h3>
+
+        {/* Current Player ID */}
+        <div className="settings-item">
+          <div className="settings-item-info">
+            <div className="settings-item-label">Player ID</div>
+            <div className="settings-item-description">
+              Unique identifier for this player instance. Web Admin and Kiosk apps connect using this ID.
+            </div>
+          </div>
+          {!isEditingPlayerId ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ 
+                fontFamily: 'monospace',
+                fontSize: '14px',
+                fontWeight: 600,
+                color: 'var(--yt-spec-call-to-action)',
+                backgroundColor: 'rgba(62, 166, 255, 0.1)',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                letterSpacing: '0.5px'
+              }}>
+                {playerId}
+              </span>
+              <button
+                onClick={handleStartEdit}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '13px',
+                  backgroundColor: 'var(--yt-spec-badge-chip-background)',
+                  color: 'var(--yt-text-primary)',
+                  border: '1px solid var(--yt-spec-10-percent-layer)',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--yt-spec-10-percent-layer)'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--yt-spec-badge-chip-background)'}
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="text"
+                  value={newPlayerId}
+                  onChange={(e) => {
+                    setNewPlayerId(e.target.value.toUpperCase());
+                    setPlayerIdError(null);
+                  }}
+                  placeholder="Enter new Player ID"
+                  disabled={isChangingPlayerId}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '14px',
+                    fontFamily: 'monospace',
+                    backgroundColor: 'var(--yt-spec-badge-chip-background)',
+                    color: 'var(--yt-text-primary)',
+                    border: playerIdError 
+                      ? '1px solid var(--yt-spec-brand-button-background)' 
+                      : '1px solid var(--yt-spec-10-percent-layer)',
+                    borderRadius: '6px',
+                    outline: 'none',
+                    width: '200px',
+                    textTransform: 'uppercase'
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !isChangingPlayerId) {
+                      handleChangePlayerId();
+                    } else if (e.key === 'Escape') {
+                      handleCancelEdit();
+                    }
+                  }}
+                  autoFocus
+                />
+                <button
+                  onClick={handleChangePlayerId}
+                  disabled={isChangingPlayerId || !newPlayerId.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    backgroundColor: isChangingPlayerId ? 'var(--yt-spec-badge-chip-background)' : 'var(--yt-spec-call-to-action)',
+                    color: isChangingPlayerId ? 'var(--yt-text-secondary)' : 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: isChangingPlayerId ? 'not-allowed' : 'pointer',
+                    fontWeight: 500
+                  }}
+                >
+                  {isChangingPlayerId ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  onClick={handleCancelEdit}
+                  disabled={isChangingPlayerId}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    backgroundColor: 'transparent',
+                    color: 'var(--yt-text-secondary)',
+                    border: '1px solid var(--yt-spec-10-percent-layer)',
+                    borderRadius: '6px',
+                    cursor: isChangingPlayerId ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+              {playerIdError && (
+                <span style={{ 
+                  fontSize: '12px', 
+                  color: 'var(--yt-spec-brand-button-background)',
+                  marginLeft: '4px'
+                }}>
+                  {playerIdError}
+                </span>
+              )}
+              <span style={{ 
+                fontSize: '11px', 
+                color: 'var(--yt-text-secondary)',
+                marginLeft: '4px'
+              }}>
+                Min {MIN_PLAYER_ID_LENGTH} characters. Will create if not exists.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Playback Section */}
       <div className="settings-section">
         <h3 className="settings-section-title">Playback</h3>

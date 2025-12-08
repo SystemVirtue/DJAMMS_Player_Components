@@ -13,9 +13,12 @@ export const SUPABASE_URL = 'https://lfvhgdbnecjeuciadimx.supabase.co';
 // Public anon key - safe to expose in client-side code
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdmhnZGJuZWNqZXVjaWFkaW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2OTc2MjIsImV4cCI6MjA3OTI3MzYyMn0.kSVtXnNVRofDol8L20oflgdo7A82BgAMco2FoFHRkG8';
 
-// Default player ID - should be unique per Electron instance
-// In production, this would be generated on first run and stored
-export const DEFAULT_PLAYER_ID = 'electron-player-1';
+// Default player ID - can be customized by user in Settings
+// Must be at least 6 characters and unique on Supabase
+export const DEFAULT_PLAYER_ID = 'DEMO_PLAYER';
+
+// Minimum length for Player ID
+export const MIN_PLAYER_ID_LENGTH = 6;
 
 /**
  * Get the Supabase configuration

@@ -12,7 +12,6 @@ import {
   insertCommand, 
   searchLocalVideos, 
   blockingCommands, 
-  DEFAULT_PLAYER_ID,
   onConnectionChange,
   isConnected as getConnectionStatus,
   localVideoToQueueItem
@@ -25,6 +24,7 @@ import type {
   QueueVideoItem,
   CommandType 
 } from '@shared/types';
+import { ConnectPlayerModal, usePlayer } from '@shared/ConnectPlayerModal';
 
 // Helper to strip YouTube Playlist ID prefix from folder name
 // Handles both underscore and dot separators: PLxxxxxx_Name or PLxxxxxx.Name
@@ -161,7 +161,19 @@ const VideoPopover: React.FC<VideoPopoverProps> = ({ video, position, onAddToPri
   );
 };
 
+// Main App wrapped with ConnectPlayerModal for player ID authentication
 export default function App() {
+  return (
+    <ConnectPlayerModal title="DJAMMS Admin Console">
+      <AdminApp />
+    </ConnectPlayerModal>
+  );
+}
+
+function AdminApp() {
+  // Get playerId from context (provided by ConnectPlayerModal)
+  const { playerId } = usePlayer();
+
   // Player state (synced from Supabase)
   const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
   const [currentVideo, setCurrentVideo] = useState<NowPlayingVideo | null>(null);
@@ -302,7 +314,7 @@ export default function App() {
 
     // Fetch initial state on mount (realtime subscription only fires on CHANGES)
     const loadInitialState = async () => {
-      const state = await getPlayerState(DEFAULT_PLAYER_ID);
+      const state = await getPlayerState(playerId);
       if (state) {
         applyState(state);
       }
@@ -310,11 +322,11 @@ export default function App() {
     loadInitialState();
 
     // Then subscribe to real-time changes
-    const channel = subscribeToPlayerState(DEFAULT_PLAYER_ID, applyState);
+    const channel = subscribeToPlayerState(playerId, applyState);
 
     // unsubscribe() returns a Promise but cleanup must be sync - ignore return value
     return () => { channel.unsubscribe(); };
-  }, []);
+  }, [playerId]);
 
   // Monitor Supabase Realtime connection status
   useEffect(() => {
@@ -351,7 +363,7 @@ export default function App() {
     
     // Subscribe to local_videos changes - debounce to avoid multiple rapid refreshes
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
-    const channel = subscribeToLocalVideos(DEFAULT_PLAYER_ID, () => {
+    const channel = subscribeToLocalVideos(playerId, () => {
       // Debounce refresh since multiple changes may come in rapid succession
       if (refreshTimeout) clearTimeout(refreshTimeout);
       refreshTimeout = setTimeout(() => {
@@ -364,7 +376,7 @@ export default function App() {
       if (refreshTimeout) clearTimeout(refreshTimeout);
       channel.unsubscribe();
     };
-  }, []);
+  }, [playerId]);
 
   // Search videos when query changes, or show all videos when empty
   useEffect(() => {
@@ -384,7 +396,7 @@ export default function App() {
           }
         } else {
           // Search mode
-          const results = await searchLocalVideos(searchQuery, DEFAULT_PLAYER_ID, searchLimit);
+          const results = await searchLocalVideos(searchQuery, playerId, searchLimit);
           setSearchResults(results);
           // If we got exactly searchLimit results, there may be more
           setSearchTotalCount(results.length >= searchLimit ? results.length + 1 : results.length);
@@ -400,7 +412,7 @@ export default function App() {
     
     const debounce = setTimeout(performSearch, 300);
     return () => clearTimeout(debounce);
-  }, [searchQuery, searchLimit, allVideos]);
+  }, [searchQuery, searchLimit, allVideos, playerId]);
 
   // Shuffle helper
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -415,11 +427,11 @@ export default function App() {
   // Send command to player via Supabase (fire-and-forget for non-critical)
   const sendCommand = useCallback(async (type: CommandType, payload?: any) => {
     try {
-      await insertCommand(type, payload);
+      await insertCommand(type, payload, 'web-admin', playerId);
     } catch (error) {
       console.error('Failed to send command:', error);
     }
-  }, []);
+  }, [playerId]);
 
   // Send overlay settings to Electron when they change
   const updateOverlaySetting = useCallback((key: string, value: number | boolean) => {
@@ -483,24 +495,24 @@ export default function App() {
   const confirmPause = async () => {
     setShowPauseDialog(false);
     setIsPlaying(false); // Optimistic update
-    const success = await sendBlockingCommand(() => blockingCommands.pause());
+    const success = await sendBlockingCommand(() => blockingCommands.pause(playerId));
     if (!success) setIsPlaying(true); // Rollback on failure
   };
 
   const handleResumePlayback = async () => {
     setIsPlaying(true); // Optimistic update
-    const success = await sendBlockingCommand(() => blockingCommands.resume());
+    const success = await sendBlockingCommand(() => blockingCommands.resume(playerId));
     if (!success) setIsPlaying(false); // Rollback on failure
   };
 
   const skipTrack = async () => {
     // Don't do optimistic update - let Supabase state sync handle the UI update
     // This prevents double-skip when the optimistic update and state sync both advance
-    await sendBlockingCommand(() => blockingCommands.skip());
+    await sendBlockingCommand(() => blockingCommands.skip(playerId));
   };
 
   const toggleShuffle = async () => {
-    await sendBlockingCommand(() => blockingCommands.queueShuffle());
+    await sendBlockingCommand(() => blockingCommands.queueShuffle(playerId));
   };
 
   const handleVolumeChange = async (newVolume: number) => {
@@ -512,7 +524,7 @@ export default function App() {
   // Play video at specific index in queue (click-to-play)
   const playVideoAtIndex = async (index: number) => {
     await sendBlockingCommand(() => 
-      blockingCommands.play({} as any, index)
+      blockingCommands.play({} as any, index, playerId)
     );
   };
 
@@ -591,7 +603,7 @@ export default function App() {
     if (playlistToLoad) {
       setShowLoadDialog(false);
       await sendBlockingCommand(() => 
-        blockingCommands.loadPlaylist(playlistToLoad, settings.autoShufflePlaylists)
+        blockingCommands.loadPlaylist(playlistToLoad, settings.autoShufflePlaylists, playerId)
       );
     }
     setPlaylistToLoad(null);
@@ -634,7 +646,7 @@ export default function App() {
           metadata: { playlist: q.playlist || null },
           path: q.path || '',
           is_available: true,
-          player_id: DEFAULT_PLAYER_ID,
+          player_id: playerId,
           created_at: new Date().toISOString(),
         })) as SupabaseLocalVideo[];
       case 'playlist':
@@ -690,10 +702,10 @@ export default function App() {
     
     const queueItem = localVideoToQueueItem(popoverVideo);
     await sendBlockingCommand(() => 
-      blockingCommands.queueAdd(queueItem, 'priority', 'web-admin')
+      blockingCommands.queueAdd(queueItem, 'priority', 'web-admin', playerId)
     );
     setPopoverVideo(null);
-  }, [popoverVideo, sendBlockingCommand]);
+  }, [popoverVideo, sendBlockingCommand, playerId]);
 
   const handleClosePopover = useCallback(() => {
     setPopoverVideo(null);

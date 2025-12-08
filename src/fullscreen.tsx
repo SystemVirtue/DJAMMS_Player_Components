@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import ReactDOM from 'react-dom/client'
 import { FullscreenPlayer } from './components'
+import { FullscreenPlayerRef } from './components/FullscreenPlayer'
 import { Video } from './types'
 import { useSupabase } from './hooks/useSupabase'
 import { getSupabaseService } from './services/SupabaseService'
@@ -65,6 +66,9 @@ function FullscreenApp() {
   
   // Ref to track current duration for debug seek
   const durationRef = useRef<number>(0)
+  
+  // Ref to access FullscreenPlayer's skipWithFade method
+  const fullscreenPlayerRef = useRef<FullscreenPlayerRef>(null)
 
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
@@ -149,6 +153,18 @@ function FullscreenApp() {
           break
         case 'resume':
           setIsPlaying(true)
+          break
+        case 'skip':
+          // User-initiated skip - fade out current video, then trigger next
+          // The skipWithFade will call onVideoEnd when fade completes
+          console.log('[FullscreenApp] Skip command - fading out current video')
+          if (fullscreenPlayerRef.current) {
+            fullscreenPlayerRef.current.skipWithFade()
+          } else {
+            // Fallback: if ref not available, just trigger video end immediately
+            console.warn('[FullscreenApp] Skip: No player ref, triggering video end directly')
+            handleVideoEnd()
+          }
           break
         case 'setVolume':
           if (typeof data === 'number') {
@@ -361,6 +377,7 @@ function FullscreenApp() {
 
   return (
     <FullscreenPlayer
+      ref={fullscreenPlayerRef}
       video={video}
       isPlaying={isPlaying}
       currentTime={currentTime}

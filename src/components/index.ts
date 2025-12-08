@@ -12,6 +12,7 @@ export { TabNavigation } from './TabNavigation';
 export { PlaylistTab } from './PlaylistTab';
 export { SettingsTab } from './SettingsTab';
 export { FullscreenPlayer } from './FullscreenPlayer';
+export type { FullscreenPlayerRef } from './FullscreenPlayer';
 
 // Search components
 export { SearchBar, SearchResults, BrowseView } from './Search';

@@ -38,6 +38,7 @@ export interface DJAMMSPlayerRef {
   seekTo: (time: number) => void;
   getActiveVideo: () => HTMLVideoElement | null;
   preloadVideo: (video: Video) => void;
+  skipWithFade: () => void;
 }
 
 export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
@@ -77,7 +78,8 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
     setVolume,
     toggleMute,
     seekTo,
-    retry
+    retry,
+    skipWithFade
   } = useVideoPlayer({
     videoRefs: [videoRef1, videoRef2],
     initialVolume: volume,
@@ -151,8 +153,9 @@ export const DJAMMSPlayer = forwardRef<DJAMMSPlayerRef, DJAMMSPlayerProps>(({
     toggleMute,
     seekTo,
     getActiveVideo: () => activeVideoElement,
-    preloadVideo
-  }), [playVideo, pauseVideo, resumeVideo, setVolume, toggleMute, seekTo, activeVideoElement, preloadVideo]);
+    preloadVideo,
+    skipWithFade
+  }), [playVideo, pauseVideo, resumeVideo, setVolume, toggleMute, seekTo, activeVideoElement, preloadVideo, skipWithFade]);
 
   const handleProgressSeek = useCallback((time: number) => {
     seekTo(time);

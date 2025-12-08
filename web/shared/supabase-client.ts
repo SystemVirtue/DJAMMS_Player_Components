@@ -22,8 +22,13 @@ import type {
 const SUPABASE_URL = 'https://lfvhgdbnecjeuciadimx.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdmhnZGJuZWNqZXVjaWFkaW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2OTc2MjIsImV4cCI6MjA3OTI3MzYyMn0.kSVtXnNVRofDol8L20oflgdo7A82BgAMco2FoFHRkG8';
 
-// Default player ID - matches the Electron player
-export const DEFAULT_PLAYER_ID = 'electron-player-1';
+// Default player ID - can be customized by user
+// Must be at least 6 characters and unique on Supabase
+export const DEFAULT_PLAYER_ID = 'DEMO_PLAYER';
+export const MIN_PLAYER_ID_LENGTH = 6;
+
+// LocalStorage key for saved player ID
+const PLAYER_ID_STORAGE_KEY = 'djamms_player_id';
 
 // Create Supabase client singleton
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {

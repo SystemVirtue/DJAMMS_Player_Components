@@ -1,4 +1,6 @@
 // hooks/useVideoPlayer.ts
+// SIMPLIFIED: No auto-crossfade. Videos end naturally, next starts immediately.
+// Fade-out only on user-initiated skip.
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Video, PlayerState, PlayerConfig, VideoRefs } from '../types';
 import { createIPCAdapter } from '../utils/ipc';
@@ -9,26 +11,24 @@ interface VideoPlayerConfig {
   onVideoEnd?: () => void;
   onError?: (error: string) => void;
   enableAudioNormalization?: boolean;
-  fadeDuration?: number; // seconds
+  fadeDuration?: number; // seconds - ONLY used for user skip, not auto-advancement
 }
 
 export function useVideoPlayer(config: VideoPlayerConfig) {
   const { videoRefs, initialVolume = 0.7, onVideoEnd, onError, enableAudioNormalization = false } = config;
-  const { fadeDuration = 0.5 } = config;
+  const { fadeDuration = 0.5 } = config; // Only for skip fade
 
   const videoARef = videoRefs[0] || useRef<HTMLVideoElement>(null);
   const videoBRef = videoRefs[1] || useRef<HTMLVideoElement>(null);
 
   // Use refs instead of state for active/inactive tracking to avoid async state update issues
-  // This ensures skip operations always target the correct video element
   const activeVideoRefRef = useRef<React.RefObject<HTMLVideoElement>>(videoARef);
   const inactiveVideoRefRef = useRef<React.RefObject<HTMLVideoElement>>(videoBRef);
   
-  // Expose current refs via getters for components that need them
   const activeVideoRef = activeVideoRefRef.current;
   const inactiveVideoRef = inactiveVideoRefRef.current;
   
-  // State to trigger re-renders when active video changes (for UI updates)
+  // State to trigger re-renders when active video changes
   const [, forceUpdate] = useState(0);
 
   const videoRefsObj: VideoRefs = {
@@ -51,34 +51,35 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
   // IPC adapter
   const ipcAdapter = createIPCAdapter(true);
 
-  // Web Audio API for volume normalization
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const normalizationFactorRef = useRef<number>(1.0);
-  const isAnalyzingRef = useRef<boolean>(false);
-
   // Retry tracking
   const retryCountRef = useRef(0);
-  const retryDelayRef = useRef(1000);
 
   // Prevent rapid re-triggering of playVideo
   const isLoadingRef = useRef(false);
   const lastPlayRequestRef = useRef<string | null>(null);
-  const playDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Track whether we've already triggered the early crossfade for this video
-  // This prevents double-triggering (once at fade point, once at actual end)
-  const crossfadeTriggeredRef = useRef(false);
+  // Track if we're in the middle of a user-initiated skip fade
+  const isSkippingRef = useRef(false);
+  const skipFadeIntervalRef = useRef<number | null>(null);
 
-  // Debounce protection for video end events to prevent infinite loop on video load failure
+  // Debounce protection for video end events
   const lastVideoEndTimeRef = useRef(0);
   const VIDEO_END_DEBOUNCE_MS = 500;
 
-  // Track if we're currently in a crossfade to allow dual-play during that time
-  const isCrossfadingRef = useRef(false);
+  // Refs for audio normalization
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const normalizationFactorRef = useRef(1.0);
+  const isAnalyzingRef = useRef(false);
 
-  // Dual-play detection - check if both videos are playing simultaneously outside of crossfade
-  const dualPlayCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Debounce for play requests
+  const playDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Dual-play check interval
+  const dualPlayCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Track if we're currently crossfading (for dual-play safeguard)
+  const isCrossfadingRef = useRef(false);
 
   // Web Audio API functions for volume normalization
   const initializeAudioAnalysis = useCallback(() => {
@@ -188,17 +189,13 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
         }
         lastVideoEndTimeRef.current = now;
         
-        // Only trigger onVideoEnd if we haven't already triggered it via early crossfade
-        if (!crossfadeTriggeredRef.current) {
-          console.log('[useVideoPlayer] Video ended naturally (no early crossfade)');
-          onVideoEnd?.();
-          ipcAdapter.send('playback-ended', {
-            videoId: currentVideo?.id,
-            title: currentVideo?.title
-          });
-        } else {
-          console.log('[useVideoPlayer] Video ended after crossfade already triggered - ignoring');
-        }
+        // SIMPLIFIED: Video ended naturally - trigger next video
+        console.log('[useVideoPlayer] Video ended naturally - advancing to next');
+        onVideoEnd?.();
+        ipcAdapter.send('playback-ended', {
+          videoId: currentVideo?.id,
+          title: currentVideo?.title
+        });
       }
     };
 
@@ -211,39 +208,12 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     const handleLoadedMetadata = (video: HTMLVideoElement) => {
       setDuration(video.duration);
-      // Reset crossfade trigger flag when new video metadata loads
-      crossfadeTriggeredRef.current = false;
     };
 
+    // SIMPLIFIED: Just update current time, no early crossfade trigger
     const handleTimeUpdate = (video: HTMLVideoElement) => {
       if (video === activeVideoRef.current && isPlaying) {
-        const currentTimeValue = video.currentTime;
-        const durationValue = video.duration;
-        
-        setCurrentTime(currentTimeValue);
-        
-        // Check if we should trigger early crossfade
-        // Trigger when currentTime reaches (duration - fadeDuration)
-        // Only trigger once per video (checked via crossfadeTriggeredRef)
-        if (
-          !crossfadeTriggeredRef.current &&
-          durationValue > 0 &&
-          fadeDuration > 0 &&
-          currentTimeValue >= (durationValue - fadeDuration) &&
-          currentTimeValue < durationValue // Ensure we're not past the end
-        ) {
-          console.log(`[useVideoPlayer] Early crossfade trigger at ${currentTimeValue.toFixed(2)}s (duration: ${durationValue.toFixed(2)}s, fadeDuration: ${fadeDuration}s)`);
-          crossfadeTriggeredRef.current = true;
-          
-          // Trigger onVideoEnd to request the next video
-          // The parent component should call playVideo() with the next video,
-          // which will use crossfadeToVideo() since isPlaying is true
-          onVideoEnd?.();
-          ipcAdapter.send('playback-ended', {
-            videoId: currentVideo?.id,
-            title: currentVideo?.title
-          });
-        }
+        setCurrentTime(video.currentTime);
       }
     };
 
@@ -276,7 +246,7 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
         video.removeEventListener('playing', handlePlaying);
       });
     };
-  }, [activeVideoRef, currentVideo, ipcAdapter, onVideoEnd, isPlaying, fadeDuration]);
+  }, [activeVideoRef, currentVideo, ipcAdapter, onVideoEnd, isPlaying]);
 
   const handleVideoError = useCallback((video: HTMLVideoElement, error: Event) => {
     console.error('[useVideoPlayer] Handling video error, retry:', retryCountRef.current);
@@ -320,9 +290,6 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     // Reset normalization for new video
     normalizationFactorRef.current = 1.0;
     isAnalyzingRef.current = false;
-    
-    // Reset crossfade trigger flag for the new video
-    crossfadeTriggeredRef.current = false;
 
     retryCountRef.current = 0;
 
@@ -371,13 +338,9 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     }
     console.log('[useVideoPlayer] Video source:', videoSrc);
 
-    // Use crossfade if already playing
-    if (isPlaying && activeVideoRef.current) {
-      crossfadeToVideo(videoSrc);
-    } else {
-      directPlay(videoSrc);
-    }
-  }, [isPlaying, activeVideoRef]);
+    // SIMPLIFIED: Always use directPlay - no crossfade on auto-advancement
+    directPlay(videoSrc);
+  }, []);
 
   const directPlay = useCallback((videoSrc: string) => {
     const activeVideo = activeVideoRef.current;
@@ -444,138 +407,63 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     }
   }, [activeVideoRef, inactiveVideoRef, volume, handleVideoError, enableAudioNormalization, initializeAudioAnalysis, analyzeVolume]);
 
-  const crossfadeToVideo = useCallback(async (videoSrc: string) => {
+  // SKIP WITH FADE: User-initiated skip - fade out current video, then call onVideoEnd
+  // This is the ONLY place crossfade/fade is used now
+  const skipWithFade = useCallback(() => {
+    if (isSkippingRef.current) {
+      console.log('[useVideoPlayer] Skip already in progress, ignoring');
+      return;
+    }
+    
     const activeVideo = activeVideoRef.current;
-    const inactiveVideo = inactiveVideoRef.current;
-
-    if (!activeVideo || !inactiveVideo) {
-      console.error('[useVideoPlayer] crossfadeToVideo failed: video elements not available');
+    if (!activeVideo) {
+      console.log('[useVideoPlayer] No active video to skip');
+      onVideoEnd?.();
       return;
     }
 
-    console.log('[useVideoPlayer] 🎬 Starting crossfade to:', videoSrc);
-    const crossfadeStartTime = Date.now();
+    console.log('[useVideoPlayer] 🎬 User skip initiated - fading out current video');
+    isSkippingRef.current = true;
+    isCrossfadingRef.current = true;
 
-    // Preload in inactive video
-    inactiveVideo.src = videoSrc;
-    // Ensure it has the target volume immediately so the audio is present from the start
-    const targetVolume = volume;
-    inactiveVideo.volume = targetVolume;
-    inactiveVideo.load();
+    const startVolume = activeVideo.volume;
+    const fadeStartTime = Date.now();
+    const fadeDurationMs = Math.max(100, Math.round((fadeDuration || 0.5) * 1000));
 
-    // Wait for canplaythrough with a timeout to prevent hanging
-    const CANPLAY_TIMEOUT_MS = 10000; // 10 second timeout
-    try {
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          const handleCanPlay = () => {
-            inactiveVideo.removeEventListener('canplaythrough', handleCanPlay);
-            inactiveVideo.removeEventListener('error', handleError);
-            console.log('[useVideoPlayer] ✅ canplaythrough fired after', Date.now() - crossfadeStartTime, 'ms');
-            resolve();
-          };
-          const handleError = (e: Event) => {
-            inactiveVideo.removeEventListener('canplaythrough', handleCanPlay);
-            inactiveVideo.removeEventListener('error', handleError);
-            console.error('[useVideoPlayer] ❌ Video load error during crossfade:', e);
-            throw new Error('Video load failed during crossfade');
-          };
-          inactiveVideo.addEventListener('canplaythrough', handleCanPlay);
-          inactiveVideo.addEventListener('error', handleError);
-        }),
-        new Promise<void>((_, reject) => {
-          setTimeout(() => {
-            console.error('[useVideoPlayer] ⏰ canplaythrough timeout after', CANPLAY_TIMEOUT_MS, 'ms');
-            reject(new Error('Timeout waiting for video to load'));
-          }, CANPLAY_TIMEOUT_MS);
-        })
-      ]);
-    } catch (error) {
-      console.error('[useVideoPlayer] ❌ Crossfade preload failed:', error);
-      isCrossfadingRef.current = false;
-      // Trigger video error handling to skip to next
-      handleVideoError(inactiveVideo, error as Event);
-      return;
-    }
+    const fadeOutStep = () => {
+      const elapsed = Date.now() - fadeStartTime;
+      const progress = Math.min(elapsed / fadeDurationMs, 1);
 
-    // Start playing inactive video. If the browser blocks autoplay for unmuted playback,
-    // fall back to a muted-play and then unmute so audio is audible as soon as possible.
-    try {
-      console.log('[useVideoPlayer] 🎵 Starting playback of incoming video...');
-      const playPromise = inactiveVideo.play();
-      if (playPromise !== undefined) {
-        await playPromise.catch(async (err) => {
-          console.warn('[useVideoPlayer] crossfade play blocked, attempting muted play', err);
-          try {
-            inactiveVideo.muted = true;
-            await inactiveVideo.play();
-            // Unmute once playing if permitted
-            inactiveVideo.muted = false;
-            inactiveVideo.volume = targetVolume;
-            console.log('[useVideoPlayer] ✅ Muted play succeeded, unmuted');
-          } catch (err2) {
-            console.error('[useVideoPlayer] ❌ muted crossfade play failed', err2);
-            throw err2; // Re-throw to be caught by outer catch
-          }
-        });
-      }
-    } catch (err) {
-      console.error('[useVideoPlayer] ❌ play() failed completely:', err);
-      isCrossfadingRef.current = false;
-      handleVideoError(inactiveVideo, err as Event);
-      return;
-    }
-
-    // Perform crossfade: only fade OUT the active video (audio+video), while the incoming
-    // video is visible/audio-at-normal-volume immediately (so we don't miss the start of audio).
-    const startActiveVolume = activeVideo.volume;
-    const startTime = Date.now();
-    const durationMs = Math.max(100, Math.round((fadeDuration || 0.5) * 1000));
-
-    const fadeStep = () => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / durationMs, 1);
-
-      // Fade in inactive video visually
-      inactiveVideo.style.opacity = progress.toString();
-
-      // Fade out active video (both opacity and audio)
-      const fadeOutProgress = 1 - progress;
-      activeVideo.style.opacity = fadeOutProgress.toString();
-      activeVideo.volume = startActiveVolume * fadeOutProgress;
+      // Fade out volume and opacity
+      activeVideo.volume = startVolume * (1 - progress);
+      activeVideo.style.opacity = (1 - progress).toString();
 
       if (progress < 1) {
-        requestAnimationFrame(fadeStep);
+        requestAnimationFrame(fadeOutStep);
       } else {
-        // Crossfade complete - clear the flag
-        isCrossfadingRef.current = false;
-        
-        // Swap references synchronously using refs
-        const oldActive = activeVideoRefRef.current;
-        activeVideoRefRef.current = inactiveVideoRefRef.current;
-        inactiveVideoRefRef.current = oldActive;
-        
-        // Force a re-render so UI components get updated refs
-        forceUpdate(n => n + 1);
-
-        // Reset old active video
+        // Fade complete - stop the video and trigger next
         activeVideo.pause();
         activeVideo.currentTime = 0;
-        activeVideo.volume = targetVolume;
-
-        setIsPlaying(true);
-        setIsLoading(false);
-        isLoadingRef.current = false;
-
-        const totalCrossfadeTime = Date.now() - crossfadeStartTime;
-        console.log('[useVideoPlayer] ✅ Crossfade complete in', totalCrossfadeTime, 'ms, swapped active video to:', activeVideoRefRef.current === videoARef ? 'A' : 'B');
+        activeVideo.volume = volume; // Reset volume for next use
+        activeVideo.style.opacity = '1'; // Reset opacity for next video
+        
+        isSkippingRef.current = false;
+        isCrossfadingRef.current = false;
+        
+        console.log('[useVideoPlayer] ✅ Skip fade complete - triggering next video');
+        
+        // Trigger the next video
+        onVideoEnd?.();
+        ipcAdapter.send('playback-ended', {
+          videoId: currentVideo?.id,
+          title: currentVideo?.title,
+          skipped: true
+        });
       }
     };
 
-    // Mark that we're starting a crossfade
-    isCrossfadingRef.current = true;
-    requestAnimationFrame(fadeStep);
-  }, [activeVideoRef, inactiveVideoRef, volume, fadeDuration]);
+    requestAnimationFrame(fadeOutStep);
+  }, [activeVideoRef, volume, fadeDuration, onVideoEnd, ipcAdapter, currentVideo]);
 
   const pauseVideo = useCallback(() => {
     const activeVideo = activeVideoRef.current;
@@ -642,7 +530,10 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     if (!video) return;
 
     const videoPath = video.src || video.path || (video as any).file_path;
-    if (!videoPath) return;
+    if (!videoPath) {
+      console.warn('[useVideoPlayer] preloadVideo: No video path available');
+      return;
+    }
 
     const videoSrc = videoPath.startsWith('http://') || videoPath.startsWith('https://') || videoPath.startsWith('/playlist/')
       ? videoPath.startsWith('/playlist/')
@@ -655,11 +546,16 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     const inactiveVideo = inactiveVideoRef.current;
     if (inactiveVideo) {
       try {
+        console.log(`[useVideoPlayer] 📥 Preloading into inactive element: ${video.title}`);
         inactiveVideo.src = videoSrc;
+        inactiveVideo.preload = 'auto';
         inactiveVideo.load();
+        console.log(`[useVideoPlayer] ✅ Preload initiated for: ${video.title}`);
       } catch (error) {
         console.warn('[useVideoPlayer] preload failed', error);
       }
+    } else {
+      console.warn('[useVideoPlayer] preloadVideo: No inactive video element available');
     }
   }, [inactiveVideoRef]);
 
@@ -768,6 +664,7 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     setVolume,
     toggleMute,
     seekTo,
-    retry
+    retry,
+    skipWithFade // NEW: User-initiated skip with fade-out
   };
 }

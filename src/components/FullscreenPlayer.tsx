@@ -1,6 +1,6 @@
 // components/FullscreenPlayer.tsx - THE ONLY PLAYER - handles all audio/video playback
-import React, { useRef, useEffect, useState } from 'react';
-import { DJAMMSPlayer } from './DJAMMSPlayer';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
+import { DJAMMSPlayer, DJAMMSPlayerRef } from './DJAMMSPlayer';
 import { Video } from '../types';
 import { cleanVideoTitle } from '../utils/playlistHelpers';
 
@@ -41,7 +41,11 @@ interface FullscreenPlayerProps {
   upcomingVideos?: Video[]; // Upcoming videos for "Coming Up" ticker (priority queue + next from active queue)
 }
 
-export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
+export interface FullscreenPlayerRef {
+  skipWithFade: () => void;
+}
+
+export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayerProps>(({
   video,
   isPlaying,
   currentTime,
@@ -56,10 +60,19 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
   onSeekComplete,
   overlaySettings,
   upcomingVideos = []
-}) => {
-  const playerRef = useRef<any>(null);
+}, ref) => {
+  const playerRef = useRef<DJAMMSPlayerRef>(null);
   const prevVideoRef = useRef<Video | null>(null);
   const prevIsPlayingRef = useRef<boolean>(false);
+  
+  // Expose skipWithFade to parent via ref
+  useImperativeHandle(ref, () => ({
+    skipWithFade: () => {
+      if (playerRef.current) {
+        playerRef.current.skipWithFade();
+      }
+    }
+  }), []);
   
   // Get the next video from upcoming videos array for "Coming Up" ticker
   const nextVideo = upcomingVideos.length > 0 ? upcomingVideos[0] : null;
@@ -333,4 +346,4 @@ export const FullscreenPlayer: React.FC<FullscreenPlayerProps> = ({
       )}
     </div>
   );
-};
+});

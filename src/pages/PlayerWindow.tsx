@@ -5,6 +5,16 @@ import { localSearchService, SearchResult, getSupabaseService } from '../service
 import { getPlaylistDisplayName, getDisplayArtist, cleanVideoTitle } from '../utils/playlistHelpers';
 import { useSupabase } from '../hooks/useSupabase';
 import { QueueVideoItem } from '../types/supabase';
+import { 
+  getPlayerId, 
+  setPlayerId as storePlayerId, 
+  initializePlayerId,
+  DEFAULT_PLAYER_ID,
+  isValidPlayerIdFormat,
+  claimPlayerId,
+  validatePlayerId,
+  MIN_PLAYER_ID_LENGTH
+} from '../utils/playerUtils';
 
 interface PlayerWindowProps {
   className?: string;
@@ -28,6 +38,162 @@ const navItems: { id: TabId; icon: string; label: string }[] = [
   { id: 'settings', icon: 'settings', label: 'Settings' },
   { id: 'tools', icon: 'build', label: 'Tools' },
 ];
+
+// Player ID Setting Component (inline for simplicity)
+interface PlayerIdSettingProps {
+  playerId: string;
+  onPlayerIdChange: (newId: string) => void;
+}
+
+const PlayerIdSetting: React.FC<PlayerIdSettingProps> = ({ playerId, onPlayerIdChange }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [newId, setNewId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isChanging, setIsChanging] = useState(false);
+
+  const handleStartEdit = useCallback(() => {
+    setNewId('');
+    setError(null);
+    setIsEditing(true);
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    setIsEditing(false);
+    setNewId('');
+    setError(null);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    const clean = newId.trim().toUpperCase();
+    
+    if (!isValidPlayerIdFormat(clean)) {
+      setError(`Player ID must be at least ${MIN_PLAYER_ID_LENGTH} characters`);
+      return;
+    }
+
+    if (clean === playerId) {
+      setError('This is already your current Player ID');
+      return;
+    }
+
+    setIsChanging(true);
+    setError(null);
+
+    try {
+      // Check if exists
+      const exists = await validatePlayerId(clean);
+      
+      if (exists) {
+        // ID exists - switch to it
+        onPlayerIdChange(clean);
+        setIsEditing(false);
+        setNewId('');
+      } else {
+        // Try to claim it
+        const result = await claimPlayerId(clean);
+        if (result.success) {
+          onPlayerIdChange(clean);
+          setIsEditing(false);
+          setNewId('');
+        } else {
+          setError(result.error || 'Failed to claim Player ID');
+        }
+      }
+    } catch (err) {
+      setError('Failed to change Player ID');
+    } finally {
+      setIsChanging(false);
+    }
+  }, [newId, playerId, onPlayerIdChange]);
+
+  if (!isEditing) {
+    return (
+      <div className="setting-item">
+        <label>Player ID</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ 
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            fontWeight: 600,
+            color: 'var(--accent-color)',
+            backgroundColor: 'rgba(62, 166, 255, 0.1)',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            letterSpacing: '0.5px'
+          }}>
+            {playerId}
+          </span>
+          <button className="action-btn" onClick={handleStartEdit}>
+            <span className="material-symbols-rounded">edit</span>
+            Change
+          </button>
+        </div>
+        <p className="setting-description">
+          Unique identifier for this player. Web Admin and Kiosk apps connect using this ID.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="setting-item">
+      <label>Player ID</label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <input
+            type="text"
+            value={newId}
+            onChange={(e) => {
+              setNewId(e.target.value.toUpperCase());
+              setError(null);
+            }}
+            placeholder="Enter new Player ID"
+            disabled={isChanging}
+            style={{
+              padding: '8px 12px',
+              fontSize: '14px',
+              fontFamily: 'monospace',
+              backgroundColor: 'var(--input-bg)',
+              color: 'var(--text-primary)',
+              border: error ? '1px solid var(--error-color)' : '1px solid var(--border-color)',
+              borderRadius: '6px',
+              outline: 'none',
+              width: '200px',
+              textTransform: 'uppercase'
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !isChanging) handleSave();
+              if (e.key === 'Escape') handleCancel();
+            }}
+            autoFocus
+          />
+          <button 
+            className="action-btn primary"
+            onClick={handleSave}
+            disabled={isChanging || !newId.trim()}
+          >
+            {isChanging ? 'Saving...' : 'Save'}
+          </button>
+          <button 
+            className="action-btn"
+            onClick={handleCancel}
+            disabled={isChanging}
+          >
+            Cancel
+          </button>
+        </div>
+        {error && (
+          <span style={{ fontSize: '12px', color: 'var(--error-color)' }}>
+            {error}
+          </span>
+        )}
+        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+          Min {MIN_PLAYER_ID_LENGTH} characters. Will create if not exists. <strong>Restart required</strong> after changing.
+        </span>
+      </div>
+    </div>
+  );
+};
 
 export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) => {
   // Player state (synced from Player Window via IPC)
@@ -87,6 +253,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
   });
 
+  // Player Identity state
+  const [playerId, setPlayerId] = useState<string>(DEFAULT_PLAYER_ID);
+  const [playerIdInitialized, setPlayerIdInitialized] = useState(false);
+
   // Kiosk settings state
   const [kioskSettings, setKioskSettings] = useState({
     mode: 'freeplay' as 'freeplay' | 'credits',
@@ -142,10 +312,42 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Check if we're in Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
+  // Initialize Player ID on mount
+  useEffect(() => {
+    if (!isElectron) return;
+    
+    const init = async () => {
+      try {
+        // Check for stored ID first
+        const storedId = getPlayerId();
+        if (storedId) {
+          console.log('[PlayerWindow] Using stored Player ID:', storedId);
+          setPlayerId(storedId);
+          setPlayerIdInitialized(true);
+          return;
+        }
+        
+        // Initialize (will claim default or generate random)
+        const id = await initializePlayerId();
+        setPlayerId(id);
+        setPlayerIdInitialized(true);
+        console.log('[PlayerWindow] Initialized Player ID:', id);
+      } catch (err) {
+        console.error('[PlayerWindow] Failed to initialize Player ID:', err);
+        // Fall back to default
+        setPlayerId(DEFAULT_PLAYER_ID);
+        setPlayerIdInitialized(true);
+      }
+    };
+    
+    init();
+  }, [isElectron]);
+
   // Supabase integration - listen for remote commands from Web Admin / Kiosk
   // This runs in the main window so commands are received even without Player Window open
   const { isInitialized: supabaseInitialized, isOnline: supabaseOnline, syncState } = useSupabase({
-    autoInit: isElectron, // Only initialize in Electron environment
+    playerId, // Pass player ID for multi-tenancy
+    autoInit: isElectron && playerIdInitialized, // Only initialize after playerId is ready
     onPlay: (video?: QueueVideoItem, queueIndex?: number) => {
       console.log('[PlayerWindow] Supabase play command received:', video?.title, 'queueIndex:', queueIndex);
       
@@ -207,8 +409,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onSkip: () => {
       console.log('[PlayerWindow] Supabase skip command received');
-      // Use unified playNextVideo which checks priority queue first
-      playNextVideo();
+      // Send skip command to Player Window - triggers fade-out, then video end
+      if (isElectron) {
+        (window as any).electronAPI.controlPlayerWindow('skip');
+      }
     },
     onSetVolume: (newVolume: number) => {
       console.log('[PlayerWindow] Supabase volume command received:', newVolume);
@@ -599,6 +803,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
   };
 
+  // Send skip command to Player Window - triggers fade-out, then video end
+  const sendSkipCommand = useCallback(() => {
+    console.log('[PlayerWindow] Sending skip command to Player Window');
+    if (isElectron) {
+      (window as any).electronAPI.controlPlayerWindow('skip');
+    }
+    setCurrentTab('queue'); // Auto-switch to Queue tab
+  }, [isElectron]);
+
   const skipTrack = () => {
     if (!playerReady) return; // Ignore until player is ready
     
@@ -608,15 +821,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       return;
     }
     
-    playNextVideo();
-    setCurrentTab('queue'); // Auto-switch to Queue tab
+    // Send skip command - Player Window will fade out, then trigger onVideoEnd
+    sendSkipCommand();
   };
   
   // Actually perform the skip (called after confirmation or directly if not priority)
   const confirmSkip = () => {
     setShowSkipConfirmDialog(false);
-    playNextVideo();
-    setCurrentTab('queue'); // Auto-switch to Queue tab
+    // Send skip command - Player Window will fade out, then trigger onVideoEnd
+    sendSkipCommand();
   };
 
   const playNext = () => {
@@ -1070,6 +1283,34 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     queueIndexRef.current = queueIndex;
     priorityQueueRef.current = priorityQueue;
   }, [queue, queueIndex, priorityQueue]);
+
+  // Calculate the next video that will play (for preloading)
+  // Priority queue takes precedence, then active queue at next index
+  const nextVideoToPreload = useMemo((): Video | null => {
+    // If priority queue has items, that's what plays next
+    if (priorityQueue.length > 0) {
+      return priorityQueue[0];
+    }
+    // Otherwise, next in active queue
+    if (queue.length > 0) {
+      const nextIndex = queueIndex < queue.length - 1 ? queueIndex + 1 : 0;
+      return queue[nextIndex];
+    }
+    return null;
+  }, [priorityQueue, queue, queueIndex]);
+
+  // Preload the next video when it changes (after current video starts playing)
+  useEffect(() => {
+    if (!nextVideoToPreload || !isElectron || !isPlaying) return;
+    
+    // Small delay to let current video start loading first
+    const preloadTimer = setTimeout(() => {
+      console.log('[PlayerWindow] 📥 Preloading next video:', nextVideoToPreload.title);
+      (window as any).electronAPI.controlPlayerWindow('preload', nextVideoToPreload);
+    }, 1000); // 1 second delay after video starts
+    
+    return () => clearTimeout(preloadTimer);
+  }, [nextVideoToPreload, isElectron, isPlaying, currentVideo]); // Also re-preload when currentVideo changes
 
   const handleVideoEnd = useCallback(() => {
     console.log('[PlayerWindow] Video ended - calling playNextVideo');
@@ -1751,6 +1992,18 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             <div className="tab-content active">
               <div className="settings-container">
                 <h1>Settings</h1>
+                
+                {/* Player Identity Section */}
+                <div className="settings-section">
+                  <h2><span className="section-icon">🆔</span> Player Identity</h2>
+                  <PlayerIdSetting 
+                    playerId={playerId}
+                    onPlayerIdChange={(newId) => {
+                      storePlayerId(newId);
+                      setPlayerId(newId);
+                    }}
+                  />
+                </div>
                 
                 {/* Library Settings Section */}
                 <div className="settings-section">

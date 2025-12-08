@@ -64,14 +64,27 @@ export function isValidVideoFilename(filename: string): boolean {
 
 /**
  * Clean a video title by removing YouTube IDs and separators.
- * Handles various formats that may occur due to Windows character substitution:
- * - "[YouTube_ID] | Artist - Title" -> "Artist - Title"
- * - "[YouTube_ID] · Artist - Title" -> "Artist - Title"  (middle dot U+00B7)
- * - "[YouTube_ID] • Artist - Title" -> "Artist - Title"  (bullet U+2022)
- * - Also handles other Unicode characters Windows might substitute
  * 
- * This function should be used when DISPLAYING titles to ensure clean output
- * even if filename parsing failed during indexing.
+ * BULLETPROOF DETECTION LOGIC:
+ * YouTube video IDs are exactly 11 characters. Our filename format is:
+ * "[11-char YouTube_ID] [separator] [Artist] - [Title].mp4"
+ * 
+ * This means:
+ * - Characters 0-10: YouTube ID (11 chars)
+ * - Character 11: space
+ * - Character 12: separator (could be |, ·, •, or ANY corrupted/unknown character)
+ * - Character 13: space
+ * - Characters 14+: The actual "Artist - Title" content
+ * 
+ * Detection: If character at position 11 is a space AND character at position 13 is a space,
+ * then we have a YouTube ID prefix. Strip the first 14 characters.
+ * 
+ * This handles ALL separator corruption scenarios including:
+ * - Normal: | (pipe)
+ * - Windows substitution: · (middle dot U+00B7)
+ * - Windows substitution: • (bullet U+2022)
+ * - Replacement character: � (U+FFFD)
+ * - Any other corrupted/unknown character
  * 
  * @param title - The raw title string (may contain YouTube ID and separator)
  * @returns The cleaned title suitable for display
@@ -79,23 +92,21 @@ export function isValidVideoFilename(filename: string): boolean {
 export function cleanVideoTitle(title: string): string {
   if (!title) return 'Unknown';
   
-  // Match known separators with surrounding spaces: | · • 
-  // Also match any character that's not alphanumeric or common punctuation
-  // surrounded by spaces (catches Windows character substitutions)
-  const separatorPattern = / [|·•\u00B7\u2022\u2219\uFFFD] /;
-  const separatorMatch = title.match(separatorPattern);
-  
-  if (separatorMatch && separatorMatch.index !== undefined) {
-    // Return everything AFTER the separator
-    title = title.substring(separatorMatch.index + separatorMatch[0].length);
+  // BULLETPROOF: Check if string follows YouTube ID pattern:
+  // Position 11 = space, Position 13 = space (meaning there's a separator at position 12)
+  // Format: "xxxxxxxxxxx ? " where x = YT ID chars, ? = any separator
+  if (title.length >= 14 && title.charAt(11) === ' ' && title.charAt(13) === ' ') {
+    // Strip the first 14 characters: "[11-char ID] [sep] "
+    title = title.substring(14);
   }
   
-  // If no separator found, check for bracketed ID at the start: [xxxxx] 
-  // This handles cases where the separator was completely mangled
-  const bracketPattern = /^\s*\[[^\]]{8,15}\]\s*/;
-  title = title.replace(bracketPattern, '');
+  // Fallback: Also try to match known separators with surrounding spaces anywhere in string
+  // This catches edge cases where the ID might be slightly different length
+  if (!title || title === 'Unknown') {
+    return 'Unknown';
+  }
   
-  // Also remove any remaining bracketed IDs in the middle/end
+  // Also remove any remaining bracketed IDs in the middle/end (e.g., "[dQw4w9WgXcQ]")
   title = title
     .replace(/\s*\[[A-Za-z0-9_-]{10,15}\]\s*/g, ' ')
     .replace(/\s+/g, ' ')

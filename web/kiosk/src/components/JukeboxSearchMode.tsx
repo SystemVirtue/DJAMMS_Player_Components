@@ -78,6 +78,7 @@ interface JukeboxSearchModeProps {
   creditCostQueue?: number;
   creditCostPlayNow?: number;
   isFreePlay?: boolean;
+  playerId: string; // Required - Player ID to search/queue against
 }
 
 // Quick filter categories
@@ -105,6 +106,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
   creditCostQueue = 1,
   creditCostPlayNow = 3,
   isFreePlay = true,
+  playerId,
 }) => {
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -147,7 +149,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
     
     setIsSearching(true);
     try {
-      const results = await searchLocalVideos(query);
+      const results = await searchLocalVideos(query, 50, playerId);
       setSearchResults(results || []);
     } catch (error) {
       console.error('[JukeboxSearchMode] Search error:', error);
@@ -155,7 +157,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
     } finally {
       setIsSearching(false);
     }
-  }, []);
+  }, [playerId]);
 
   // Handle search input changes
   useEffect(() => {
@@ -224,7 +226,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
     try {
       const queueItem = localVideoToQueueItem(selectedVideo);
       // Both queue and play-now use priority queue - play-now items will be handled by player
-      const result = await blockingCommands.queueAdd(queueItem, 'priority', 'kiosk');
+      const result = await blockingCommands.queueAdd(queueItem, 'priority', 'kiosk', playerId);
       
       if (result.success) {
         // Deduct credits
@@ -245,7 +247,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
       setQueueingVideo(null);
       setSelectedVideo(null);
     }
-  }, [selectedVideo, confirmAction, credits, creditCostQueue, creditCostPlayNow, isFreePlay, onCreditsChange, onSongQueued]);
+  }, [selectedVideo, confirmAction, credits, creditCostQueue, creditCostPlayNow, isFreePlay, onCreditsChange, onSongQueued, playerId]);
 
   // Generate album art fallback gradient
   const getAlbumArtStyle = useCallback((video: SupabaseLocalVideo | QueueVideoItem) => {
