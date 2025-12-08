@@ -37,7 +37,7 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
     const timer = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const searchResults = await searchLocalVideos(searchQuery, 50, playerId);
+        const searchResults = await searchLocalVideos(searchQuery, playerId, 50);
         setResults(searchResults);
       } catch (error) {
         console.error('Search error:', error);
@@ -147,6 +147,10 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
           </VideoGrid>
         ) : searchQuery.length >= 2 && !isLoading ? (
           <div className="text-center py-12">
+            <div className="kiosk-card bg-red-900/80 text-red-200 mb-4">
+              <h2 className="text-lg font-bold mb-2">No music database found for this Player</h2>
+              <p>Please check the Player ID or try again later.</p>
+            </div>
             <p className="text-gray-400 text-lg">No songs found for "{searchQuery}"</p>
             <p className="text-gray-500 text-sm mt-2">Try a different search term</p>
           </div>

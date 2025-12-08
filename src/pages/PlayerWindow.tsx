@@ -1019,11 +1019,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Confirm and play the selected queue video
   const confirmQueuePlay = useCallback(() => {
     if (queueVideoToPlay) {
-      playVideoAtIndex(queueVideoToPlay.index);
+      // Move selected video to top of active queue
+      const video = queueVideoToPlay.video;
+      const filteredQueue = queue.filter(v => v.id !== video.id);
+      const newQueue = [video, ...filteredQueue];
+      setQueue(newQueue);
+      setQueueIndex(0);
+      // Trigger skip (fade-out)
+      if (video.id !== currentVideo?.id) {
+        skip();
+      }
     }
     setShowQueuePlayDialog(false);
     setQueueVideoToPlay(null);
-  }, [queueVideoToPlay, playVideoAtIndex]);
+  }, [queueVideoToPlay, queue, currentVideo, skip]);
 
   // Move selected queue video to play next (position after current)
   const moveQueueVideoToNext = useCallback(() => {
@@ -2087,6 +2096,25 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 <div className="settings-section">
                   <h2>Playback</h2>
                   <div className="setting-item">
+                    <label>Crossfade mode</label>
+                    <div className="crossfade-mode-selector">
+                      <button
+                        className={`mode-btn ${settings.crossfadeMode === 'manual' ? 'active' : ''}`}
+                        onClick={() => handleUpdateSetting('crossfadeMode', 'manual')}
+                        title="Videos play to completion, then next starts (clean cut)"
+                      >
+                        Manual
+                      </button>
+                      <button
+                        className={`mode-btn ${settings.crossfadeMode === 'seamless' ? 'active' : ''}`}
+                        onClick={() => handleUpdateSetting('crossfadeMode', 'seamless')}
+                        title="Next video overlaps with current for smooth transitions"
+                      >
+                        Seamless
+                      </button>
+                    </div>
+                  </div>
+                  <div className="setting-item">
                     <label>Auto-shuffle playlists</label>
                     <input 
                       type="checkbox" 
@@ -2095,7 +2123,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     />
                   </div>
                   <div className="setting-item">
-                    <label>Crossfade duration</label>
+                    <label>{settings.crossfadeMode === 'seamless' ? 'Crossfade overlap' : 'Skip fade duration'}</label>
                     <div className="crossfade-slider-container">
                       <input 
                         type="range" 

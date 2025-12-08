@@ -213,7 +213,11 @@ function AdminApp() {
   const [showLoadDialog, setShowLoadDialog] = useState(false);
   const [playlistToLoad, setPlaylistToLoad] = useState<string | null>(null);
   const [showPauseDialog, setShowPauseDialog] = useState(false);
+  const [showSkipConfirmDialog, setShowSkipConfirmDialog] = useState(false);
   const [showQueuePlayDialog, setShowQueuePlayDialog] = useState(false);
+  // Track if current video is from priority queue (for skip confirmation)
+  const [isFromPriorityQueue, setIsFromPriorityQueue] = useState(false);
+  const prevPriorityQueueRef = useRef<QueueVideoItem[]>([]);
   const [queueVideoToPlay, setQueueVideoToPlay] = useState<{ video: QueueVideoItem; index: number } | null>(null);
 
   // Priority Queue Popover state
@@ -296,7 +300,27 @@ function AdminApp() {
         setActiveQueue(state.active_queue);
       }
       if (state.priority_queue) {
-        setPriorityQueue(state.priority_queue);
+        // Track if the current video came from priority queue
+        // If priority queue had items and now has fewer, and current video matches what was first
+        const prevPriority = prevPriorityQueueRef.current;
+        const newPriority = state.priority_queue;
+        
+        if (prevPriority.length > 0 && newPriority.length < prevPriority.length) {
+          // Priority queue shrank - a video was consumed from it
+          const consumedVideo = prevPriority[0];
+          if (state.now_playing_video && consumedVideo && 
+              state.now_playing_video.id === consumedVideo.id) {
+            setIsFromPriorityQueue(true);
+          }
+        } else if (newPriority.length === 0 && prevPriority.length === 0) {
+          // Priority queue was empty and still is - video is not from priority
+          if (state.now_playing_video) {
+            setIsFromPriorityQueue(false);
+          }
+        }
+        
+        prevPriorityQueueRef.current = newPriority;
+        setPriorityQueue(newPriority);
       }
       if (typeof state.queue_index === 'number') {
         setQueueIndex(state.queue_index);
@@ -507,8 +531,19 @@ function AdminApp() {
   };
 
   const skipTrack = async () => {
+    // If current video is from priority queue, show confirmation dialog
+    if (isFromPriorityQueue) {
+      setShowSkipConfirmDialog(true);
+      return;
+    }
     // Don't do optimistic update - let Supabase state sync handle the UI update
     // This prevents double-skip when the optimistic update and state sync both advance
+    await sendBlockingCommand(() => blockingCommands.skip(playerId));
+  };
+
+  // Actually perform the skip (called after confirmation or directly if not priority)
+  const confirmSkip = async () => {
+    setShowSkipConfirmDialog(false);
     await sendBlockingCommand(() => blockingCommands.skip(playerId));
   };
 
@@ -751,6 +786,20 @@ function AdminApp() {
             <div className="dialog-actions">
               <button className="dialog-btn dialog-btn-primary" onClick={confirmPause}>PAUSE</button>
               <button className="dialog-btn" onClick={() => setShowPauseDialog(false)}>CANCEL</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Skip Priority Queue Video Confirmation Dialog */}
+      {showSkipConfirmDialog && (
+        <div className="dialog-overlay" onClick={() => setShowSkipConfirmDialog(false)}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+            <h3>Skip Request?</h3>
+            <p style={{ color: '#ffcc00', fontSize: '13px', marginBottom: '12px' }}>This video was requested. Are you sure?</p>
+            <div className="dialog-actions">
+              <button className="dialog-btn dialog-btn-warning" onClick={confirmSkip}>SKIP</button>
+              <button className="dialog-btn" onClick={() => setShowSkipConfirmDialog(false)}>CANCEL</button>
             </div>
           </div>
         </div>

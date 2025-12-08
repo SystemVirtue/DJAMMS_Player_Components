@@ -1427,6 +1427,35 @@ html, body, #root {
   min-width: 40px;
 }
 
+/* Crossfade Mode Selector */
+.crossfade-mode-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.crossfade-mode-selector .mode-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  background-color: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 400;
+  transition: all 0.2s;
+}
+
+.crossfade-mode-selector .mode-btn:hover {
+  background-color: var(--bg-hover);
+}
+
+.crossfade-mode-selector .mode-btn.active {
+  background-color: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .setting-item input[type="checkbox"] {
   width: 40px;
   height: 20px;

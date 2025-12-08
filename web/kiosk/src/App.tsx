@@ -148,6 +148,13 @@ function KioskApp() {
             priorityQueue={playerState?.priority_queue || []}
             activeQueue={playerState?.active_queue || []}
             maxActiveItems={3}
+                      {/* Database warning if missing or empty */}
+                      {(!playerState?.videos || playerState?.videos.length === 0) && (
+                        <div className="kiosk-card bg-red-900/80 text-red-200 text-center py-4 mb-4">
+                          <h2 className="text-xl font-bold mb-2">No music database found for this Player</h2>
+                          <p>Please check the Player ID or try again later.</p>
+                        </div>
+                      )}
           />
         </>
       )}
