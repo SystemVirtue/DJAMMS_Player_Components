@@ -649,9 +649,9 @@ export async function searchLocalVideos(
     });
 
     if (error) {
-      // Suppress schema mismatch errors (42804 = type mismatch, PGRST203 = function not found)
+      // Suppress schema mismatch errors (42804 = type mismatch, PGRST203 = function not found, 400 = bad request)
       // These are non-critical since we have ILIKE fallback
-      if (error.code !== '42804' && error.code !== 'PGRST203') {
+      if (error.code !== '42804' && error.code !== 'PGRST203' && error.code !== '400') {
         console.warn('[SupabaseClient] FTS search_videos RPC failed, falling back to ILIKE:', error);
       }
       throw error;
@@ -660,7 +660,9 @@ export async function searchLocalVideos(
     // If RPC returns player_id, filter client-side to be safe
     const filtered = (data || []).filter((row: any) => !row.player_id || row.player_id === playerId);
     return filtered;
-  } catch (_) {
+  } catch (rpcError) {
+    // Always fall back to ILIKE search if RPC fails
+    console.debug('[SupabaseClient] RPC search failed, using ILIKE fallback:', rpcError);
     // Fallback: legacy ILIKE search (any word in title OR artist), scoped to player
     const MIN_WORD_LENGTH = 2;
   const words = trimmedQuery
