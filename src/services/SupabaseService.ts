@@ -495,16 +495,20 @@ class SupabaseService {
       //   updateData.queue_index = state.queueIndex;
       // }
 
-      // Only update if something changed
-      if (Object.keys(updateData).length <= 1) {
-        return; // Only last_updated, skip
+      // Always include queue data if we have it, even if nothing else changed
+      // This ensures Web Admin always sees the current queue state
+      const hasQueueData = updateData.active_queue !== undefined || updateData.priority_queue !== undefined;
+      
+      // Only update if something changed OR if we have queue data to sync
+      if (Object.keys(updateData).length <= 1 && !hasQueueData) {
+        return; // Only last_updated and no queue data, skip
       }
 
       // Deep equality check: skip sync if state is truly unchanged
-      // Compare the actual state data, not just a hash
-      if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData)) {
+      // BUT: Always sync if queue data is present (even if identical) to ensure Web Admin gets updates
+      if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData) && !hasQueueData) {
         logger.debug('Skipping state sync - no changes detected (deep equality)');
-        return; // Skip duplicate update
+        return; // Skip duplicate update (unless queue data is present)
       }
 
       // Check again if request was cancelled before making the request
