@@ -1,4 +1,5 @@
 // src/utils/displayManager.ts - Cross-platform Display Detection Manager
+import { logger } from './logger';
 
 export interface DisplayBounds {
   x: number;
@@ -175,7 +176,7 @@ export class DisplayManager {
       // Only notify if display count changed
       if (this.displays.length !== previousCount) {
         previousCount = this.displays.length;
-        console.log('Display configuration changed:', this.displays.length, 'displays');
+        logger.debug('Display configuration changed:', this.displays.length, 'displays');
       }
     }, intervalMs);
   }

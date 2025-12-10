@@ -269,9 +269,18 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
   }, [isInitialized, onPlay, onPause, onResume, onSkip, onSetVolume, onSeekTo, onQueueAdd, onQueueShuffle, onLoadPlaylist, onQueueMove, onQueueRemove, onPlayerWindowToggle, onPlayerFullscreenToggle, onPlayerRefresh, onOverlaySettingsUpdate, onKioskSettingsUpdate]);
 
   // Auto-initialize on mount
+  const hasInitializedRef = useRef(false);
+  const lastAutoInitRef = useRef(false);
   useEffect(() => {
-    if (autoInit) {
+    // Only initialize when autoInit changes from false to true
+    if (autoInit && !lastAutoInitRef.current && !hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+      lastAutoInitRef.current = true;
       initialize();
+    } else if (!autoInit) {
+      // Reset when autoInit becomes false
+      lastAutoInitRef.current = false;
+      hasInitializedRef.current = false;
     }
 
     // Cleanup on unmount
@@ -279,7 +288,7 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
       // Note: We don't fully shutdown here as the service is a singleton
       // and may be used by other components. The main app handles final shutdown.
     };
-  }, [autoInit, initialize]);
+  }, [autoInit]); // Only depend on autoInit, not initialize
 
   return {
     isInitialized,

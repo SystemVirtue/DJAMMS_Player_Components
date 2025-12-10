@@ -1,6 +1,8 @@
 // electron/preload.cjs - Preload Script (CJS - required for Electron preload)
 const { contextBridge, ipcRenderer } = require('electron');
 
+console.log('[preload] Preload script loaded and executing');
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -133,3 +135,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true
 });
+
+console.log('[preload] electronAPI exposed via contextBridge');

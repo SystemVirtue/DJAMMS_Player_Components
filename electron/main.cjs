@@ -1,5 +1,5 @@
 // electron/main.js - Electron Main Process
-const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store').default || require('electron-store');
@@ -46,7 +46,84 @@ function broadcastQueueState() {
 
 // Determine if running in development
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-const VITE_DEV_SERVER_URL = 'http://localhost:3000';
+const VITE_DEV_SERVER_URL = 'http://localhost:3003';
+
+// Register custom protocol for serving local files
+// This must be done BEFORE app is ready - use app.on('ready') or register synchronously
+// For dev mode, we'll register it when app is ready (before windows are created)
+app.whenReady().then(() => {
+  // Register a custom protocol to serve local files with Range request support
+  // This is CRITICAL for seeking to work properly (prevents MEDIA_NETWORK_ERR)
+  // Using registerFileProtocol which automatically handles Range requests in Electron
+  protocol.registerFileProtocol('djamms', (request, callback) => {
+    const url = request.url;
+    // Remove protocol prefix: djamms://
+    let filePath = url.replace(/^djamms:\/\//, '');
+    
+    try {
+      // The path should NOT be encoded (we fixed the double-encoding issue)
+      // But handle both cases: encoded and unencoded
+      let decodedPath = filePath;
+      
+      // Try to decode if it looks encoded (contains %)
+      if (filePath.includes('%')) {
+        try {
+          decodedPath = decodeURIComponent(filePath);
+          console.log('[Electron] djamms:// protocol request (decoded):', { url, original: filePath, decoded: decodedPath });
+        } catch (e) {
+          // If decoding fails, use the path as-is
+          console.log('[Electron] djamms:// protocol request (not encoded):', { url, path: filePath });
+          decodedPath = filePath;
+        }
+      } else {
+        console.log('[Electron] djamms:// protocol request (unencoded):', { url, path: filePath });
+        decodedPath = filePath;
+      }
+      
+      // Normalize the path - handle both absolute and relative paths
+      // On macOS, paths from file:// URLs are already absolute (/Users/...)
+      // Don't modify paths that are already absolute
+      let normalizedPath = decodedPath;
+      if (!path.isAbsolute(decodedPath)) {
+        // If relative, make it absolute (shouldn't happen, but handle it)
+        normalizedPath = path.resolve(decodedPath);
+      } else {
+        // Already absolute, but ensure it's normalized (resolves .. and .)
+        normalizedPath = path.normalize(decodedPath);
+      }
+      
+      // Verify file exists
+      if (!fs.existsSync(normalizedPath)) {
+        console.error('[Electron] ❌ File not found via djamms://');
+        console.error('[Electron] ❌ Original URL:', url);
+        console.error('[Electron] ❌ Decoded path:', decodedPath);
+        console.error('[Electron] ❌ Normalized path:', normalizedPath);
+        callback({ error: -2 }); // FILE_NOT_FOUND
+        return;
+      }
+      
+      // Get file stats for logging
+      const stats = fs.statSync(normalizedPath);
+      
+      // Log request details for debugging
+      const rangeHeader = request.headers && request.headers.Range;
+      if (rangeHeader) {
+        console.log(`[Electron] 📦 Range request: ${rangeHeader} for ${path.basename(normalizedPath)} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+      } else {
+        console.log(`[Electron] ✅ Full file request: ${path.basename(normalizedPath)} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+        console.log(`[Electron] ✅ Full path: ${normalizedPath}`);
+      }
+      
+      // registerFileProtocol automatically handles Range requests in Electron
+      // Return the normalized absolute path
+      callback({ path: normalizedPath });
+    } catch (error) {
+      console.error('[Electron] ❌ Error serving file via custom protocol:', error);
+      callback({ error: -2 }); // FILE_NOT_FOUND
+    }
+  });
+  console.log('[Electron] ✅ Registered custom protocol "djamms://" with Range request support for seeking');
+});
 
 function getAssetPath(...paths) {
   if (isDev) {
@@ -57,6 +134,11 @@ function getAssetPath(...paths) {
 
 function createMainWindow() {
   const { width, height } = store.get('windowBounds');
+  
+  console.log('[Electron] Creating main window...');
+  const preloadPath = path.join(__dirname, 'preload.cjs');
+  console.log('[Electron] Preload path:', preloadPath);
+  console.log('[Electron] Preload exists:', fs.existsSync(preloadPath));
   
   mainWindow = new BrowserWindow({
     width,
@@ -69,17 +151,92 @@ function createMainWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
-      preload: path.join(__dirname, 'preload.cjs')
-    }
+      preload: preloadPath,
+      webSecurity: !isDev // Disable webSecurity in dev mode to allow file:// URLs
+    },
+    show: false // Don't show until ready
   });
-
+  
+  // Show window when ready to prevent flash
+  mainWindow.once('ready-to-show', () => {
+    console.log('[Electron] ✅ Window ready to show');
+    mainWindow.show();
+  });
+  
   // Load the app
+  let serverCheckTimeout = null;
+  let hasLoaded = false;
+  
   if (isDev) {
-    mainWindow.loadURL(VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
+    console.log('[Electron] Development mode - loading from Vite dev server:', VITE_DEV_SERVER_URL);
+    // Wait for Vite dev server to be ready before loading (only once)
+    const checkServer = () => {
+      if (hasLoaded) {
+        // Clear any pending timeouts if page is already loaded
+        if (serverCheckTimeout) {
+          clearTimeout(serverCheckTimeout);
+          serverCheckTimeout = null;
+        }
+        return;
+      }
+      
+      const http = require('http');
+      const req = http.get(VITE_DEV_SERVER_URL, (res) => {
+        if (res.statusCode === 200 && !hasLoaded) {
+          hasLoaded = true;
+          console.log('[Electron] ✅ Vite dev server is ready, loading app...');
+          mainWindow.loadURL(VITE_DEV_SERVER_URL).then(() => {
+            console.log('[Electron] ✅ App loaded successfully');
+            mainWindow.webContents.openDevTools();
+          }).catch((err) => {
+            console.error('[Electron] ❌ Failed to load URL:', err);
+            hasLoaded = false; // Allow retry on error
+          });
+        } else if (!hasLoaded) {
+          console.log('[Electron] ⏳ Vite dev server not ready yet (status:', res.statusCode, '), retrying...');
+          serverCheckTimeout = setTimeout(checkServer, 1000);
+        }
+      });
+      req.on('error', (err) => {
+        if (!hasLoaded) {
+          console.log('[Electron] ⏳ Vite dev server not ready yet (error:', err.message, '), retrying...');
+          serverCheckTimeout = setTimeout(checkServer, 1000);
+        }
+      });
+      req.setTimeout(2000, () => {
+        req.destroy();
+        if (!hasLoaded) {
+          console.log('[Electron] ⏳ Vite dev server check timeout, retrying...');
+          serverCheckTimeout = setTimeout(checkServer, 1000);
+        }
+      });
+    };
+    checkServer();
   } else {
+    console.log('[Electron] Production mode - loading from dist');
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+  
+  // Log page load events
+  mainWindow.webContents.once('did-finish-load', () => {
+    console.log('[Electron] ✅ Page finished loading');
+    hasLoaded = true; // Mark as loaded to stop server checks
+    if (serverCheckTimeout) {
+      clearTimeout(serverCheckTimeout);
+      serverCheckTimeout = null;
+    }
+  });
+  
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error('[Electron] ❌ Page failed to load:', errorCode, errorDescription, validatedURL);
+    hasLoaded = false; // Allow retry on failure
+  });
+  
+  // Log console messages from renderer
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    const levelStr = level === 0 ? 'log' : level === 1 ? 'warn' : 'error';
+    console.log(`[Renderer ${levelStr}]`, message);
+  });
 
   // Save window bounds on resize
   mainWindow.on('resize', () => {
@@ -105,6 +262,21 @@ function createMainWindow() {
 }
 
 function createFullscreenWindow(displayId) {
+  // IMPORTANT: Close any existing fullscreen window to ensure only one exists at a time
+  // This prevents errors where app reloads but previous player window isn't closed
+  if (fullscreenWindow) {
+    console.log('[Electron] ⚠️ Closing existing fullscreen window before creating new one (ensuring only one player window exists)');
+    try {
+      // Check if window is still valid before closing
+      if (!fullscreenWindow.isDestroyed()) {
+        fullscreenWindow.close();
+      }
+    } catch (error) {
+      console.warn('[Electron] Error closing existing fullscreen window:', error);
+    }
+    fullscreenWindow = null;
+  }
+  
   const displays = screen.getAllDisplays();
   const targetDisplay = displays.find(d => d.id === displayId) || displays[displays.length - 1];
 
@@ -121,17 +293,36 @@ function createFullscreenWindow(displayId) {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
-      preload: path.join(__dirname, 'preload.cjs')
+      preload: path.join(__dirname, 'preload.cjs'),
+      webSecurity: !isDev // Disable webSecurity in dev mode to allow djamms:// protocol
     }
   });
 
   if (isDev) {
-    fullscreenWindow.loadURL(`${VITE_DEV_SERVER_URL}/fullscreen.html`);
+    const fullscreenUrl = `${VITE_DEV_SERVER_URL}/fullscreen.html`;
+    console.log('[Electron] Loading fullscreen window from:', fullscreenUrl);
+    fullscreenWindow.loadURL(fullscreenUrl);
   } else {
-    fullscreenWindow.loadFile(path.join(__dirname, '../dist/fullscreen.html'));
+    const fullscreenPath = path.join(__dirname, '../dist/fullscreen.html');
+    console.log('[Electron] Loading fullscreen window from:', fullscreenPath);
+    fullscreenWindow.loadFile(fullscreenPath);
   }
+  
+  fullscreenWindow.webContents.on('did-finish-load', () => {
+    console.log('[Electron] ✅ Fullscreen window finished loading');
+  });
+  
+  fullscreenWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('[Electron] ❌ Fullscreen window failed to load:', errorCode, errorDescription);
+  });
+  
+  // Forward console messages from fullscreen window to main process
+  fullscreenWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[FullscreenWindow ${level}]:`, message);
+  });
 
   fullscreenWindow.on('closed', () => {
+    console.log('[Electron] Fullscreen window closed');
     fullscreenWindow = null;
     // Notify main window
     if (mainWindow) {
@@ -467,23 +658,33 @@ ipcMain.on('queue-command', async (_event, command) => {
       }
       case 'next': {
         console.log('[main] next command - priorityQueue.length:', queueState.priorityQueue.length, 'activeQueue.length:', queueState.activeQueue.length, 'nowPlayingSource:', queueState.nowPlayingSource);
+        console.log('[main] Priority queue contents:', queueState.priorityQueue.map(v => v?.title || 'unknown').join(', '));
+        
         // Priority queue takes precedence - ALWAYS check first before active queue
+        // IMPORTANT: Check priority queue EVERY time, even if current video was from priority
         if (queueState.priorityQueue.length > 0) {
-          console.log('[main] Playing from priority queue');
+          console.log('[main] ✅ Playing from priority queue (has', queueState.priorityQueue.length, 'items)');
           // Recycle current active queue video if it was playing (before priority interrupts)
           if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
+            console.log('[main] Recycling active queue video:', queueState.nowPlaying.title);
             queueState.activeQueue.push(queueState.nowPlaying);
           }
           // Play next priority video (one-time, not recycled)
           const nextVideo = queueState.priorityQueue.shift();
-          console.log('[main] Priority queue video:', nextVideo?.title, 'Remaining priority:', queueState.priorityQueue.length);
+          console.log('[main] 🎬 Priority queue video:', nextVideo?.title, 'Remaining priority:', queueState.priorityQueue.length);
           queueState.nowPlaying = nextVideo || null;
           queueState.nowPlayingSource = nextVideo ? 'priority' : null;
           queueState.isPlaying = !!nextVideo;
           if (nextVideo && fullscreenWindow) {
+            console.log('[main] 🎬 Sending priority video to fullscreen window:', nextVideo.title);
             fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
+          } else if (!nextVideo) {
+            console.error('[main] ❌ Priority queue had items but shift() returned null!');
+          } else if (!fullscreenWindow) {
+            console.error('[main] ❌ No fullscreen window available to play priority video!');
           }
         } else if (queueState.activeQueue.length > 0) {
+          console.log('[main] ⚠️ Priority queue is empty, playing from active queue');
           console.log('[main] Playing from active queue');
           // No priority queue items - play from active queue
           // Recycle the current video to the end if it was from active queue
@@ -715,9 +916,42 @@ ipcMain.handle('control-fullscreen-player', async (event, action, data) => {
 
 // Player window control (new handler)
 ipcMain.handle('control-player-window', async (event, action, data) => {
+  console.log('[Electron] control-player-window called:', action, 'fullscreenWindow exists:', !!fullscreenWindow);
+  if (action === 'play' && data) {
+    console.log('[Electron] 🎬 Play command received - video object:');
+    console.log('[Electron] 🎬   - title:', data.title);
+    console.log('[Electron] 🎬   - src:', data.src);
+    console.log('[Electron] 🎬   - path:', data.path);
+    console.log('[Electron] 🎬   - id:', data.id);
+    console.log('[Electron] 🎬   - Full data keys:', Object.keys(data || {}));
+  }
   if (fullscreenWindow) {
+    console.log('[Electron] Sending control-player to fullscreen window:', { action, data: data?.title || data?.id || 'no data' });
+    if (action === 'play' && data) {
+      console.log('[Electron] 🎬 Video object being sent to fullscreen window:');
+      console.log('[Electron] 🎬   - src:', data.src);
+      console.log('[Electron] 🎬   - path:', data.path);
+      console.log('[Electron] 🎬   - Full object:', JSON.stringify(data, null, 2).substring(0, 500));
+    }
     fullscreenWindow.webContents.send('control-player', { action, data });
     return { success: true };
+  } else {
+    console.error('[Electron] ❌ No fullscreen window open - cannot send play command!');
+    // Try to create the fullscreen window if it doesn't exist
+    const displays = screen.getAllDisplays();
+    const targetDisplay = displays[displays.length - 1]; // Use last display
+    console.log('[Electron] Attempting to create fullscreen window on display:', targetDisplay.id);
+    createFullscreenWindow(targetDisplay.id);
+    // Wait a bit for window to be ready
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (fullscreenWindow) {
+      console.log('[Electron] ✅ Fullscreen window created, sending play command');
+      if (action === 'play' && data) {
+        console.log('[Electron] Video object being sent after creation - src:', data.src, 'path:', data.path);
+      }
+      fullscreenWindow.webContents.send('control-player', { action, data });
+      return { success: true };
+    }
   }
   return { success: false, error: 'No player window open' };
 });
@@ -895,13 +1129,19 @@ ipcMain.handle('clear-recent-searches', async () => {
 // ==================== App Lifecycle ====================
 
 app.whenReady().then(() => {
+  console.log('[Electron] ✅ App is ready, creating main window...');
   createMainWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
+      console.log('[Electron] App activated, creating main window...');
       createMainWindow();
     }
   });
+});
+
+app.on('ready', () => {
+  console.log('[Electron] App ready event fired');
 });
 
 app.on('window-all-closed', () => {

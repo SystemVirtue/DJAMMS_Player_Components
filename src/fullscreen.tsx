@@ -145,6 +145,21 @@ function FullscreenApp() {
       console.log('[FullscreenApp] Received control:', action, data)
       switch (action) {
         case 'play':
+          // Log video details including source URL
+          console.log('🚨 [FullscreenApp] ========== RECEIVED PLAY COMMAND ==========');
+          console.log('🚨 [FullscreenApp] Video title:', data?.title);
+          console.log('🚨 [FullscreenApp] Video src:', data?.src);
+          console.log('🚨 [FullscreenApp] Video path:', data?.path);
+          console.log('🚨 [FullscreenApp] Video ID:', data?.id);
+          console.log('🚨 [FullscreenApp] Full video object:', JSON.stringify(data, null, 2));
+          console.log('🚨 [FullscreenApp] ===========================================');
+          
+          // Ensure src is set correctly (prioritize src over path)
+          if (data && !data.src && data.path) {
+            console.warn('[FullscreenApp] Video has path but no src, using path as src');
+            data.src = data.path;
+          }
+          
           setVideo(data)
           setIsPlaying(true)
           break
@@ -169,6 +184,15 @@ function FullscreenApp() {
         case 'setVolume':
           if (typeof data === 'number') {
             setVolume(data)
+          }
+          break
+        case 'seekTo':
+          // Seek to specific position (in seconds)
+          if (typeof data === 'number' && data >= 0) {
+            console.log(`[FullscreenApp] Seek command received - seeking to ${data.toFixed(1)}s`);
+            setSeekToPosition(data);
+          } else {
+            console.warn('[FullscreenApp] Invalid seek position:', data);
           }
           break
         case 'preload':
@@ -280,14 +304,42 @@ function FullscreenApp() {
 
     window.addEventListener('message', messageHandler)
 
+    // Debug keyboard shortcut: Shift+\ (|) to seek to (duration - 15 seconds)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if not in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      // Check for Shift+\ (which produces '|' on most keyboards)
+      // Key code is 'Backslash' and shift key is pressed, or key is '|'
+      if (e.key === '|' || (e.key === '\\' && e.shiftKey) || (e.code === 'Backslash' && e.shiftKey)) {
+        e.preventDefault()
+        const currentDuration = durationRef.current || duration
+        if (currentDuration > 0) {
+          // Seek to 15 seconds before end, but ensure we're at least 2 seconds from the end
+          // (useVideoPlayer will enforce a 2-second buffer to prevent immediate end events)
+          const MIN_BUFFER = 2.0
+          const seekPosition = Math.max(0, Math.min(currentDuration - 15, currentDuration - MIN_BUFFER))
+          console.log(`[FullscreenApp] 🐛 DEBUG: Shift+\\ pressed - seeking to ${seekPosition.toFixed(1)}s (duration: ${currentDuration.toFixed(1)}s, buffer: ${MIN_BUFFER}s)`)
+          setSeekToPosition(seekPosition)
+        } else {
+          console.warn('[FullscreenApp] 🐛 DEBUG: Shift+\\ pressed but video duration not available yet')
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
     // Signal ready to main window
     window.parent.postMessage({ type: 'FULLSCREEN_READY' }, window.location.origin)
 
     return () => {
       window.removeEventListener('message', messageHandler)
+      window.removeEventListener('keydown', handleKeyDown)
       if (unsubscribeIPC) unsubscribeIPC()
     }
-  }, [isElectron])
+  }, [isElectron, duration])
 
   // Sync playback state to Supabase when key values change
   // NOTE: Queue data is synced by PlayerWindow (source of truth) - don't sync here to avoid overwrites

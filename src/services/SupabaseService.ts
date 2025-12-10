@@ -12,6 +12,7 @@
  */
 
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import isEqual from 'fast-deep-equal';
 import {
   SupabasePlayerState,
   SupabaseCommand,
@@ -55,6 +56,20 @@ class SupabaseService {
   private stateSyncTimeout: ReturnType<typeof setTimeout> | null = null;
   private commandPollInterval: ReturnType<typeof setInterval> | null = null;
   private indexingInProgress: boolean = false;
+  private broadcastChannelStatus: 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'CLOSED' | 'TIMED_OUT' | 'UNKNOWN' = 'UNKNOWN';
+  private pollingBackoffMs = 2000; // Start with 2 seconds, increase on errors
+  private emptyPollCount = 0; // Track consecutive empty polls
+  private readonly MAX_EMPTY_POLLS = 3; // After 3 empty polls, increase interval
+  
+  // Schema fix tracking - prevent repeated attempts
+  private schemaFixAttempted: boolean = false;
+  private schemaFixFailed: boolean = false;
+  
+  // Error tracking to suppress spam during long runtime
+  private consecutiveStateSyncErrors = 0;
+  private consecutiveCommandPollErrors = 0;
+  private lastErrorLogTime = 0;
+  private readonly ERROR_SUPPRESSION_MS = 60000; // Only log errors once per minute
   
   // Command handlers
   private commandHandlers: Map<CommandType, CommandHandler[]> = new Map();
@@ -68,6 +83,19 @@ class SupabaseService {
   private isOnline = false;
   private lastSyncedState: Partial<SupabasePlayerState> | null = null;
   private lastSyncKey: string | null = null; // For deduplication of identical syncs
+  
+  // Request deduplication
+  private pendingStateSyncRequest: { requestId: string; timeoutId: ReturnType<typeof setTimeout> } | null = null;
+  private activeStateSyncRequest: { requestId: string; promise: Promise<void>; abortController: AbortController } | null = null;
+  
+  // Connection state management
+  private connectionStatus: 'connected' | 'disconnected' | 'reconnecting' = 'disconnected';
+  private queuedCommands: Array<{ command: SupabaseCommand; timestamp: number }> = [];
+  private reconnectionAttempts = 0;
+  private maxReconnectionAttempts = 10;
+  private reconnectionBackoffMs = 1000; // Start with 1 second
+  private reconnectionTimeout: ReturnType<typeof setTimeout> | null = null;
+  private connectionStatusCallbacks: Set<(status: 'connected' | 'disconnected' | 'reconnecting') => void> = new Set();
 
   private constructor() {
     // Private constructor for singleton
@@ -89,7 +117,7 @@ class SupabaseService {
    */
   public async initialize(playerId?: string): Promise<boolean> {
     if (this.isInitialized) {
-      console.log('[SupabaseService] Already initialized');
+      logger.info('[SupabaseService] Already initialized');
       return true;
     }
 
@@ -177,7 +205,7 @@ class SupabaseService {
 
     this.isInitialized = false;
     this.isOnline = false;
-    console.log('[SupabaseService] Shutdown complete');
+    logger.info('[SupabaseService] Shutdown complete');
   }
 
   // ==================== Player State Management ====================
@@ -223,11 +251,8 @@ class SupabaseService {
             .insert({
               player_id: this.playerId,
               status: 'idle',
-              is_playing: false,
               is_online: true,
               volume: 1.0,
-              volume_level: 0.8,
-              playback_position: 0,
               current_position: 0,
               active_queue: [],
               priority_queue: [],
@@ -272,7 +297,7 @@ class SupabaseService {
       .eq('id', this.playerStateId);
 
     if (error) {
-      console.error('[SupabaseService] Error updating online status:', error);
+      logger.error('[SupabaseService] Error updating online status:', error);
     } else {
       this.isOnline = isOnline;
     }
@@ -293,38 +318,118 @@ class SupabaseService {
     priorityQueue?: Video[];
     queueIndex?: number;
   }, immediate: boolean = false): void {
-    // Clear any pending debounced update
+    const requestId = crypto.randomUUID();
+    
+    // Cancel any pending debounced request
+    const pendingRequest = this.pendingStateSyncRequest;
+    if (pendingRequest) {
+      clearTimeout(pendingRequest.timeoutId);
+      this.pendingStateSyncRequest = null;
+    }
+    
+    // Clear the old debounce timeout
     if (this.stateSyncTimeout) {
       clearTimeout(this.stateSyncTimeout);
+      this.stateSyncTimeout = null;
     }
 
     if (immediate) {
-      // Sync immediately (for queue shuffle, etc.)
-      this.performStateSync(state);
+      // Cancel any pending request and sync immediately
+      const pendingRequest = this.pendingStateSyncRequest;
+      if (pendingRequest) {
+        clearTimeout(pendingRequest.timeoutId);
+        this.pendingStateSyncRequest = null;
+      }
+      // If there's an active request, cancel it and start new one
+      if (this.activeStateSyncRequest) {
+        // Cancel the previous request
+        this.activeStateSyncRequest.abortController.abort();
+        logger.debug('[SupabaseService] Cancelled previous state sync request');
+      }
+      // Start new sync immediately
+      this.performStateSyncWithDedup(state, requestId);
     } else {
-      // Debounce rapid updates
-      this.stateSyncTimeout = setTimeout(() => {
-        this.performStateSync(state);
-      }, STATE_SYNC_DEBOUNCE);
+      // Debounce rapid updates - cancel previous request if new one arrives
+      this.pendingStateSyncRequest = {
+        requestId,
+        timeoutId: setTimeout(() => {
+          this.pendingStateSyncRequest = null;
+          this.performStateSyncWithDedup(state, requestId);
+        }, STATE_SYNC_DEBOUNCE)
+      };
+    }
+  }
+
+  /**
+   * Perform state sync with request deduplication
+   */
+  private async performStateSyncWithDedup(
+    state: {
+      status?: string;
+      isPlaying?: boolean;
+      currentVideo?: Video | null;
+      currentPosition?: number;
+      volume?: number;
+      activeQueue?: Video[];
+      priorityQueue?: Video[];
+      queueIndex?: number;
+    },
+    requestId: string
+  ): Promise<void> {
+    // If there's already an active request, cancel it
+    if (this.activeStateSyncRequest) {
+      this.activeStateSyncRequest.abortController.abort();
+      logger.debug('[SupabaseService] Cancelled previous state sync request');
+    }
+    
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    
+    // Mark this as the active request
+    const syncPromise = this.performStateSync(state, abortController.signal);
+    this.activeStateSyncRequest = { requestId, promise: syncPromise, abortController };
+    
+    try {
+      await syncPromise;
+    } catch (error: any) {
+      // Ignore abort errors (expected when cancelled)
+      if (error?.name === 'AbortError' || abortController.signal.aborted) {
+        logger.debug('[SupabaseService] State sync request was cancelled');
+        return;
+      }
+      throw error;
+    } finally {
+      // Clear active request when done
+      if (this.activeStateSyncRequest?.requestId === requestId) {
+        this.activeStateSyncRequest = null;
+      }
     }
   }
 
   /**
    * Perform the actual state sync to Supabase
    */
-  private async performStateSync(state: {
-    status?: string;
-    isPlaying?: boolean;
-    currentVideo?: Video | null;
-    currentPosition?: number;
-    volume?: number;
-    activeQueue?: Video[];
-    priorityQueue?: Video[];
-    queueIndex?: number;
-  }): Promise<void> {
+  private async performStateSync(
+    state: {
+      status?: string;
+      isPlaying?: boolean;
+      currentVideo?: Video | null;
+      currentPosition?: number;
+      volume?: number;
+      activeQueue?: Video[];
+      priorityQueue?: Video[];
+      queueIndex?: number;
+    },
+    abortSignal: AbortSignal
+  ): Promise<void> {
     if (!this.client || !this.playerStateId) {
       logger.warn('Cannot sync state - SupabaseService not initialized');
       return;
+    }
+
+    // Check if request was cancelled before starting
+    if (abortSignal.aborted) {
+      throw new DOMException('Request was cancelled', 'AbortError');
     }
 
     try {
@@ -337,8 +442,9 @@ class SupabaseService {
         updateData.status = state.status as SupabasePlayerState['status'];
       }
 
+      // Note: is_playing column doesn't exist in schema - use status instead
       if (state.isPlaying !== undefined) {
-        updateData.is_playing = state.isPlaying;
+        updateData.status = state.isPlaying ? 'playing' : 'paused';
       }
 
       if (state.currentVideo !== undefined) {
@@ -349,12 +455,14 @@ class SupabaseService {
 
       if (state.currentPosition !== undefined) {
         updateData.current_position = state.currentPosition;
-        updateData.playback_position = Math.floor(state.currentPosition);
+        // Note: playback_position column doesn't exist in schema - use current_position instead
+        // updateData.playback_position = Math.floor(state.currentPosition);
       }
 
       if (state.volume !== undefined) {
         updateData.volume = state.volume;
-        updateData.volume_level = state.volume;
+        // Note: volume_level column doesn't exist in schema - use volume instead
+        // updateData.volume_level = state.volume;
       }
 
       if (state.activeQueue !== undefined) {
@@ -365,35 +473,34 @@ class SupabaseService {
         updateData.priority_queue = state.priorityQueue.map(v => this.videoToQueueItem(v));
       }
 
-      if (state.queueIndex !== undefined) {
-        updateData.queue_index = state.queueIndex;
-      }
+      // Note: queue_index column may not exist in all database schemas
+      // Only include it if we're confident the column exists (skip for now to avoid errors)
+      // if (state.queueIndex !== undefined) {
+      //   updateData.queue_index = state.queueIndex;
+      // }
 
       // Only update if something changed
       if (Object.keys(updateData).length <= 1) {
         return; // Only last_updated, skip
       }
 
-      // Check if this update is identical to the last one (skip duplicate syncs)
-      const updateKey = JSON.stringify({
-        now_playing: updateData.now_playing_video?.title,
-        is_playing: updateData.is_playing,
-        queue_length: updateData.active_queue?.length,
-        queue_index: updateData.queue_index,
-        priority_length: updateData.priority_queue?.length
-      });
-      
-      if (this.lastSyncKey === updateKey) {
-        logger.debug('Skipping duplicate state sync');
+      // Deep equality check: skip sync if state is truly unchanged
+      // Compare the actual state data, not just a hash
+      if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData)) {
+        logger.debug('Skipping state sync - no changes detected (deep equality)');
         return; // Skip duplicate update
       }
-      this.lastSyncKey = updateKey;
+
+      // Check again if request was cancelled before making the request
+      if (abortSignal.aborted) {
+        throw new DOMException('Request was cancelled', 'AbortError');
+      }
 
       logger.debug('Syncing state to Supabase', {
         now_playing: updateData.now_playing_video?.title,
-        is_playing: updateData.is_playing,
+        status: updateData.status,
         queue_length: updateData.active_queue?.length,
-        queue_index: updateData.queue_index,
+        // queue_index: updateData.queue_index, // Column doesn't exist in schema
         priority_length: updateData.priority_queue?.length
       });
 
@@ -402,14 +509,44 @@ class SupabaseService {
         .update(updateData)
         .eq('id', this.playerStateId);
 
+      // Check if request was cancelled after the request
+      if (abortSignal.aborted) {
+        throw new DOMException('Request was cancelled', 'AbortError');
+      }
+
       if (error) {
-        logger.error('State sync error:', error);
+        this.consecutiveStateSyncErrors++;
+        const now = Date.now();
+        const shouldLog = (now - this.lastErrorLogTime) > this.ERROR_SUPPRESSION_MS;
+        
+        // Suppress 500 errors during long runtime - likely database issues, not app bugs
+        if (error.code === '500' || error.message?.includes('500') || error.message?.includes('Internal Server Error')) {
+          if (shouldLog || this.consecutiveStateSyncErrors === 1) {
+            logger.debug(`State sync failed (500 error - non-critical) [${this.consecutiveStateSyncErrors} consecutive]`);
+            this.lastErrorLogTime = now;
+          }
+        } else {
+          if (shouldLog || this.consecutiveStateSyncErrors === 1) {
+            logger.warn(`State sync error (non-critical) [${this.consecutiveStateSyncErrors} consecutive]:`, error.message || error);
+            this.lastErrorLogTime = now;
+          }
+        }
       } else {
+        if (this.consecutiveStateSyncErrors > 0) {
+          logger.debug(`State sync recovered after ${this.consecutiveStateSyncErrors} errors`);
+          this.consecutiveStateSyncErrors = 0;
+        }
         logger.debug('State synced successfully to Supabase');
         this.lastSyncedState = updateData;
       }
     } catch (error) {
-      logger.error('State sync exception:', error);
+      // Suppress exceptions during long runtime - Supabase errors shouldn't crash the app
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (errorMsg.includes('500') || errorMsg.includes('Internal Server Error')) {
+        logger.debug('State sync exception (500 error - non-critical):', errorMsg.substring(0, 100));
+      } else {
+        logger.warn('State sync exception (non-critical):', errorMsg);
+      }
     }
   }
 
@@ -426,7 +563,7 @@ class SupabaseService {
   private async startCommandListener(): Promise<void> {
     if (!this.client) throw new Error('Client not initialized');
 
-    console.log(`[SupabaseService] Setting up Broadcast command listener for player: ${this.playerId}`);
+    logger.info(`[SupabaseService] Setting up Broadcast command listener for player: ${this.playerId}`);
 
     // Use Broadcast channel for instant command delivery
     // Channel name includes player ID so each player gets its own channel
@@ -439,25 +576,37 @@ class SupabaseService {
         };
         
         if (!message || !message.command) {
-          console.warn('[SupabaseService] Received invalid broadcast message:', payload);
+          logger.warn('[SupabaseService] Received invalid broadcast message:', payload);
           return;
         }
 
         const command = message.command;
-        console.log('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id);
+        logger.info('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id);
         
         // Process the command
         await this.processCommand(command);
       })
       .subscribe((status, err) => {
+        this.broadcastChannelStatus = status as typeof this.broadcastChannelStatus;
         if (status === 'SUBSCRIBED') {
-          console.log('[SupabaseService] ✅ Broadcast command listener SUBSCRIBED - ready to receive commands');
+          logger.info('[SupabaseService] ✅ Broadcast command listener SUBSCRIBED - ready to receive commands');
+          // Disable polling when Broadcast is working
+          this.stopCommandPoll();
+          this.pollingBackoffMs = 2000; // Reset backoff on successful subscription
         } else if (status === 'CHANNEL_ERROR') {
-          console.error('[SupabaseService] ❌ Broadcast channel ERROR:', err);
+          logger.error('[SupabaseService] ❌ Broadcast channel ERROR:', err);
+          // Re-enable polling with exponential backoff
+          this.startCommandPoll();
         } else if (status === 'TIMED_OUT') {
-          console.warn('[SupabaseService] ⚠️ Broadcast channel TIMED_OUT');
+          logger.warn('[SupabaseService] ⚠️ Broadcast channel TIMED_OUT');
+          // Re-enable polling
+          this.startCommandPoll();
+        } else if (status === 'CLOSED') {
+          logger.warn('[SupabaseService] ⚠️ Broadcast channel CLOSED');
+          // Re-enable polling
+          this.startCommandPoll();
         } else {
-          console.log(`[SupabaseService] Broadcast channel status: ${status}`);
+          logger.debug(`[SupabaseService] Broadcast channel status: ${status}`);
         }
       });
 
@@ -467,41 +616,262 @@ class SupabaseService {
       await this.processPendingCommands();
     }, 500);
     
-    // Start periodic poll as fallback with minimal delay
-    // This is a safety net in case Broadcast misses messages
-    setTimeout(() => this.startCommandPoll(), 1000);
+    // Only start polling if Broadcast is not SUBSCRIBED
+    // Polling will be started automatically if Broadcast fails
+    if (this.broadcastChannelStatus !== 'SUBSCRIBED') {
+      setTimeout(() => this.startCommandPoll(), 1000);
+    }
   }
 
   /**
    * Start periodic polling for pending commands as a fallback mechanism
-   * This is a safety net in case Broadcast messages are missed
+   * Only runs when Broadcast channel is not SUBSCRIBED
+   * Uses exponential backoff on errors
    */
   private startCommandPoll(): void {
-    // Poll every 2 seconds for faster fallback recovery on disconnect
+    // Don't start if already polling
+    if (this.commandPollInterval) return;
+    
+    // Don't poll if Broadcast is working
+    if (this.broadcastChannelStatus === 'SUBSCRIBED') {
+      logger.debug('[SupabaseService] Skipping poll start - Broadcast is SUBSCRIBED');
+      return;
+    }
+
+    logger.debug(`[SupabaseService] Starting command poll (interval: ${this.pollingBackoffMs}ms)`);
     this.commandPollInterval = setInterval(async () => {
-      await this.processPendingCommands();
-    }, 2000);
+      // Double-check status before polling
+      if (this.broadcastChannelStatus === 'SUBSCRIBED') {
+        // If Broadcast is subscribed and we've had empty polls, stop polling entirely
+        if (this.emptyPollCount >= this.MAX_EMPTY_POLLS) {
+          logger.debug('[SupabaseService] Broadcast SUBSCRIBED and no pending commands - stopping poll');
+          this.stopCommandPoll();
+          return;
+        }
+      }
+      
+      // Process commands and check if any were found
+      const hadCommands = await this.processPendingCommands();
+      
+      if (!hadCommands) {
+        // No commands found - increment empty poll count
+        this.emptyPollCount++;
+        
+        // Increase interval after multiple empty polls
+        if (this.emptyPollCount >= this.MAX_EMPTY_POLLS) {
+          const newInterval = Math.min(this.pollingBackoffMs * 2, 30000); // Max 30 seconds
+          if (newInterval !== this.pollingBackoffMs) {
+            logger.debug(`[SupabaseService] No commands found after ${this.emptyPollCount} polls - increasing interval to ${newInterval}ms`);
+            this.pollingBackoffMs = newInterval;
+            // Restart polling with new interval
+            this.stopCommandPoll();
+            this.startCommandPoll();
+          }
+        }
+      } else {
+        // Commands found - reset empty poll count and interval
+        if (this.emptyPollCount > 0) {
+          logger.debug('[SupabaseService] Commands found - resetting poll interval');
+          this.emptyPollCount = 0;
+          this.pollingBackoffMs = 2000; // Reset to 2 seconds
+          // Restart polling with faster interval
+          this.stopCommandPoll();
+          this.startCommandPoll();
+        }
+      }
+    }, this.pollingBackoffMs);
+  }
+
+  /**
+   * Stop command polling
+   */
+  private stopCommandPoll(): void {
+    if (this.commandPollInterval) {
+      clearInterval(this.commandPollInterval);
+      this.commandPollInterval = null;
+      logger.debug('[SupabaseService] Stopped command polling');
+    }
+  }
+
+  /**
+   * Set connection status and notify callbacks
+   */
+  private setConnectionStatus(status: 'connected' | 'disconnected' | 'reconnecting'): void {
+    if (this.connectionStatus === status) return;
+    
+    this.connectionStatus = status;
+    logger.debug(`[SupabaseService] Connection status: ${status}`);
+    
+    // Notify all callbacks
+    this.connectionStatusCallbacks.forEach(callback => {
+      try {
+        callback(status);
+      } catch (error) {
+        logger.warn('[SupabaseService] Error in connection status callback:', error);
+      }
+    });
+    
+    // Reset reconnection attempts on successful connection
+    if (status === 'connected') {
+      this.reconnectionAttempts = 0;
+      this.reconnectionBackoffMs = 1000;
+    }
+  }
+
+  /**
+   * Subscribe to connection status changes
+   */
+  public onConnectionStatusChange(callback: (status: 'connected' | 'disconnected' | 'reconnecting') => void): () => void {
+    this.connectionStatusCallbacks.add(callback);
+    // Immediately call with current status
+    callback(this.connectionStatus);
+    
+    return () => {
+      this.connectionStatusCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Get current connection status
+   */
+  public getConnectionStatus(): 'connected' | 'disconnected' | 'reconnecting' {
+    return this.connectionStatus;
+  }
+
+  /**
+   * Schedule reconnection attempt with exponential backoff
+   */
+  private scheduleReconnection(): void {
+    if (this.reconnectionTimeout) {
+      clearTimeout(this.reconnectionTimeout);
+    }
+    
+    if (this.reconnectionAttempts >= this.maxReconnectionAttempts) {
+      logger.warn('[SupabaseService] Max reconnection attempts reached. Stopping reconnection.');
+      return;
+    }
+    
+    this.reconnectionAttempts++;
+    this.setConnectionStatus('reconnecting');
+    
+    const delay = Math.min(this.reconnectionBackoffMs * Math.pow(2, this.reconnectionAttempts - 1), 30000);
+    logger.debug(`[SupabaseService] Scheduling reconnection attempt ${this.reconnectionAttempts} in ${delay}ms`);
+    
+    this.reconnectionTimeout = setTimeout(async () => {
+      try {
+        // Attempt to reconnect by restarting the command listener
+        if (this.commandChannel) {
+          await this.commandChannel.unsubscribe();
+          this.commandChannel = null;
+        }
+        await this.startCommandListener();
+      } catch (error) {
+        logger.warn('[SupabaseService] Reconnection attempt failed:', error);
+        // Schedule another attempt
+        this.scheduleReconnection();
+      }
+    }, delay);
+  }
+
+  /**
+   * Queue a command for later execution when connection is restored
+   */
+  private queueCommand(command: SupabaseCommand): void {
+    this.queuedCommands.push({
+      command,
+      timestamp: Date.now()
+    });
+    
+    // Limit queue size to prevent memory issues
+    const MAX_QUEUE_SIZE = 100;
+    if (this.queuedCommands.length > MAX_QUEUE_SIZE) {
+      this.queuedCommands.shift(); // Remove oldest
+    }
+    
+    logger.debug(`[SupabaseService] Command queued (${this.queuedCommands.length} in queue):`, command.command_type);
+  }
+
+  /**
+   * Flush queued commands when connection is restored
+   */
+  private async flushQueuedCommands(): Promise<void> {
+    if (this.queuedCommands.length === 0) return;
+    
+    logger.info(`[SupabaseService] Flushing ${this.queuedCommands.length} queued commands`);
+    
+    // Process commands in order
+    for (const { command } of this.queuedCommands) {
+      try {
+        await this.processCommand(command);
+      } catch (error) {
+        logger.warn('[SupabaseService] Error processing queued command:', error);
+      }
+    }
+    
+    this.queuedCommands = [];
   }
 
   /**
    * Process any pending commands (catch-up after reconnect)
+   * @returns true if commands were found and processed, false otherwise
    */
-  private async processPendingCommands(): Promise<void> {
-    if (!this.client) return;
+  private async processPendingCommands(): Promise<boolean> {
+    if (!this.client) return false;
 
     const expiryTime = new Date(Date.now() - COMMAND_EXPIRY_MS).toISOString();
 
-    const { data: pendingCommands, error } = await this.client
+    // Note: admin_commands table doesn't have player_id column - filter by action_data instead
+    // Commands are sent to specific players via action_data.player_id or action_data.target_player_id field
+    const { data: allPendingCommands, error } = await this.client
       .from('admin_commands')
       .select('*')
-      .eq('player_id', this.playerId)
       .eq('status', 'pending')
       .gt('created_at', expiryTime)
       .order('created_at', { ascending: true });
+    
+    // Filter commands for this player_id in JavaScript (since column doesn't exist in schema)
+    const pendingCommands = allPendingCommands?.filter(cmd => {
+      const actionData = cmd.action_data as any;
+      // Check if command is for this player (either player_id or target_player_id in action_data)
+      return actionData?.player_id === this.playerId || 
+             actionData?.target_player_id === this.playerId ||
+             // If no player_id specified, assume it's for all players (broadcast)
+             (!actionData?.player_id && !actionData?.target_player_id);
+    }) || [];
 
     if (error) {
-      console.error('[SupabaseService] Error fetching pending commands:', error);
-      return;
+      this.consecutiveCommandPollErrors++;
+      const now = Date.now();
+      const shouldLog = (now - this.lastErrorLogTime) > this.ERROR_SUPPRESSION_MS;
+      
+      // Exponential backoff on errors (max 30 seconds)
+      this.pollingBackoffMs = Math.min(this.pollingBackoffMs * 1.5, 30000);
+      
+      // Suppress 500 errors during long runtime - likely database issues, not app bugs
+      if (error.code === '500' || error.message?.includes('500') || error.message?.includes('Internal Server Error')) {
+        if (shouldLog || this.consecutiveCommandPollErrors === 1) {
+          logger.debug(`[SupabaseService] Error fetching pending commands (500 error - non-critical) [${this.consecutiveCommandPollErrors} consecutive]`);
+          this.lastErrorLogTime = now;
+        }
+      } else {
+        if (shouldLog || this.consecutiveCommandPollErrors === 1) {
+          logger.warn(`[SupabaseService] Error fetching pending commands (non-critical) [${this.consecutiveCommandPollErrors} consecutive]:`, error.message || error);
+          this.lastErrorLogTime = now;
+        }
+      }
+      
+      // Restart polling with new backoff interval
+      this.stopCommandPoll();
+      this.startCommandPoll();
+      return false; // Error occurred, no commands processed
+    }
+    
+    // Reset error counter on success
+    if (this.consecutiveCommandPollErrors > 0) {
+      logger.debug(`[SupabaseService] Command poll recovered after ${this.consecutiveCommandPollErrors} errors`);
+      this.consecutiveCommandPollErrors = 0;
+      // Reset backoff on success
+      this.pollingBackoffMs = 2000;
     }
 
     if (pendingCommands && pendingCommands.length > 0) {
@@ -509,31 +879,36 @@ class SupabaseService {
       const newCommands = pendingCommands.filter(cmd => !this.processedCommandIds.has(cmd.id));
       
       if (newCommands.length > 0) {
-        console.log(`[SupabaseService] Processing ${newCommands.length} pending commands`);
+        logger.info(`[SupabaseService] Processing ${newCommands.length} pending commands`);
         for (const command of newCommands) {
           await this.processCommand(command);
         }
+        
+        // Clean up stale commands that are stuck in 'pending' but we've already processed
+        // This handles the case where the status update failed
+        const staleCommands = pendingCommands.filter(cmd => this.processedCommandIds.has(cmd.id));
+        if (staleCommands.length > 0) {
+          // Batch update all stale commands to 'executed' status
+          const staleIds = staleCommands.map(cmd => cmd.id);
+          this.client
+            .from('admin_commands')
+            .update({ status: 'executed', executed_at: new Date().toISOString() })
+            .in('id', staleIds)
+            .then(({ error: updateError }) => {
+              if (updateError) {
+                logger.warn('[SupabaseService] Error cleaning up stale commands:', updateError.message);
+              } else {
+                logger.info(`[SupabaseService] 🧹 Cleaned up ${staleIds.length} stale commands`);
+              }
+            });
+        }
+        
+        return true; // Commands were found and processed
       }
-      
-      // Clean up stale commands that are stuck in 'pending' but we've already processed
-      // This handles the case where the status update failed
-      const staleCommands = pendingCommands.filter(cmd => this.processedCommandIds.has(cmd.id));
-      if (staleCommands.length > 0) {
-        // Batch update all stale commands to 'executed' status
-        const staleIds = staleCommands.map(cmd => cmd.id);
-        this.client
-          .from('admin_commands')
-          .update({ status: 'executed', executed_at: new Date().toISOString() })
-          .in('id', staleIds)
-          .then(({ error: updateError }) => {
-            if (updateError) {
-              console.warn('[SupabaseService] Error cleaning up stale commands:', updateError.message);
-            } else {
-              console.log(`[SupabaseService] 🧹 Cleaned up ${staleIds.length} stale commands`);
-            }
-          });
-      }
+      return false; // No new commands (all already processed)
     }
+    
+    return false; // No pending commands
   }
 
   /**
@@ -541,6 +916,12 @@ class SupabaseService {
    * Ensures each command is only processed ONCE, even if received via both Broadcast and polling
    */
   private async processCommand(command: SupabaseCommand): Promise<void> {
+    // If disconnected, queue the command instead of processing
+    if (this.connectionStatus === 'disconnected' || this.connectionStatus === 'reconnecting') {
+      this.queueCommand(command);
+      return;
+    }
+    
     // CRITICAL: Check if command was already processed to prevent duplicate execution
     if (this.processedCommandIds.has(command.id)) {
       // Silent skip - already processed (this can happen via Broadcast + polling race)
@@ -567,18 +948,18 @@ class SupabaseService {
     
     try {
       if (handlers && handlers.length > 0) {
-        console.log(`[SupabaseService] ⚙️ Executing command: ${command.command_type} (${command.id})`);
+        logger.info(`[SupabaseService] ⚙️ Executing command: ${command.command_type} (${command.id})`);
         // Execute only the FIRST handler to prevent duplicate actions from multiple registrations
         await handlers[0](command);
-        console.log(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
+        logger.info(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
       } else {
-        console.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
+        logger.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
       }
 
       // Mark command as executed in database (fire-and-forget)
       this.markCommandExecuted(command.id, true);
     } catch (error) {
-      console.error(`[SupabaseService] ❌ Error processing command ${command.id}:`, error);
+      logger.error(`[SupabaseService] ❌ Error processing command ${command.id}:`, error);
       this.markCommandExecuted(command.id, false, String(error));
     } finally {
       // Remove from processing set (but keep in processed set to prevent re-execution)
@@ -597,7 +978,7 @@ class SupabaseService {
   ): void {
     if (!this.client) return;
 
-    console.log(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
+    logger.info(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
 
     // Update database (fire-and-forget for minimal latency)
     this.client
@@ -610,7 +991,7 @@ class SupabaseService {
       .eq('id', commandId)
       .then(({ error }) => {
         if (error) {
-          console.warn('[SupabaseService] Error marking command as executed:', error.message);
+          logger.warn('[SupabaseService] Error marking command as executed:', error.message);
         }
       });
   }
@@ -642,11 +1023,11 @@ class SupabaseService {
     source: string = 'electron-admin'
   ): Promise<{ success: boolean; commandId?: string; error?: string }> {
     if (!this.client) {
-      console.warn('[SupabaseService] Cannot send command - not initialized');
+      logger.warn('[SupabaseService] Cannot send command - not initialized');
       return { success: false, error: 'Not initialized' };
     }
 
-    console.log(`[SupabaseService] 📤 Sending command: ${commandType} to player: ${targetPlayerId}`);
+    logger.info(`[SupabaseService] 📤 Sending command: ${commandType} to player: ${targetPlayerId}`);
 
     // 1. Insert to database for persistence/audit
     const { data, error } = await this.client
@@ -654,15 +1035,16 @@ class SupabaseService {
       .insert({
         player_id: targetPlayerId,
         command_type: commandType,
-        payload: payload || {},
-        source,
-        status: 'pending'
+        command_data: payload || {},
+        issued_by: source,
+        status: 'pending',
+        issued_at: new Date().toISOString()
       })
       .select('id')
       .single();
 
     if (error) {
-      console.error('[SupabaseService] Error sending command:', error);
+      logger.error('[SupabaseService] Error sending command:', error);
       return { success: false, error: error.message };
     }
 
@@ -697,12 +1079,12 @@ class SupabaseService {
         payload: { command, timestamp: new Date().toISOString() }
       });
     } catch (broadcastError) {
-      console.warn('[SupabaseService] Broadcast failed (command still in DB):', broadcastError);
+      logger.warn('[SupabaseService] Broadcast failed (command still in DB):', broadcastError);
       // Remove failed channel from cache so it can be recreated
       this.commandSendChannels.delete(targetPlayerId);
     }
 
-    console.log(`[SupabaseService] ✅ Command sent: ${commandType} (${commandId})`);
+    logger.info(`[SupabaseService] ✅ Command sent: ${commandType} (${commandId})`);
     return { success: true, commandId };
   }
 
@@ -729,15 +1111,51 @@ class SupabaseService {
 
   /**
    * Send a heartbeat to update last_heartbeat timestamp
-   * Uses database function for efficiency
+   * Uses RPC function for efficiency, falls back to direct update if RPC not available
    */
   private async sendHeartbeat(): Promise<void> {
     if (!this.client || !this.playerId) return;
 
     // Try RPC function first (if it exists), otherwise use direct update
     // RPC function may not exist in all database instances, so we always have a fallback
+    try {
+      const { error: rpcError } = await this.client.rpc('update_player_heartbeat', {
+        p_player_id: this.playerId
+      });
+
+      if (rpcError) {
+        // If RPC function doesn't exist (404/PGRST404), fall back to direct update
+        // Suppress 404 errors in logs as they're expected if RPC not deployed
+        if (rpcError.code === 'PGRST404' || rpcError.message?.includes('404')) {
+          // RPC function not found, use fallback (silent - expected behavior)
+          await this.fallbackHeartbeatUpdate();
+        } else {
+          // Other RPC errors should be logged
+          logger.warn('[SupabaseService] Heartbeat RPC error (falling back to direct update):', rpcError.message);
+          await this.fallbackHeartbeatUpdate();
+        }
+      }
+      // RPC succeeded, no need for fallback
+    } catch (error: any) {
+      // Network errors, etc. - fall back to direct update
+      if (error?.code === 'PGRST404' || error?.message?.includes('404')) {
+        // Suppress 404 errors (RPC not deployed)
+        await this.fallbackHeartbeatUpdate();
+      } else {
+        logger.warn('[SupabaseService] Heartbeat RPC exception (falling back):', error instanceof Error ? error.message : error);
+        await this.fallbackHeartbeatUpdate();
+      }
+    }
+  }
+
+  /**
+   * Fallback heartbeat update using direct UPDATE
+   */
+  private async fallbackHeartbeatUpdate(): Promise<void> {
+    if (!this.client || !this.playerId) return;
+
     if (this.playerStateId) {
-      // Use direct update (RPC function may not exist)
+      // Use direct update by ID
       const { error: updateError } = await this.client
         .from('player_state')
         .update({
@@ -806,12 +1224,12 @@ class SupabaseService {
     forceIndex: boolean = false
   ): Promise<void> {
     if (!this.client || !this.playerId) {
-      console.warn('[SupabaseService] Cannot index videos - not initialized');
+      logger.warn('[SupabaseService] Cannot index videos - not initialized');
       return;
     }
 
     if (this.indexingInProgress) {
-      console.log('[SupabaseService] Skipping indexing - already in progress');
+      logger.debug('[SupabaseService] Skipping indexing - already in progress');
       return;
     }
 
@@ -841,28 +1259,43 @@ class SupabaseService {
       // Check schema first
       const schemaOk = await this.checkSchema();
       if (!schemaOk) {
-        logger.warn('[SupabaseService] Schema issue detected. Attempting to fix...');
-        const fixed = await this.fixSchema();
-        if (!fixed) {
-          logger.error('[SupabaseService] ❌ Schema fix failed. Cannot proceed with indexing.');
-          logger.error('[SupabaseService] Please run: db/fix-local-videos-schema.sql in Supabase Dashboard');
+        // Only attempt fix once per session to prevent repeated network calls
+        if (this.schemaFixFailed) {
+          logger.debug('[SupabaseService] Schema fix already attempted and failed - skipping to prevent spam');
           if (onProgress) {
             onProgress(0, 0);
           }
           this.indexingInProgress = false;
           return;
         }
-        // Re-check schema after fix
-        const schemaOkAfterFix = await this.checkSchema();
-        if (!schemaOkAfterFix) {
-          logger.error('[SupabaseService] Schema still incorrect after fix attempt. Please run SQL manually.');
-          if (onProgress) {
-            onProgress(0, 0);
+        
+        if (!this.schemaFixAttempted) {
+          logger.warn('[SupabaseService] Schema issue detected. Attempting to fix...');
+          this.schemaFixAttempted = true;
+          const fixed = await this.fixSchema();
+          if (!fixed) {
+            this.schemaFixFailed = true;
+            logger.error('[SupabaseService] ❌ Schema fix failed. Cannot proceed with indexing.');
+            logger.error('[SupabaseService] Please run: db/fix-local-videos-schema.sql in Supabase Dashboard');
+            if (onProgress) {
+              onProgress(0, 0);
+            }
+            this.indexingInProgress = false;
+            return;
           }
-          this.indexingInProgress = false;
-          return;
+          // Re-check schema after fix
+          const schemaOkAfterFix = await this.checkSchema();
+          if (!schemaOkAfterFix) {
+            this.schemaFixFailed = true;
+            logger.error('[SupabaseService] Schema still incorrect after fix attempt. Please run SQL manually.');
+            if (onProgress) {
+              onProgress(0, 0);
+            }
+            this.indexingInProgress = false;
+            return;
+          }
+          logger.info('[SupabaseService] ✅ Schema fixed successfully');
         }
-        logger.info('[SupabaseService] ✅ Schema fixed successfully');
       }
 
       // Flatten all videos from all playlists and deduplicate by path
@@ -881,51 +1314,90 @@ class SupabaseService {
       });
 
       if (allVideos.length === 0) {
-        console.log('[SupabaseService] No videos to index');
+        logger.info('[SupabaseService] No videos to index');
         this.indexingInProgress = false;
         return;
       }
 
-      console.log(`[SupabaseService] Indexing ${allVideos.length} unique local videos (${allVideosRaw.length - allVideos.length} duplicates removed)...`);
+      logger.info(`[SupabaseService] Indexing ${allVideos.length} unique local videos (${allVideosRaw.length - allVideos.length} duplicates removed)...`);
 
-      // Mark all existing entries for this player as unavailable (soft maintenance window)
-      const { error: markError } = await this.client
+      // Fetch existing videos with their file_hash for comparison
+      const { data: existingVideos, error: fetchError } = await this.client
         .from('local_videos')
-        .update({ is_available: false })
-        .eq('player_id', this.playerId);
+        .select('file_path, file_hash')
+        .eq('player_id', this.playerId)
+        .eq('is_available', true);
 
-      if (markError) {
-        console.error('[SupabaseService] Error marking existing videos unavailable:', markError);
+      if (fetchError) {
+        logger.warn('[SupabaseService] Could not fetch existing videos for hash comparison:', fetchError.message);
       }
 
-      // Convert videos to Supabase format
-      const localVideoRecords = allVideos.map(video => {
-        const filePath = video.path || video.file_path || video.src;
-        const record: any = {
-          player_id: this.playerId,
-          title: video.title,
-          artist: video.artist || null,
-          file_path: filePath,
-          filename: video.filename || filePath.split('/').pop() || 'unknown',
-          duration: video.duration || null,
-          is_available: true,
-          metadata: {
-            sourceType: 'local',
-            playlist: video.playlist,
-            playlistDisplayName: video.playlistDisplayName,
-            filename: video.filename
+      // Create a map of existing file_path -> file_hash for quick lookup
+      const existingHashes = new Map<string, string>();
+      if (existingVideos) {
+        for (const existing of existingVideos) {
+          if (existing.file_path && existing.file_hash) {
+            existingHashes.set(existing.file_path, existing.file_hash);
           }
-        };
-        
-        // Include 'path' column for backward compatibility if database still has it
-        // Set it to same value as file_path to satisfy NOT NULL constraint
-        record.path = filePath;
-        
-        return record;
-      });
+        }
+      }
 
-      // Report initial progress with total count
-      const totalCount = localVideoRecords.length;
+      // Convert videos to Supabase format and filter out unchanged videos
+      const localVideoRecords = allVideos
+        .map(video => {
+          const filePath = video.path || video.file_path || video.src;
+          const fileHash = video.fileHash || null;
+          
+          // Skip if file hash matches existing (video hasn't changed)
+          if (fileHash && existingHashes.has(filePath) && existingHashes.get(filePath) === fileHash) {
+            return null; // Will be filtered out
+          }
+          
+          const record: any = {
+            player_id: this.playerId,
+            title: video.title,
+            artist: video.artist || null,
+            file_path: filePath,
+            filename: video.filename || filePath.split('/').pop() || 'unknown',
+            duration: video.duration || null,
+            is_available: true,
+            file_hash: fileHash || null, // Include hash in record
+            metadata: {
+              sourceType: 'local',
+              playlist: video.playlist,
+              playlistDisplayName: video.playlistDisplayName,
+              filename: video.filename
+            }
+          };
+          
+          // Include 'path' column for backward compatibility if database still has it
+          // Set it to same value as file_path to satisfy NOT NULL constraint
+          record.path = filePath;
+          
+          return record;
+        })
+        .filter((record): record is any => record !== null); // Remove nulls (unchanged videos)
+
+      const changedCount = localVideoRecords.length;
+      const unchangedCount = allVideos.length - changedCount;
+      
+      if (unchangedCount > 0) {
+        logger.info(`[SupabaseService] Skipping ${unchangedCount} unchanged videos (hash match)`);
+      }
+      
+      if (changedCount === 0) {
+        logger.info('[SupabaseService] No videos changed - indexing complete');
+        if (onProgress) {
+          onProgress(allVideos.length, allVideos.length);
+        }
+        this.indexingInProgress = false;
+        return;
+      }
+
+      logger.info(`[SupabaseService] Upserting ${changedCount} changed/new videos...`);
+
+      // Report initial progress with total count (include unchanged in total)
+      const totalCount = allVideos.length;
       if (onProgress) {
         onProgress(0, totalCount);
       }
@@ -943,12 +1415,15 @@ class SupabaseService {
           .upsert(batch, { onConflict: 'player_id,file_path' });
 
         if (upsertError) {
-          // If schema error (PGRST204 = column not found), try to fix it
-          if (upsertError.code === 'PGRST204') {
+          // If schema error (PGRST204 = column not found), try to fix it (only once)
+          if (upsertError.code === 'PGRST204' && !this.schemaFixAttempted) {
             logger.error('[SupabaseService] Schema error detected. Attempting to fix...');
+            this.schemaFixAttempted = true;
             const fixed = await this.fixSchema();
             if (!fixed) {
+              this.schemaFixFailed = true;
               logger.error('[SupabaseService] Failed to fix schema automatically. Please run SQL manually.');
+              logger.debug('[SupabaseService] Will skip future schema fix attempts to prevent spam');
               break;
             }
             // Retry the upsert after schema fix
@@ -956,26 +1431,30 @@ class SupabaseService {
               .from('local_videos')
               .upsert(batch, { onConflict: 'player_id,file_path' });
             if (retryError) {
-              console.error(`[SupabaseService] Error upserting batch ${i / batchSize + 1} after schema fix:`, retryError);
+              logger.error(`[SupabaseService] Error upserting batch ${i / batchSize + 1} after schema fix:`, retryError);
             } else {
               upsertedCount += batch.length;
             }
+          } else if (upsertError.code === 'PGRST204' && this.schemaFixFailed) {
+            // Schema fix already failed - skip to prevent spam
+            logger.debug('[SupabaseService] Schema error but fix already failed - skipping batch to prevent spam');
+            break;
           } else {
-            console.error(`[SupabaseService] Error upserting batch ${i / batchSize + 1}:`, upsertError);
+            logger.error(`[SupabaseService] Error upserting batch ${i / batchSize + 1}:`, upsertError);
           }
         } else {
           upsertedCount += batch.length;
         }
         
-        // Report progress after each batch
+        // Report progress after each batch (include unchanged videos in progress)
         if (onProgress) {
-          onProgress(upsertedCount, totalCount);
+          onProgress(unchangedCount + upsertedCount, totalCount);
         }
       }
 
-      console.log(`[SupabaseService] Indexed (upserted) ${upsertedCount}/${allVideos.length} videos`);
+      logger.info(`[SupabaseService] Indexed (upserted) ${upsertedCount} changed videos, skipped ${unchangedCount} unchanged (total: ${allVideos.length})`);
     } catch (error) {
-      console.error('[SupabaseService] Video indexing exception:', error);
+      logger.error('[SupabaseService] Video indexing exception:', error);
     } finally {
       this.indexingInProgress = false;
     }
@@ -1007,16 +1486,24 @@ class SupabaseService {
         }
       }
 
-      // RPC function doesn't exist - provide instructions
-      logger.error('[SupabaseService] ❌ Schema fix RPC function not found.');
-      logger.error('[SupabaseService] To enable automatic schema fixes:');
-      logger.error('[SupabaseService] 1. Run: db/create-schema-fix-rpc.sql in Supabase Dashboard');
-      logger.error('[SupabaseService] 2. Then run: db/fix-local-videos-schema.sql to fix current schema');
-      logger.error('[SupabaseService] After that, the app will auto-fix schema issues in the future.');
+      // RPC function doesn't exist or failed - log once, then use debug level
+      if (!this.schemaFixFailed) {
+        logger.error('[SupabaseService] ❌ Schema fix RPC function not found or failed.');
+        logger.error('[SupabaseService] To enable automatic schema fixes:');
+        logger.error('[SupabaseService] 1. Run: db/create-schema-fix-rpc.sql in Supabase Dashboard');
+        logger.error('[SupabaseService] 2. Then run: db/fix-local-videos-schema.sql to fix current schema');
+        logger.error('[SupabaseService] After that, the app will auto-fix schema issues in the future.');
+      } else {
+        logger.debug('[SupabaseService] Schema fix RPC not available (already logged error)');
+      }
       
       return false;
     } catch (error) {
-      logger.error('[SupabaseService] Error attempting schema fix:', error);
+      if (!this.schemaFixFailed) {
+        logger.error('[SupabaseService] Error attempting schema fix:', error);
+      } else {
+        logger.debug('[SupabaseService] Schema fix error (already logged):', error);
+      }
       return false;
     }
   }
@@ -1034,7 +1521,7 @@ class SupabaseService {
       .eq('path', path);
 
     if (error) {
-      console.error('[SupabaseService] Error marking video unavailable:', error);
+      logger.error('[SupabaseService] Error marking video unavailable:', error);
     }
   }
 
@@ -1054,7 +1541,7 @@ class SupabaseService {
     offset: number = 0
   ): Promise<Video[]> {
     if (!this.client) {
-      console.error('[SupabaseService] Client not initialized for search');
+      logger.error('[SupabaseService] Client not initialized for search');
       return [];
     }
 
@@ -1067,8 +1554,16 @@ class SupabaseService {
       });
 
       if (error) {
-        console.error('[SupabaseService] Search error:', error);
-        return [];
+        // Only log as debug for known schema/function errors (to reduce console noise)
+        const isSchemaError = error.code === 'PGRST203' || 
+                            (error.message?.includes('Could not choose the best candidate function'));
+        if (isSchemaError) {
+          logger.debug('[SupabaseService] Search RPC unavailable (function error):', error.message);
+        } else {
+          logger.error('[SupabaseService] Search error:', error);
+        }
+        // Throw error to trigger fallback in useSearch
+        throw new Error(`Search RPC failed: ${error.message}`);
       }
 
       // Transform database results to Video format
@@ -1082,9 +1577,17 @@ class SupabaseService {
         playlistDisplayName: row.playlist_display_name,
         duration: row.duration
       }));
-    } catch (error) {
-      console.error('[SupabaseService] Search exception:', error);
-      return [];
+    } catch (error: any) {
+      // Only log as debug for known schema/function errors (to reduce console noise)
+      const isSchemaError = error?.code === 'PGRST203' || 
+                          (error?.message?.includes('Could not choose the best candidate function'));
+      if (isSchemaError) {
+        logger.debug('[SupabaseService] Search RPC exception (function error):', error?.message);
+      } else {
+        logger.error('[SupabaseService] Search exception:', error);
+      }
+      // Re-throw to trigger fallback in useSearch
+      throw error;
     }
   }
 
@@ -1104,7 +1607,7 @@ class SupabaseService {
     offset: number = 0
   ): Promise<Video[]> {
     if (!this.client) {
-      console.error('[SupabaseService] Client not initialized for browse');
+      logger.error('[SupabaseService] Client not initialized for browse');
       return [];
     }
 
@@ -1118,8 +1621,15 @@ class SupabaseService {
       });
 
       if (error) {
-        console.error('[SupabaseService] Browse error:', error);
-        return [];
+        // Only log as debug for known schema/function errors (to reduce console noise)
+        const isSchemaError = error.code === '42703' || error.message?.includes('column') && error.message?.includes('does not exist');
+        if (isSchemaError) {
+          logger.debug('[SupabaseService] Browse RPC unavailable (schema error):', error.message);
+        } else {
+          logger.error('[SupabaseService] Browse error:', error);
+        }
+        // RPC function may not exist or have schema issues - return empty to trigger fallback
+        throw new Error(`Browse RPC failed: ${error.message}`);
       }
 
       // Transform database results to Video format
@@ -1133,9 +1643,17 @@ class SupabaseService {
         playlistDisplayName: row.playlist_display_name,
         duration: row.duration
       }));
-    } catch (error) {
-      console.error('[SupabaseService] Browse exception:', error);
-      return [];
+    } catch (error: any) {
+      // Only log as debug for known schema/function errors (to reduce console noise)
+      const isSchemaError = error?.code === '42703' || 
+                          (error?.message?.includes('column') && error?.message?.includes('does not exist'));
+      if (isSchemaError) {
+        logger.debug('[SupabaseService] Browse RPC exception (schema error):', error?.message);
+      } else {
+        logger.error('[SupabaseService] Browse exception:', error);
+      }
+      // Re-throw to trigger fallback in useSearch
+      throw error;
     }
   }
 
@@ -1154,14 +1672,29 @@ class SupabaseService {
       });
 
       if (error) {
-        console.error('[SupabaseService] Count error:', error);
-        return 0;
+        // Only log as debug for known schema/function errors (to reduce console noise)
+        const isSchemaError = error.code === '42703' || error.message?.includes('column') && error.message?.includes('does not exist');
+        if (isSchemaError) {
+          logger.debug('[SupabaseService] Count RPC unavailable (schema error):', error.message);
+        } else {
+          logger.error('[SupabaseService] Count error:', error);
+        }
+        // RPC function may not exist or have schema issues - return 0 to trigger fallback
+        throw new Error(`Count RPC failed: ${error.message}`);
       }
 
       return data || 0;
-    } catch (error) {
-      console.error('[SupabaseService] Count exception:', error);
-      return 0;
+    } catch (error: any) {
+      // Only log as debug for known schema/function errors (to reduce console noise)
+      const isSchemaError = error?.code === '42703' || 
+                          (error?.message?.includes('column') && error?.message?.includes('does not exist'));
+      if (isSchemaError) {
+        logger.debug('[SupabaseService] Count RPC exception (schema error):', error?.message);
+      } else {
+        logger.error('[SupabaseService] Count exception:', error);
+      }
+      // Re-throw to trigger fallback in useSearch
+      throw error;
     }
   }
 
@@ -1261,3 +1794,4 @@ export { SupabaseService };
 
 // Default export
 export default SupabaseService;
+

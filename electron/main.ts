@@ -2,6 +2,7 @@
 import { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { createHash } from 'crypto';
 import Store from 'electron-store';
 
 // Type definitions for Electron Store
@@ -395,6 +396,7 @@ interface VideoFile {
   artist: string | null;
   filename: string;
   path: string;
+  fileHash?: string; // Hash for change detection
   src: string;
   size: number;
   playlist: string;
@@ -406,21 +408,37 @@ ipcMain.handle('get-playlists', async () => {
   const playlists: Record<string, VideoFile[]> = {};
 
   try {
-    if (!fs.existsSync(playlistsDir)) {
+    // Check if directory exists (async)
+    try {
+      await fs.promises.access(playlistsDir);
+    } catch {
       console.log('Playlists directory does not exist:', playlistsDir);
       return { playlists: {}, playlistsDirectory: playlistsDir };
     }
 
-    const entries = fs.readdirSync(playlistsDir, { withFileTypes: true });
+    // Read directory entries (async)
+    const entries = await fs.promises.readdir(playlistsDir, { withFileTypes: true });
     
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
+    // Process playlists in parallel for better performance
+    const playlistPromises = entries
+      .filter(entry => entry.isDirectory())
+      .map(async (entry) => {
         const playlistPath = path.join(playlistsDir, entry.name);
-        const files = fs.readdirSync(playlistPath)
-          .filter(file => /\.(mp4|webm|mkv|avi|mov)$/i.test(file))
-          .map((file, index): VideoFile => {
+        try {
+          const files = await fs.promises.readdir(playlistPath);
+          const videoFileNames = files.filter(file => /\.(mp4|webm|mkv|avi|mov)$/i.test(file));
+          
+          // Process files in parallel
+          const videoPromises = videoFileNames.map(async (file, index): Promise<VideoFile> => {
             const filePath = path.join(playlistPath, file);
-            const stats = fs.statSync(filePath);
+            const stats = await fs.promises.stat(filePath);
+            
+            // Calculate file hash for change detection (using size + mtime as quick hash)
+            // For full SHA256, uncomment the code below (slower but more accurate)
+            const quickHash = `${stats.size}-${stats.mtime.getTime()}`;
+            // For full file hash (slower):
+            // const fileBuffer = await fs.promises.readFile(filePath);
+            // const fullHash = createHash('sha256').update(fileBuffer).digest('hex');
             
             // Parse filename format: "[Artist] - [Title] -- [YouTube_ID].mp4"
             const nameWithoutExt = file.replace(/\.[^/.]+$/i, '');
@@ -461,13 +479,28 @@ ipcMain.handle('get-playlists', async () => {
               src: `file://${filePath}`,
               size: stats.size,
               playlist: entry.name,
-              playlistDisplayName: entry.name.replace(/^PL[A-Za-z0-9_-]+[._]/, '')
+              playlistDisplayName: entry.name.replace(/^PL[A-Za-z0-9_-]+[._]/, ''),
+              fileHash: quickHash // Hash for change detection
             };
-          })
-          .sort((a, b) => a.title.localeCompare(b.title));
-        
-        playlists[entry.name] = files;
-      }
+          });
+          
+          // Wait for all video files to be processed
+          const processedVideos = await Promise.all(videoPromises);
+          processedVideos.sort((a, b) => a.title.localeCompare(b.title));
+          
+          return { playlistName: entry.name, videos: processedVideos };
+        } catch (error: any) {
+          console.warn(`Error reading playlist ${entry.name}:`, error.message);
+          return { playlistName: entry.name, videos: [] };
+        }
+      });
+    
+    // Wait for all playlists to be processed
+    const playlistResults = await Promise.all(playlistPromises);
+    
+    // Build playlists object
+    for (const result of playlistResults) {
+      playlists[result.playlistName] = result.videos;
     }
 
     return { playlists, playlistsDirectory: playlistsDir };
@@ -479,7 +512,7 @@ ipcMain.handle('get-playlists', async () => {
 
 ipcMain.handle('get-video-metadata', async (_event, filePath: string) => {
   try {
-    const stats = fs.statSync(filePath);
+    const stats = await fs.promises.stat(filePath);
     return {
       size: stats.size,
       created: stats.birthtime,

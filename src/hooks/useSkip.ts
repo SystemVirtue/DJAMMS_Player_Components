@@ -4,6 +4,7 @@
 
 import { useCallback } from 'react';
 import { VideoRefs } from '../types';
+import { logger } from '../utils/logger';
 
 interface SkipConfig {
   videoRefs?: VideoRefs;  // Optional - kept for backwards compatibility but not used
@@ -31,7 +32,7 @@ export function useSkip(config: SkipConfig) {
   const { onSkip } = config;
 
   const skip = useCallback(() => {
-    console.log('[useSkip] Skip requested - delegating to onSkip callback');
+    logger.debug('[useSkip] Skip requested - delegating to onSkip callback');
     onSkip?.();
   }, [onSkip]);
 

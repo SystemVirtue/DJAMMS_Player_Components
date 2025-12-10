@@ -5,6 +5,9 @@ import { localSearchService, SearchResult, getSupabaseService } from '../service
 import { getPlaylistDisplayName, getDisplayArtist, cleanVideoTitle, formatDuration } from '../utils/playlistHelpers';
 import { shuffleArray } from '../utils/arrayUtils';
 import { useSupabase } from '../hooks/useSupabase';
+import { usePlayerState } from '../hooks/usePlayerState';
+import { usePlaylistManagement } from '../hooks/usePlaylistManagement';
+import { useSearch } from '../hooks/useSearch';
 import { QueueVideoItem } from '../types/supabase';
 import { 
   getPlayerId, 
@@ -19,6 +22,9 @@ import {
   MAX_PLAYER_ID_LENGTH
 } from '../utils/playerUtils';
 import { useVideoPlayer } from '../hooks/useVideoPlayer';
+import { QueueTab, SearchTab } from '../components/tabs';
+import { SettingsTab } from '../components/SettingsTab';
+import { ToolsTab } from '../components/ToolsTab';
 
 interface PlayerWindowProps {
   className?: string;
@@ -252,17 +258,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [queueIndex, setQueueIndex] = useState(0);
   const [priorityQueue, setPriorityQueue] = useState<Video[]>([]); // KIOSK requests
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchScope, setSearchScope] = useState('all');
-  const [searchSort, setSearchSort] = useState('az');
-  const [searchLimit, setSearchLimit] = useState(100); // Limit displayed rows for performance
-  
-  // Supabase-powered search results (async)
-  const [searchResults, setSearchResults] = useState<Video[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchTotalCount, setSearchTotalCount] = useState(0);
-
   // UI state
   const [currentTab, setCurrentTab] = useState<TabId>('queue');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -292,6 +287,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 });
 
+  // Player Identity state
+  const [playerId, setPlayerId] = useState<string>(DEFAULT_PLAYER_ID);
+  const [playerIdInitialized, setPlayerIdInitialized] = useState(false);
+
   // Settings
   const [settings, setSettings] = useState({
     autoShufflePlaylists: true,
@@ -303,10 +302,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     playerFullscreen: false,
     playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
   });
-
-  // Player Identity state
-  const [playerId, setPlayerId] = useState<string>(DEFAULT_PLAYER_ID);
-  const [playerIdInitialized, setPlayerIdInitialized] = useState(false);
 
   // Kiosk settings state
   const [kioskSettings, setKioskSettings] = useState({
@@ -346,7 +341,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [playerReady, setPlayerReady] = useState(false); // True after queue is loaded and ready
   const playerReadyRef = useRef(false); // Ref to avoid stale closure in IPC callbacks
   const hasIndexedRef = useRef(false); // Prevent multiple indexing calls during mount
-  const lastIndexedPlayerIdRef = useRef<string | null>(null); // Prevent redundant re-index for same playerId
+  const lastIndexedPlaylistsRef = useRef<string>(''); // Track last indexed playlists to prevent re-indexing
+  const isReloadingPlaylistsRef = useRef(false); // Prevent concurrent playlist reloads
   
   // Debounce refs to prevent infinite loop on rapid video end events
   const lastPlayNextTimeRef = useRef(0);
@@ -368,8 +364,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const WATCHDOG_CHECK_INTERVAL_MS = 2000; // Check every 2 seconds
   const WATCHDOG_MAX_STALL_CHECKS = 3; // Trigger recovery after 3 consecutive stall detections (6 seconds)
 
-  // Check if we're in Electron
-  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
+  // Check if we're in Electron (check multiple ways for reliability)
+  const isElectron = typeof window !== 'undefined' && (
+    !!(window as any).electronAPI ||
+    !!(window as any).process?.versions?.electron ||
+    navigator.userAgent.toLowerCase().includes('electron')
+  );
 
   // Initialize Player ID on mount
   useEffect(() => {
@@ -515,9 +515,24 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       if (queueType === 'priority') {
         // Add to separate priority queue (consumed first on skip)
         setPriorityQueue(prev => [...prev, videoToAdd]);
+        // IMPORTANT: Also add to main process queue state (source of truth for playback)
+        if (isElectron) {
+          console.log('[PlayerWindow] Adding video to priority queue in main process (from Supabase):', videoToAdd.title);
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'add_to_priority_queue', 
+            payload: { video: videoToAdd } 
+          });
+        }
       } else {
         // Add to end of active queue
         setQueue(prev => [...prev, videoToAdd]);
+        // Also add to main process
+        if (isElectron) {
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'add_to_queue', 
+            payload: { video: videoToAdd } 
+          });
+        }
       }
     },
     onQueueShuffle: () => {
@@ -571,18 +586,38 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             });
           });
           
-          // Play the first video
-          setTimeout(() => {
-            (window as any).electronAPI.sendQueueCommand?.({ 
-              action: 'play_at_index', 
-              payload: { index: 0 } 
-            });
-          }, 100);
+          // Determine starting index based on playback state
+          // If video is currently PLAYING, start at index 1 (skip index 0) to not interrupt
+          // If video is NOT playing (paused/inactive), play index 0 (first song in new playlist)
+          const startIndex = (isPlaying && currentVideo) ? 1 : 0;
+          
+          if (startIndex === 1) {
+            // Video is playing - start playlist at index 1 to not interrupt current video
+            console.log('[PlayerWindow] Video is playing - starting playlist at index 1 to avoid interruption');
+            setTimeout(() => {
+              (window as any).electronAPI.sendQueueCommand?.({ 
+                action: 'play_at_index', 
+                payload: { index: 1 } 
+              });
+            }, 100);
+          } else {
+            // Video is not playing - play index 0 (first song in new playlist)
+            // This effectively "skips" to the next song (which is the first in the new playlist)
+            console.log('[PlayerWindow] Video is not playing - playing index 0 (first song in new playlist)');
+            setTimeout(() => {
+              (window as any).electronAPI.sendQueueCommand?.({ 
+                action: 'play_at_index', 
+                payload: { index: 0 } 
+              });
+            }, 100);
+          }
         }
         
         // Update local state (will be synced from main process via queue-state event)
+        // IMPORTANT: Do NOT clear priority queue - it should persist when loading a new playlist
         setQueue(finalTracks);
         setQueueIndex(0);
+        // Priority queue is preserved - do NOT call setPriorityQueue([]) here
       }
     },
     onQueueMove: (fromIndex: number, toIndex: number) => {
@@ -660,15 +695,70 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
   });
 
+  // Search state - now managed by useSearch hook (called after playerId and supabaseInitialized are available)
+  const {
+    searchQuery,
+    searchScope,
+    searchSort,
+    searchResults,
+    searchLoading,
+    searchTotalCount,
+    searchLimit,
+    setSearchQuery,
+    setSearchScope,
+    setSearchSort,
+    setSearchLimit,
+    handleScopeChange
+  } = useSearch({
+    playlists,
+    selectedPlaylist,
+    supabaseInitialized: supabaseInitialized,
+    playerId: playerId || DEFAULT_PLAYER_ID
+  });
+
   const videoARef = useRef<HTMLVideoElement>(null);
   const videoBRef = useRef<HTMLVideoElement>(null);
+  
+  // Error handler for video playback errors
+  const handleVideoError = useCallback((errorMessage: string) => {
+    console.error('🚨 ========== PLAYBACK ERROR (PlayerWindow) ==========');
+    console.error('🚨 PLAYBACK ERROR - Error Message:', errorMessage);
+    console.error('🚨 PLAYBACK ERROR - Current Video:', currentVideo?.title, 'by', currentVideo?.artist);
+    console.error('🚨 PLAYBACK ERROR - Video Path:', currentVideo?.path || currentVideo?.src);
+    console.error('🚨 PLAYBACK ERROR - Video Source URL:', currentVideo?.src);
+    console.error('🚨 PLAYBACK ERROR - Is Electron:', isElectron);
+    console.error('🚨 PLAYBACK ERROR - Timestamp:', new Date().toISOString());
+    console.error('🚨 =================================================');
+    
+    // Also try to send to Electron main process if available
+    if (isElectron && (window as any).electronAPI) {
+      try {
+        (window as any).electronAPI.send?.('log-error', {
+          type: 'PLAYBACK_ERROR',
+          message: errorMessage,
+          video: currentVideo,
+          timestamp: new Date().toISOString()
+        });
+      } catch (e) {
+        // Ignore IPC errors
+      }
+    }
+  }, [currentVideo, isElectron]);
+  
   const videoPlayer = useVideoPlayer({
     videoRefs: [videoARef, videoBRef],
     crossfadeMode: 'manual', // or from settings
     crossfadeDuration: 2,
     onVideoEnd: () => {/* handle video end */},
+    onError: handleVideoError, // Add error handler
     // other config
   });
+
+  // Debug: Log when playlists state changes
+  useEffect(() => {
+    const playlistCount = Object.keys(playlists).length;
+    console.log('[PlayerWindow] Playlists state updated - count:', playlistCount, 'names:', Object.keys(playlists));
+  }, [playlists]);
 
   // Auto-collapse sidebar on small screens
   useEffect(() => {
@@ -685,6 +775,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Track when indexing is complete (for auto-play logic)
   const indexingCompleteRef = useRef(false);
   
+  // Track last indexed playerId and supabaseInitialized state to prevent unnecessary reloads
+  // Note: These refs are declared here to avoid duplicate declarations
+  const lastIndexedPlayerIdRef = useRef<string>('');
+  const lastSupabaseInitializedRef = useRef<boolean>(false);
+  
   // Initialize indexingCompleteRef based on whether Supabase is available
   useEffect(() => {
     // If Supabase is not initialized, mark as complete immediately (no indexing needed)
@@ -692,87 +787,155 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       indexingCompleteRef.current = true;
     }
   }, [supabaseInitialized]);
-  
+
   // Sync music database to Supabase when it becomes initialized and we have playlists
   useEffect(() => {
-    if (supabaseInitialized && Object.keys(playlists).length > 0) {
-      console.log('[PlayerWindow] Supabase initialized - syncing music database');
-      setIsProcessing(true);
-      setProcessingProgress({ current: 0, total: 0 });
-      indexingCompleteRef.current = false;
-      getSupabaseService().indexLocalVideos(
-        playlists,
-        (current, total) => {
-          setProcessingProgress({ current, total });
-        }
-      ).finally(() => {
-        setIsProcessing(false);
-        setProcessingProgress({ current: 0, total: 0 });
-        indexingCompleteRef.current = true;
-        console.log('[PlayerWindow] Playlist indexing complete - ready for playback');
-      });
+    if (!supabaseInitialized || Object.keys(playlists).length === 0) return;
+
+    // Create a hash of playlist keys to detect actual changes
+    const playlistHash = Object.keys(playlists).sort().join('|');
+    
+    // Skip if we've already indexed these exact playlists
+    if (lastIndexedPlaylistsRef.current === playlistHash) {
+      console.log('[PlayerWindow] Playlists unchanged, skipping re-index');
+      return;
     }
+
+    console.log('[PlayerWindow] Supabase initialized - syncing music database');
+    lastIndexedPlaylistsRef.current = playlistHash;
+    setIsProcessing(true);
+    setProcessingProgress({ current: 0, total: 0 });
+    indexingCompleteRef.current = false;
+    getSupabaseService().indexLocalVideos(
+      playlists,
+      (current, total) => {
+        setProcessingProgress({ current, total });
+      }
+    ).finally(() => {
+      setIsProcessing(false);
+      setProcessingProgress({ current: 0, total: 0 });
+      indexingCompleteRef.current = true;
+      console.log('[PlayerWindow] Playlist indexing complete - ready for playback');
+    });
   }, [supabaseInitialized, playlists]);
 
   /**
    * After Player ID is validated/changed, re-parse playlists and upload search data to Supabase.
    * This ensures Admin/Kiosk search stays in sync with the active player instance.
+   * 
+   * IMPORTANT: Only reload playlists when playerId changes, NOT when supabaseInitialized changes.
+   * The supabaseInitialized change is handled by the other useEffect that syncs to Supabase.
    */
   useEffect(() => {
     const shouldSync = isElectron && playerIdInitialized && playerId && playerId.trim() !== '';
     if (!shouldSync) return;
 
-    // Avoid re-indexing repeatedly for the same playerId
-    if (lastIndexedPlayerIdRef.current === playerId) return;
+    // Prevent concurrent reloads
+    if (isReloadingPlaylistsRef.current) {
+      console.log('[PlayerWindow] Playlist reload already in progress, skipping');
+      return;
+    }
 
+    // Only reload when playerId changes, not when supabaseInitialized changes
+    // This prevents the loop where supabaseInitialized toggling causes reloads
+    if (lastIndexedPlayerIdRef.current === playerId) {
+      console.log('[PlayerWindow] Player ID unchanged, skipping reload');
+      return;
+    }
+
+    console.log('[PlayerWindow] 🔄 Player ID changed - triggering reload:', {
+      oldPlayerId: lastIndexedPlayerIdRef.current,
+      newPlayerId: playerId
+    });
+
+    // Update ref to track current playerId BEFORE async operation
     lastIndexedPlayerIdRef.current = playerId;
+    isReloadingPlaylistsRef.current = true;
 
     const reloadAndSync = async () => {
       try {
         // Re-parse playlists from disk
         const { playlists: loadedPlaylists } = await (window as any).electronAPI.getPlaylists();
-        setPlaylists(loadedPlaylists || {});
-        localSearchService.indexVideos(loadedPlaylists || {});
+        const playlistHash = Object.keys(loadedPlaylists || {}).sort().join('|');
+        
+        // Only update if playlists actually changed
+        if (lastIndexedPlaylistsRef.current !== playlistHash) {
+          console.log('[PlayerWindow] Player ID validated - reloading playlists');
+          setPlaylists(loadedPlaylists || {});
+          localSearchService.indexVideos(loadedPlaylists || {});
+          lastIndexedPlaylistsRef.current = playlistHash;
+        } else {
+          console.log('[PlayerWindow] Player ID validated - playlists unchanged, skipping reload');
+        }
 
         // Upload search data to Supabase once we have a client
-        if (supabaseInitialized && loadedPlaylists) {
-          console.log('[PlayerWindow] Player ID validated - syncing playlists/search to Supabase');
-          setIsProcessing(true);
-          setProcessingProgress({ current: 0, total: 0 });
-          indexingCompleteRef.current = false;
-          getSupabaseService().indexLocalVideos(
-            loadedPlaylists,
-            (current, total) => {
-              setProcessingProgress({ current, total });
-            }
-          ).finally(() => {
-            setIsProcessing(false);
-            setProcessingProgress({ current: 0, total: 0 });
-            indexingCompleteRef.current = true;
-            console.log('[PlayerWindow] Playlist indexing complete after Player ID validation');
-          });
+        // Note: The other useEffect will handle indexing when playlists change
+        if (supabaseInitialized && loadedPlaylists && Object.keys(loadedPlaylists).length > 0) {
+          console.log('[PlayerWindow] Player ID validated - will sync to Supabase via playlist change effect');
+          // Don't index here - let the playlist change effect handle it to avoid double indexing
         } else {
           // If Supabase is not initialized, mark as complete (no indexing needed)
           indexingCompleteRef.current = true;
         }
       } catch (error) {
         console.error('[PlayerWindow] Failed to reload playlists after Player ID validation:', error);
+      } finally {
+        isReloadingPlaylistsRef.current = false;
       }
     };
 
     reloadAndSync();
-  }, [isElectron, playerIdInitialized, playerId, supabaseInitialized]);
+  }, [isElectron, playerIdInitialized, playerId]); // Removed supabaseInitialized from dependencies
 
   // Load playlists and settings on mount
   useEffect(() => {
     // Guard against multiple executions (React Strict Mode or HMR)
     if (hasIndexedRef.current) return;
     
-    const loadData = async () => {
-      if (isElectron) {
+    const loadData = async (retryCount = 0) => {
+      // Check if electronAPI is available (it might not be ready on first render)
+      const electronAvailable = typeof window !== 'undefined' && !!(window as any).electronAPI;
+      
+      // If we're in Electron environment (check process or userAgent), wait for electronAPI
+      const isElectronEnv = typeof window !== 'undefined' && (
+        !!(window as any).process?.versions?.electron || 
+        navigator.userAgent.toLowerCase().includes('electron') ||
+        !!(window as any).require // Electron has require in renderer
+      );
+      
+      const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+      const hasProcess = !!(window as any).process;
+      const hasRequire = !!(window as any).require;
+      console.log(`[PlayerWindow] loadData attempt ${retryCount}:`, {
+        electronAvailable,
+        isElectronEnv,
+        hasElectronAPI: !!(window as any).electronAPI,
+        hasProcess,
+        hasRequire,
+        processElectron: !!(window as any).process?.versions?.electron,
+        userAgent: userAgent.substring(0, 100)
+      });
+      
+      if (!electronAvailable && isElectronEnv && retryCount < 20) {
+        // Retry more times with increasing delay if electronAPI isn't ready yet
+        const delay = Math.min(200 * (retryCount + 1), 2000);
+        console.log(`[PlayerWindow] electronAPI not ready, retrying in ${delay}ms (attempt ${retryCount + 1}/20)`);
+        setTimeout(() => loadData(retryCount + 1), delay);
+        return;
+      }
+      
+      if (electronAvailable) {
         try {
           hasIndexedRef.current = true; // Mark as indexed BEFORE async operations
           const { playlists: loadedPlaylists } = await (window as any).electronAPI.getPlaylists();
+          const playlistCount = Object.keys(loadedPlaylists || {}).length;
+          console.log('[PlayerWindow] Loaded playlists:', playlistCount, 'playlists');
+          if (playlistCount > 0) {
+            console.log('[PlayerWindow] Playlist names:', Object.keys(loadedPlaylists || {}));
+          } else {
+            const playlistDir = await (window as any).electronAPI.getPlaylistsDirectory?.() || 'unknown';
+            console.warn('[PlayerWindow] ⚠️ No playlists found! Check playlist directory:', playlistDir);
+          }
           setPlaylists(loadedPlaylists || {});
           localSearchService.indexVideos(loadedPlaylists || {});
           
@@ -855,7 +1018,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               activeQueueLength: savedQueueState.activeQueue.length,
               priorityQueueLength: savedQueueState.priorityQueue?.length || 0,
               queueIndex: savedQueueState.queueIndex,
-              currentVideo: savedQueueState.currentVideo?.title
+              currentVideo: savedQueueState.currentVideo?.title,
+              wasPlaying: savedQueueState.isPlaying
             });
             setQueue(savedQueueState.activeQueue);
             setQueueIndex(savedQueueState.queueIndex || 0);
@@ -866,17 +1030,23 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             if (savedQueueState.activePlaylist) {
               setActivePlaylist(savedQueueState.activePlaylist);
             }
-            // Resume playback if it was playing - wait for indexing to complete first
-            if (savedQueueState.isPlaying && savedQueueState.currentVideo) {
-              // Wait for indexing to complete before starting playback
-              waitForIndexingComplete().then(() => {
-                console.log('[PlayerWindow] Indexing complete - resuming saved playback');
-                setTimeout(() => {
+            // Always start playback on startup if there's a saved queue (even if it wasn't playing)
+            // Wait for indexing to complete first
+            waitForIndexingComplete().then(() => {
+              console.log('[PlayerWindow] Indexing complete - starting playback from saved queue');
+              setTimeout(() => {
+                // If there's a current video, play it
+                if (savedQueueState.currentVideo) {
+                  console.log('[PlayerWindow] Playing saved current video:', savedQueueState.currentVideo.title);
                   (window as any).electronAPI.controlPlayerWindow('play', savedQueueState.currentVideo);
                   setIsPlaying(true);
-                }, 500);
-              });
-            }
+                } else if (savedQueueState.activeQueue && savedQueueState.activeQueue.length > 0) {
+                  // No current video - trigger SKIP once to start playback of next song in active_queue
+                  console.log('[PlayerWindow] No saved current video - triggering SKIP to start playback');
+                  (window as any).electronAPI.sendQueueCommand?.({ action: 'next' });
+                }
+              }, 500);
+            });
           } else {
             // No saved queue - load last active playlist and auto-play
             const savedActivePlaylist = await (window as any).electronAPI.getSetting('activePlaylist');
@@ -929,18 +1099,44 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             }
           }
         } catch (error) {
-          console.error('Failed to load data:', error);
+          console.error('[PlayerWindow] Failed to load playlists:', error);
           hasIndexedRef.current = false; // Reset on error to allow retry
+          // Retry once after error
+          if (retryCount === 0) {
+            setTimeout(() => loadData(1), 1000);
+          }
         }
       } else {
+        // Only go to web mode if we're definitely not in Electron
+        const isElectronEnv = typeof window !== 'undefined' && (
+          (window as any).process?.versions?.electron || 
+          navigator.userAgent.toLowerCase().includes('electron')
+        );
+        
+        if (isElectronEnv) {
+          // Still in Electron but electronAPI not ready - wait a bit more
+          console.warn(`[PlayerWindow] ⚠️ Electron environment detected but electronAPI not available. Waiting... (attempt ${retryCount + 1})`);
+          if (retryCount < 20) {
+            const delay = Math.min(300 * (retryCount + 1), 3000);
+            setTimeout(() => loadData(retryCount + 1), delay);
+            return;
+          } else {
+            console.error('[PlayerWindow] ❌ electronAPI never became available after 20 attempts. Check if Electron main process is running.');
+            hasIndexedRef.current = true; // Prevent infinite retries
+            return; // Don't fall through to web mode
+          }
+        }
+        
+        // Web mode - use __PLAYLISTS__ if available (only if not in Electron)
         hasIndexedRef.current = true;
         const webPlaylists = (window as any).__PLAYLISTS__ || {};
+        console.log('[PlayerWindow] Web mode - loaded playlists:', Object.keys(webPlaylists).length, 'playlists');
         setPlaylists(webPlaylists);
         localSearchService.indexVideos(webPlaylists);
       }
     };
     loadData();
-  }, [isElectron]);
+  }, []); // Empty deps - only run once on mount, but check electronAPI availability inside
 
   // Save queue state whenever it changes (for persistence across app restarts)
   useEffect(() => {
@@ -1148,7 +1344,69 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Send play command to Player Window (the ONLY player - handles all audio/video)
   const sendPlayCommand = useCallback((video: Video) => {
     if (isElectron) {
-      (window as any).electronAPI.controlPlayerWindow('play', video);
+      // Convert file:// URLs to djamms:// in dev mode BEFORE sending to player window
+      const isDevMode = typeof window !== 'undefined' && window.location.origin.startsWith('http://localhost');
+      let videoToSend = { ...video };
+      
+      const videoPath = video.src || video.path || (video as any).file_path;
+      if (videoPath && isDevMode) {
+        // Extract the actual file path from file:// URL
+        let cleanPath: string;
+        
+        if (videoPath.startsWith('file://')) {
+          // Parse the file:// URL properly
+          try {
+            const url = new URL(videoPath);
+            cleanPath = url.pathname;
+            // On macOS, remove the leading slash (file:///Users/... -> /Users/...)
+            if (process.platform === 'darwin' && cleanPath.startsWith('/')) {
+              // Keep the leading slash for absolute paths on macOS
+              // file:///Users/... is correct, pathname is /Users/...
+            }
+          } catch (e) {
+            // Fallback: simple string replacement
+            cleanPath = videoPath.substring(7); // Remove 'file://' prefix
+          }
+        } else {
+          // Already a plain path
+          cleanPath = videoPath.replace(/\\/g, '/');
+        }
+        
+        // Use the path directly without encoding - the protocol handler will handle it
+        // DO NOT use encodeURIComponent() as it double-encodes slashes
+        const djammsUrl = `djamms://${cleanPath}`;
+        
+        console.log('✅ [PlayerWindow] Converting file:// to djamms:// (FIXED - no double encoding)');
+        console.log('✅ [PlayerWindow] Original path:', videoPath);
+        console.log('✅ [PlayerWindow] Clean path:', cleanPath);
+        console.log('✅ [PlayerWindow] djamms:// URL:', djammsUrl);
+        
+        // Update the video object with djamms:// URL
+        videoToSend = {
+          ...video,
+          src: djammsUrl,
+          path: cleanPath // Keep clean path for reference
+        };
+      }
+      
+      console.log('🎬 [PlayerWindow] Sending play command to Player Window:', {
+        title: videoToSend.title,
+        artist: videoToSend.artist,
+        path: videoToSend.path || videoToSend.src,
+        src: videoToSend.src,
+        videoId: videoToSend.id,
+        timestamp: new Date().toISOString()
+      });
+      
+      try {
+        (window as any).electronAPI.controlPlayerWindow('play', videoToSend);
+        console.log('🎬 [PlayerWindow] Play command sent successfully');
+      } catch (error) {
+        console.error('🚨 [PlayerWindow] Failed to send play command:', error);
+        console.error('🚨 [PlayerWindow] Video that failed:', videoToSend);
+      }
+    } else {
+      console.warn('[PlayerWindow] Not in Electron - cannot send play command');
     }
   }, [isElectron]);
 
@@ -1163,17 +1421,23 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
     lastPlayNextTimeRef.current = now;
     
+    // Log current state before requesting next video
     console.log('[PlayerWindow] 🎬 Requesting next video from orchestrator');
+    console.log('[PlayerWindow] 🎬 Current state - Priority queue:', priorityQueueRef.current.length, 'items:', priorityQueueRef.current.map(v => v?.title || 'unknown').join(', '));
+    console.log('[PlayerWindow] 🎬 Current state - Active queue:', queueRef.current.length, 'items, index:', queueIndexRef.current);
+    console.log('[PlayerWindow] 🎬 Current state - Now playing:', currentVideo?.title, 'from priority:', isFromPriorityQueue);
     
     // Reset watchdog state since we're initiating a new video
     watchdogCheckCountRef.current = 0;
     lastPlaybackTimeRef.current = 0;
     
     // Send IPC command to main orchestrator - it will handle queue rotation and broadcast state
+    // The main process checks priority queue first, then active queue
+    // Priority queue items are sent to main process when added (via onQueueAdd or handleAddToPriorityQueue)
     if (isElectron) {
       (window as any).electronAPI.sendQueueCommand?.({ action: 'next' });
     }
-  }, [isElectron]);
+  }, [isElectron, currentVideo, isFromPriorityQueue]);
 
   const toggleShuffle = () => {
     if (!playerReady || !isElectron) return;
@@ -1277,18 +1541,38 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           });
         });
         
-        // Play the first video
-        setTimeout(() => {
-          (window as any).electronAPI.sendQueueCommand?.({ 
-            action: 'play_at_index', 
-            payload: { index: 0 } 
-          });
-        }, 100);
+        // Determine starting index based on playback state
+        // If video is currently PLAYING, start at index 1 (skip index 0) to not interrupt
+        // If video is NOT playing (paused/inactive), play index 0 (first song in new playlist)
+        const startIndex = (isPlaying && currentVideo) ? 1 : 0;
+        
+        if (startIndex === 1) {
+          // Video is playing - start playlist at index 1 to not interrupt current video
+          console.log('[PlayerWindow] Video is playing - starting playlist at index 1 to avoid interruption');
+          setTimeout(() => {
+            (window as any).electronAPI.sendQueueCommand?.({ 
+              action: 'play_at_index', 
+              payload: { index: 1 } 
+            });
+          }, 100);
+        } else {
+          // Video is not playing - play index 0 (first song in new playlist)
+          // This effectively "skips" to the next song (which is the first in the new playlist)
+          console.log('[PlayerWindow] Video is not playing - playing index 0 (first song in new playlist)');
+          setTimeout(() => {
+            (window as any).electronAPI.sendQueueCommand?.({ 
+              action: 'play_at_index', 
+              payload: { index: 0 } 
+            });
+          }, 100);
+        }
       }
       
       // Update local state (will be synced from main process via queue-state event)
+      // IMPORTANT: Do NOT clear priority queue - it should persist when loading a new playlist
       setQueue(finalTracks);
       setQueueIndex(0);
+      // Priority queue is preserved - do NOT call setPriorityQueue([]) here
       
       // Save active playlist to persist between sessions
       if (isElectron) {
@@ -1316,49 +1600,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     setCurrentTab(tab);
   };
 
-  const handleScopeChange = (scope: string) => {
-    setSearchScope(scope);
+  // handleScopeChange with additional logic (reset pagination, clear selected playlist)
+  const handleScopeChangeLocal = (scope: string) => {
+    handleScopeChange(scope); // Use hook's handler
     setSearchLimit(100); // Reset pagination when filter changes
     if (scope !== 'playlist') setSelectedPlaylist(null);
   };
 
-  // Filtering and sorting (memoized callbacks for use in useMemo)
-  const filterByScope = useCallback((videos: Video[], scope: string): Video[] => {
-    // Helper to check if a video contains 'karaoke' in title, filename, or playlist
-    const isKaraoke = (v: Video): boolean => {
-      const title = v.title?.toLowerCase() || '';
-      const path = (v.path || v.src || '').toLowerCase();
-      const playlist = v.playlist?.toLowerCase() || '';
-      return title.includes('karaoke') || path.includes('karaoke') || playlist.includes('karaoke');
-    };
-    
-    switch (scope) {
-      case 'all': return videos;
-      case 'no-karaoke': return videos.filter(v => !isKaraoke(v));
-      case 'karaoke': return videos.filter(v => isKaraoke(v));
-      case 'queue': return queue;
-      case 'playlist':
-        if (!selectedPlaylist) return [];
-        return Array.isArray(playlists[selectedPlaylist]) ? playlists[selectedPlaylist] : [];
-      default: return videos;
-    }
-  }, [queue, selectedPlaylist, playlists]);
-
-  const sortResults = useCallback((results: Video[], sortBy: string): Video[] => {
-    const sorted = [...results];
-    switch (sortBy) {
-      case 'artist': return sorted.sort((a, b) => (a.artist || '').localeCompare(b.artist || ''));
-      case 'title':
-      case 'az': return sorted.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-      case 'playlist': return sorted.sort((a, b) => (a.playlist || '').localeCompare(b.playlist || ''));
-      default: return sorted;
-    }
-  }, []);
-
-  // Memoize getAllVideos to avoid recomputing on every render (for local fallback)
+  // Memoize getAllVideos for compatibility (used in some places)
   const allVideos = useMemo((): Video[] => {
     const videos = Object.values(playlists).flat();
-    // Deduplicate by path (or title+artist if path is not available)
     const seen = new Set<string>();
     return videos.filter(video => {
       const key = video.path || video.src || `${video.title}|${video.artist}`;
@@ -1367,80 +1618,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       return true;
     });
   }, [playlists]);
-
-  // Search effect - calls Supabase PostgreSQL full-text search (or browse when query empty)
-  useEffect(() => {
-    const supabase = getSupabaseService();
-    
-    // For playlist scope, always use local data since we have it in memory
-    if (searchScope === 'playlist') {
-      if (!selectedPlaylist) {
-        setSearchResults([]);
-        setSearchTotalCount(0);
-        return;
-      }
-      let results = playlists[selectedPlaylist] || [];
-      if (searchQuery.trim()) {
-        results = results.filter(video =>
-          video.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          video.artist?.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-      }
-      setSearchResults(sortResults(results, searchSort));
-      setSearchTotalCount(results.length);
-      return;
-    }
-    
-    if (!supabase.initialized) {
-      // Fallback to local search/browse if Supabase not ready
-      let results = filterByScope(allVideos, searchScope);
-      if (searchQuery.trim()) {
-        results = results.filter(video =>
-          video.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          video.artist?.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-      }
-      setSearchResults(sortResults(results, searchSort));
-      setSearchTotalCount(results.length);
-      return;
-    }
-
-    // Debounce search/browse requests
-    const timeoutId = setTimeout(async () => {
-      setSearchLoading(true);
-      try {
-        // Map UI sort values to database sort values
-        const dbSortBy = searchSort === 'az' ? 'title' : searchSort;
-        
-        let results: Video[];
-        if (searchQuery.trim()) {
-          // Search mode - use full-text search
-          results = await supabase.searchVideos(searchQuery, searchScope, searchLimit, 0);
-          // Apply local sorting to search results
-          results = sortResults(results, searchSort);
-        } else {
-          // Browse mode - show all videos sorted
-          results = await supabase.browseVideos(searchScope, dbSortBy, 'asc', searchLimit, 0);
-        }
-        if (Array.isArray(results)) {
-          setSearchResults(sortResults(results, searchSort));
-          setSearchTotalCount(results.length);
-        } else {
-          setSearchResults([]);
-          setSearchTotalCount(0);
-        }
-      } catch (error) {
-        console.error('[PlayerWindow] Search error:', error);
-        setSearchResults([]);
-      } finally {
-        setSearchLoading(false);
-      }
-    }, 300); // 300ms debounce
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, searchScope, searchSort, searchLimit, selectedPlaylist, playlists, allVideos, filterByScope, sortResults]);
-
-  // Keep these functions for compatibility
+  
   const getAllVideos = (): Video[] => allVideos;
   const getSearchResults = (): Video[] => searchResults;
 
@@ -1465,13 +1643,24 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Add video to priority queue (from popover)
   const handleAddToPriorityQueue = useCallback(() => {
     if (!popoverVideo) return;
-    setPriorityQueue(prev => [...prev, popoverVideo]);
+    const newPriorityQueue = [...priorityQueue, popoverVideo];
+    setPriorityQueue(newPriorityQueue);
+    
+    // IMPORTANT: Sync to main process queue state (source of truth for playback)
+    if (isElectron) {
+      console.log('[PlayerWindow] Adding video to priority queue in main process:', popoverVideo.title);
+      (window as any).electronAPI.sendQueueCommand?.({ 
+        action: 'add_to_priority_queue', 
+        payload: { video: popoverVideo } 
+      });
+    }
+    
     // Sync to Supabase
     syncState({
-      priorityQueue: [...priorityQueue, popoverVideo]
+      priorityQueue: newPriorityQueue
     }, true);
     setPopoverVideo(null);
-  }, [popoverVideo, priorityQueue, syncState]);
+  }, [popoverVideo, priorityQueue, syncState, isElectron]);
 
   const handleClosePopover = useCallback(() => {
     setPopoverVideo(null);
@@ -1538,12 +1727,36 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   }, [nextVideoToPreload, isElectron, isPlaying, currentVideo]); // Re-preload when any of these change
 
   const handleVideoEnd = useCallback(() => {
+    const endTime = new Date().toISOString();
     console.log('[PlayerWindow] Video ended - calling playNextVideo');
+    console.log('⏹️ [PlayerWindow] Video ended - Details:', {
+      currentVideo: currentVideo?.title,
+      artist: currentVideo?.artist,
+      playbackDuration: playbackDuration,
+      playbackTime: playbackTime,
+      timestamp: endTime
+    });
+    
+    // Check if video actually played or if it failed immediately
+    if (playbackTime < 1 && playbackDuration > 0) {
+      console.warn('⚠️ [PlayerWindow] Video ended immediately (likely failed to play):', {
+        title: currentVideo?.title,
+        playbackTime,
+        playbackDuration
+      });
+    } else if (playbackTime < 1 && playbackDuration === 0) {
+      console.error('🚨 [PlayerWindow] Video ended with 0 duration - MEDIA_ERR_SRC_NOT_SUPPORTED likely:', {
+        title: currentVideo?.title,
+        path: currentVideo?.path || currentVideo?.src,
+        src: currentVideo?.src
+      });
+    }
+    
     // Use unified playNextVideo which checks priority queue first
     playNextVideo();
     // Note: Preloading of next video is handled automatically by the useEffect
     // that watches nextVideoToPreload, which updates when queue advances
-  }, [playNextVideo]);
+  }, [playNextVideo, currentVideo, playbackDuration, playbackTime]);
 
   // Set up IPC listener to receive video end events from Player Window
   useEffect(() => {
@@ -1661,7 +1874,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setQueue(state.activeQueue);
           queueRef.current = state.activeQueue;
         }
-        if (state.priorityQueue) {
+        // Always update priority queue from main process state (even if empty array)
+        // This ensures we preserve the priority queue when it's explicitly preserved in main process
+        if (state.priorityQueue !== undefined) {
           setPriorityQueue(state.priorityQueue);
           priorityQueueRef.current = state.priorityQueue;
         }
@@ -1677,13 +1892,24 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           
           if (newVideoId !== previousVideoId) {
             console.log('[PlayerWindow] Queue state update - new video:', newVideo.title);
+            console.log('🎬 [PlayerWindow] Queue state update - Video details:', {
+              title: newVideo.title,
+              artist: newVideo.artist,
+              path: newVideo.path || newVideo.src,
+              src: newVideo.src,
+              id: newVideo.id,
+              timestamp: new Date().toISOString()
+            });
             setCurrentVideo(newVideo);
             currentVideoRef.current = newVideo;
             previousVideoId = newVideoId;
             
             // Send play command if video changed and is playing
             if (state.isPlaying && newVideo) {
+              console.log('🎬 [PlayerWindow] Queue state update - Sending play command (isPlaying=true)');
               sendPlayCommand(newVideo);
+            } else {
+              console.log('🎬 [PlayerWindow] Queue state update - NOT sending play command (isPlaying=false or no video)');
             }
             
             // Update refs for debounce checks
@@ -1709,7 +1935,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setQueue(state.activeQueue);
           queueRef.current = state.activeQueue;
         }
-        if (state.priorityQueue) {
+        // Always update priority queue from main process state (even if empty array)
+        // This ensures we preserve the priority queue when it's explicitly preserved in main process
+        if (state.priorityQueue !== undefined) {
           setPriorityQueue(state.priorityQueue);
           priorityQueueRef.current = state.priorityQueue;
         }
@@ -1764,12 +1992,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       status: isPlaying ? 'playing' : 'paused',
       isPlaying,
       currentVideo,
+      currentPosition: playbackTime, // Include playback position for admin console timeline
       volume: volume / 100,
       activeQueue: queue,
       priorityQueue,
       queueIndex
     });
-  }, [supabaseInitialized, isPlaying, currentVideo, volume, queue, priorityQueue, queueIndex, syncState]);
+  }, [supabaseInitialized, isPlaying, currentVideo, playbackTime, volume, queue, priorityQueue, queueIndex, syncState]);
 
   // Tools handlers
   const handleOpenFullscreen = useCallback(async () => {
@@ -1921,13 +2150,19 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   }, [isElectron, supabaseInitialized, playerId]);
 
   // Get playlist counts with display names (strips YouTube Playlist ID prefix)
-  const getPlaylistList = () => {
-    return Object.entries(playlists).map(([name, videos]) => ({
+  // Memoize to prevent recursion - only recalculate when playlists change
+  const playlistList = useMemo(() => {
+    const playlistEntries = Object.entries(playlists);
+    // Only log when playlists actually change, not on every render
+    if (playlistEntries.length > 0) {
+      console.log('[PlayerWindow] Playlists updated - count:', playlistEntries.length, 'names:', Object.keys(playlists));
+    }
+    return playlistEntries.map(([name, videos]) => ({
       name,
       displayName: getPlaylistDisplayName(name),
       count: Array.isArray(videos) ? videos.length : 0
     }));
-  };
+  }, [playlists]);
 
   // Get display name for active playlist
   const activePlaylistDisplayName = activePlaylist ? getPlaylistDisplayName(activePlaylist) : 'None';
@@ -2133,29 +2368,39 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 <span className="playlist-header-label">PLAYLISTS</span>
               </div>
               <div className="playlist-list">
-                {getPlaylistList().map(playlist => (
-                  <div
-                    key={playlist.name}
-                    className={`playlist-item ${selectedPlaylist === playlist.name ? 'selected' : ''}`}
-                    onClick={() => handlePlaylistClick(playlist.name)}
-                    onMouseEnter={() => setHoveredPlaylist(playlist.name)}
-                    onMouseLeave={() => setHoveredPlaylist(null)}
-                  >
+                {playlistList.length === 0 ? (
+                  <div className="playlist-item" style={{ cursor: 'default', opacity: 0.6, padding: '8px' }}>
                     <span className="material-symbols-rounded playlist-icon">playlist_play</span>
-                    <span className="playlist-name">
-                      {selectedPlaylist === playlist.name ? `Selected: ${playlist.displayName}` : playlist.displayName}
+                    <span className="playlist-name" style={{ fontStyle: 'italic' }}>
+                      {Object.keys(playlists).length === 0 ? 'Loading playlists...' : 'No playlists found'}
                     </span>
-                    {hoveredPlaylist === playlist.name && (
-                      <button
-                        className="playlist-play-btn"
-                        onClick={(e) => handlePlayButtonClick(e, playlist.name)}
-                      >
-                        <span className="material-symbols-rounded">play_arrow</span>
-                      </button>
-                    )}
-                                       <span className="playlist-count">{playlist.count}</span>
+                    <span className="playlist-count">0</span>
                   </div>
-                ))}
+                ) : (
+                  playlistList.map(playlist => (
+                    <div
+                      key={playlist.name}
+                      className={`playlist-item ${selectedPlaylist === playlist.name ? 'selected' : ''}`}
+                      onClick={() => handlePlaylistClick(playlist.name)}
+                      onMouseEnter={() => setHoveredPlaylist(playlist.name)}
+                      onMouseLeave={() => setHoveredPlaylist(null)}
+                    >
+                      <span className="material-symbols-rounded playlist-icon">playlist_play</span>
+                      <span className="playlist-name">
+                        {selectedPlaylist === playlist.name ? `Selected: ${playlist.displayName}` : playlist.displayName}
+                      </span>
+                      {hoveredPlaylist === playlist.name && (
+                        <button
+                          className="playlist-play-btn"
+                          onClick={(e) => handlePlayButtonClick(e, playlist.name)}
+                        >
+                          <span className="material-symbols-rounded">play_arrow</span>
+                        </button>
+                      )}
+                      <span className="playlist-count">{playlist.count}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </nav>
@@ -2165,254 +2410,35 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         <main className="content-area">
           {/* Queue Tab */}
           {currentTab === 'queue' && (
-            <div className="tab-content active">
-              <div className="tab-header">
-                <h1>Queue</h1>
-              </div>
-              <div className="table-container">
-                {/* Now Playing Section */}
-                {currentVideo && (
-                  <div className="queue-section now-playing-section">
-                    <div className="queue-section-header">
-                      <span className="material-symbols-rounded">play_circle</span>
-                      NOW PLAYING
-                    </div>
-                    <div className="now-playing-content">
-                      <div className="now-playing-info">
-                        <div className="now-playing-title">{cleanVideoTitle(currentVideo.title)}</div>
-                        <div className="now-playing-artist">{getDisplayArtist(currentVideo.artist)}</div>
-                        <div className="now-playing-playlist">{currentVideo.playlistDisplayName || getPlaylistDisplayName(currentVideo.playlist || '')}</div>
-                      </div>
-                      <div className="now-playing-progress">
-                        <span className="time-elapsed">
-                          {Math.floor(playbackTime / 60)}:{String(Math.floor(playbackTime % 60)).padStart(2, '0')}
-                        </span>
-                        <div className="progress-bar-container">
-                          <div 
-                            className="progress-bar-fill" 
-                            style={{ width: `${playbackDuration > 0 ? (playbackTime / playbackDuration) * 100 : 0}%` }}
-                          />
-                        </div>
-                        <span className="time-remaining">
-                          -{Math.floor((playbackDuration - playbackTime) / 60)}:{String(Math.floor((playbackDuration - playbackTime) % 60)).padStart(2, '0')}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Priority Queue Section */}
-                {priorityQueue.length > 0 && (
-                  <div className="queue-section priority-queue-section">
-                    <div className="queue-section-header priority">
-                      <span className="material-symbols-rounded">priority_high</span>
-                      PRIORITY QUEUE
-                    </div>
-                    <table className="media-table">
-                      <tbody>
-                        {priorityQueue.map((track, index) => (
-                          <tr
-                            key={`priority-${track.id}-${index}`}
-                            className="priority-item"
-                          >
-                            <td className="col-index">P{index + 1}</td>
-                            <td className="col-title">{cleanVideoTitle(track.title)}</td>
-                            <td>{getDisplayArtist(track.artist)}</td>
-                            <td>{formatDuration(track.duration)}</td>
-                            <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* Active Queue Section - Reordered: "Up Next" first, then "Already Played" */}
-                <div className="queue-section active-queue-section">
-                  <div className="queue-section-header">
-                    <span className="material-symbols-rounded">queue_music</span>
-                    UP NEXT
-                  </div>
-                  <table className="media-table">
-                    <thead>
-                      <tr>
-                        <th className="col-index">#</th>
-                        <th className="col-title">Title</th>
-                        <th className="col-artist">Artist</th>
-                        <th className="col-duration">Duration</th>
-                        <th className="col-playlist">Playlist</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {queue.length === 0 ? (
-                        <tr className="empty-state">
-                          <td colSpan={5}>Queue is empty. Add tracks from Search.</td>
-                        </tr>
-                      ) : (() => {
-                        // Reorder: videos after current index first ("up next"), then videos before ("already played")
-                        const upNextVideos = queue.slice(queueIndex + 1).map((track, idx) => ({
-                          track,
-                          originalIndex: queueIndex + 1 + idx,
-                          isUpNext: true
-                        }));
-                        const alreadyPlayedVideos = queue.slice(0, queueIndex).map((track, idx) => ({
-                          track,
-                          originalIndex: idx,
-                          isUpNext: false
-                        }));
-                        const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
-                        
-                        if (reorderedQueue.length === 0) {
-                          return (
-                            <tr className="empty-state">
-                              <td colSpan={5}>No more tracks in queue.</td>
-                            </tr>
-                          );
-                        }
-                        
-                        return reorderedQueue.map(({ track, originalIndex, isUpNext }, displayIndex) => (
-                          <tr
-                            key={`queue-${track.id}-${originalIndex}`}
-                            className={!isUpNext ? 'played' : ''}
-                            onClick={() => handleQueueItemClick(originalIndex)}
-                          >
-                            <td>{displayIndex + 1}</td>
-                            <td className="col-title">{cleanVideoTitle(track.title)}</td>
-                            <td>{getDisplayArtist(track.artist)}</td>
-                            <td>{formatDuration(track.duration)}</td>
-                            <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
-                          </tr>
-                        ));
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <QueueTab
+              queue={queue}
+              queueIndex={queueIndex}
+              priorityQueue={priorityQueue}
+              currentVideo={currentVideo}
+              playbackTime={playbackTime}
+              playbackDuration={playbackDuration}
+              onQueueItemClick={handleQueueItemClick}
+            />
           )}
 
           {/* Search Tab */}
           {currentTab === 'search' && (
-            <div className="tab-content active">
-              <div className="search-header" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-                <div className="search-input-container" style={{ flex: '1 1 300px', minWidth: '200px' }}>
-                  <span className="material-symbols-rounded search-icon">search</span>
-                  <input
-                    type="text"
-                    placeholder="Search all music…"
-                    className="search-input"
-                    value={searchQuery}
-                    onChange={(e) => {
-                      setSearchQuery(e.target.value);
-                      setSearchLimit(100); // Reset pagination when query changes
-                    }}
-                  />
-                  {searchLoading && <span className="material-symbols-rounded loading-icon" style={{ marginLeft: '8px', animation: 'spin 1s linear infinite' }}>progress_activity</span>}
-                </div>
-                <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '12px', marginRight: '4px' }}>Filter:</span>
-                  {selectedPlaylist && (
-                    <button
-                      className={`radio-btn ${searchScope === 'playlist' ? 'active' : ''}`}
-                      onClick={() => handleScopeChange('playlist')}
-                      style={{ fontWeight: searchScope === 'playlist' ? 'bold' : 'normal' }}
-                    >
-                      📁 {getPlaylistDisplayName(selectedPlaylist)}
-                    </button>
-                  )}
-                  <button
-                    className={`radio-btn ${searchScope === 'all' ? 'active' : ''}`}
-                    onClick={() => handleScopeChange('all')}
-                  >
-                    All Music
-                  </button>
-                  <button
-                    className={`radio-btn ${searchScope === 'karaoke' ? 'active' : ''}`}
-                    onClick={() => handleScopeChange('karaoke')}
-                  >
-                    Karaoke Only
-                  </button>
-                  <button
-                    className={`radio-btn ${searchScope === 'no-karaoke' ? 'active' : ''}`}
-                    onClick={() => handleScopeChange('no-karaoke')}
-                  >
-                    Hide Karaoke
-                  </button>
-                </div>
-                <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '12px', marginRight: '4px' }}>Sort:</span>
-                  <button
-                    className={`radio-btn ${searchSort === 'artist' ? 'active' : ''}`}
-                    onClick={() => setSearchSort('artist')}
-                  >
-                    Artist
-                  </button>
-                  <button
-                    className={`radio-btn ${searchSort === 'az' || searchSort === 'title' ? 'active' : ''}`}
-                    onClick={() => setSearchSort('az')}
-                  >
-                    Song
-                  </button>
-                  <button
-                    className={`radio-btn ${searchSort === 'playlist' ? 'active' : ''}`}
-                    onClick={() => setSearchSort('playlist')}
-                  >
-                    Playlist
-                  </button>
-                </div>
-              </div>
-              <div className="table-container">
-                <table className="media-table">
-                  <thead>
-                    <tr>
-                      <th className="col-index">#</th>
-                      <th className="col-title">Title</th>
-                      <th className="col-artist">Artist</th>
-                      <th className="col-duration">Duration</th>
-                      <th className="col-playlist">Playlist</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {searchLoading && searchResults.length === 0 ? (
-                      <tr className="empty-state">
-                        <td colSpan={5}>Loading...</td>
-                      </tr>
-                    ) : searchResults.length === 0 ? (
-                      <tr className="empty-state">
-                        <td colSpan={5}>
-                          {searchScope === 'playlist' && selectedPlaylist ? 'No tracks in this playlist' : 'No tracks found'}
-                        </td>
-                      </tr>
-                    ) : (
-                      searchResults.map((track, index) => (
-                        <tr key={`${track.id}-${index}`} onClick={(e) => handleVideoClick(track, e)} style={{ cursor: 'pointer' }}>
-                          <td>{index + 1}</td>
-                          <td className="col-title">{cleanVideoTitle(track.title)}</td>
-                          <td>{getDisplayArtist(track.artist)}</td>
-                          <td>{track.duration || '—'}</td>
-                          <td>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-                {searchTotalCount > searchResults.length && (
-                  <div className="load-more-container" style={{ padding: '12px', textAlign: 'center' }}>
-                    <button 
-                      className="action-btn"
-                      onClick={() => setSearchLimit(prev => prev + 100)}
-                      style={{ marginRight: '8px' }}
-                      disabled={searchLoading}
-                    >
-                      {searchLoading ? 'Loading...' : `Load More (${searchTotalCount - searchResults.length} remaining)`}
-                    </button>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
-                      Showing {searchResults.length} of {searchTotalCount} tracks
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
+            <SearchTab
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              searchLoading={searchLoading}
+              searchScope={searchScope}
+              handleScopeChange={handleScopeChangeLocal}
+              selectedPlaylist={selectedPlaylist}
+              playlists={playlists}
+              searchSort={searchSort}
+              setSearchSort={setSearchSort}
+              searchResults={searchResults}
+              handleVideoClick={handleVideoClick}
+              searchTotalCount={searchTotalCount}
+              searchLimit={searchLimit}
+              setSearchLimit={setSearchLimit}
+            />
           )}
 
           {/* Settings Tab */}

@@ -15,6 +15,16 @@ const getSupabaseServiceLazy = async () => {
   return _supabaseService;
 };
 
+// Lazy import logger to avoid circular dependencies
+let _logger: any = null;
+const getLogger = async () => {
+  if (!_logger) {
+    const module = await import('./logger');
+    _logger = module.logger;
+  }
+  return _logger;
+};
+
 // Storage key for localStorage (used in renderer process)
 const STORAGE_KEY = 'djamms_player_id';
 
@@ -213,11 +223,21 @@ export async function initializePlayerId(): Promise<string> {
   // Check for stored ID
   const storedId = getPlayerId();
   if (storedId && storedId.trim() !== '' && storedId.trim() !== 'DJAMMS_DEMO') {
-    console.log('[playerUtils] Using stored Player ID:', storedId);
+    try {
+      const logger = await getLogger();
+      logger.debug('[playerUtils] Using stored Player ID:', storedId);
+    } catch (err) {
+      // Logger not available - continue silently
+    }
     return storedId;
   }
 
   // No Player ID set - return "DJAMMS_DEMO" to allow app to continue (but prompt user)
-  console.log('[playerUtils] No Player ID set - using default DJAMMS_DEMO');
+  try {
+    const logger = await getLogger();
+    logger.debug('[playerUtils] No Player ID set - using default DJAMMS_DEMO');
+  } catch (err) {
+    // Logger not available - continue silently
+  }
   return DEFAULT_PLAYER_ID;
 }

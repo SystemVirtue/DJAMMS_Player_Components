@@ -1,5 +1,6 @@
 // hooks/useKeyboardControls.ts
 import { useEffect } from 'react';
+import { logger } from '../utils/logger';
 
 interface KeyboardControlsConfig {
   onAction: (action: string) => void;
@@ -23,12 +24,12 @@ export function useKeyboardControls(config: KeyboardControlsConfig) {
       //   break;
       case 'KeyS':
         e.preventDefault();
-        console.log('[useKeyboardControls] KeyS pressed');
+        logger.debug('[useKeyboardControls] KeyS pressed');
         onAction('skip');
         break;
       case 'ArrowRight':
         e.preventDefault();
-        console.log('[useKeyboardControls] ArrowRight pressed');
+        logger.debug('[useKeyboardControls] ArrowRight pressed');
         onAction('skip');
         break;
       case 'ArrowUp':

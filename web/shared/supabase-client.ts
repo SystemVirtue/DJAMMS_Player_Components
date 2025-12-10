@@ -243,8 +243,8 @@ export function subscribeToLocalVideos(
         filter: `player_id=eq.${playerId}`
       },
       (payload) => {
-        console.log('[SupabaseClient] Local videos changed, triggering refresh');
-        callback();
+          console.log('[SupabaseClient] Local videos changed, triggering refresh');
+          callback();
       }
     )
     .subscribe((status) => {
@@ -373,7 +373,7 @@ export async function sendCommandAndWait(
                 const errorMsg = updated.error_message || updated.execution_result?.error || 'Command failed';
                 console.error(`[SupabaseClient] ❌ Command ${commandId} failed: ${errorMsg}`);
                 resolve({ success: false, error: errorMsg, commandId });
-              }
+        }
             }
           }
         )
@@ -595,7 +595,7 @@ export async function searchLocalVideos(
   if (trimmedQuery.length < MIN_QUERY_LENGTH) {
     return [];
   }
-
+  
   // Prefer PostgreSQL FTS RPC for consistent relevance across clients
   try {
     const { data, error } = await supabase.rpc('search_videos', {
@@ -617,32 +617,32 @@ export async function searchLocalVideos(
   } catch (_) {
     // Fallback: legacy ILIKE search (any word in title OR artist), scoped to player
     const MIN_WORD_LENGTH = 2;
-    const words = trimmedQuery
-      .split(/\s+/)
-      .filter(word => word.length >= MIN_WORD_LENGTH)
-      .map(word => word.replace(/[%_]/g, '')); // Escape SQL wildcards
-    
-    if (words.length === 0) {
-      words.push(trimmedQuery);
-    }
-    
-    const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
-    
-    const { data, error } = await supabase
-      .from('local_videos')
-      .select('*')
-      .eq('player_id', playerId)
-      .eq('is_available', true)
-      .or(orClauses)
-      .order('title')
-      .limit(limit);
+  const words = trimmedQuery
+    .split(/\s+/)
+    .filter(word => word.length >= MIN_WORD_LENGTH)
+    .map(word => word.replace(/[%_]/g, '')); // Escape SQL wildcards
+  
+  if (words.length === 0) {
+    words.push(trimmedQuery);
+  }
+  
+  const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
+  
+  const { data, error } = await supabase
+    .from('local_videos')
+    .select('*')
+    .eq('player_id', playerId)
+    .eq('is_available', true)
+    .or(orClauses)
+    .order('title')
+    .limit(limit);
 
-    if (error) {
+  if (error) {
       console.error('[SupabaseClient] Error searching videos (ILIKE fallback):', error);
-      return [];
-    }
-    
-    return data || [];
+    return [];
+  }
+
+  return data || [];
   }
 }
 

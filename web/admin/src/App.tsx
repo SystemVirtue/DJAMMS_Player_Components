@@ -183,6 +183,8 @@ function AdminApp() {
   const [volume, setVolume] = useState(70);
   const [playbackTime, setPlaybackTime] = useState(0); // Current playback position in seconds
   const [playbackDuration, setPlaybackDuration] = useState(0); // Total duration in seconds
+  const playbackTimeUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null); // For debouncing playback time updates
+  const lastPlaybackTimeRef = useRef(0); // Track last applied playback time to detect jumps
 
   // Queue state (from Supabase player_state)
   const [activeQueue, setActiveQueue] = useState<QueueVideoItem[]>([]);
@@ -329,9 +331,41 @@ function AdminApp() {
       if (typeof state.volume === 'number') {
         setVolume(Math.round(state.volume * 100));
       }
-      // Update playback progress
-      if (typeof state.playback_position === 'number') {
-        setPlaybackTime(state.playback_position);
+      // Update playback progress - use current_position (what SupabaseService writes)
+      // Also check playback_position as fallback for backwards compatibility
+      const position = state.current_position ?? state.playback_position;
+      if (typeof position === 'number' && !isNaN(position)) {
+        const lastTime = lastPlaybackTimeRef.current;
+        const timeDiff = Math.abs(position - lastTime);
+        
+        // Clear any pending update
+        if (playbackTimeUpdateRef.current) {
+          clearTimeout(playbackTimeUpdateRef.current);
+          playbackTimeUpdateRef.current = null;
+        }
+        
+        // If change is very small (< 0.1s), debounce to prevent rapid micro-updates
+        // If change is large (> 2s), update immediately (likely a seek or new video)
+        // Otherwise, debounce small changes to smooth out the timeline
+        if (timeDiff < 0.1 && timeDiff > 0) {
+          // Very small change - debounce to prevent jitter
+          playbackTimeUpdateRef.current = setTimeout(() => {
+            setPlaybackTime(position);
+            lastPlaybackTimeRef.current = position;
+            playbackTimeUpdateRef.current = null;
+          }, 300);
+        } else if (timeDiff >= 2) {
+          // Large change (seek or new video) - update immediately
+          setPlaybackTime(position);
+          lastPlaybackTimeRef.current = position;
+        } else {
+          // Moderate change - update with slight debounce to smooth transitions
+          playbackTimeUpdateRef.current = setTimeout(() => {
+            setPlaybackTime(position);
+            lastPlaybackTimeRef.current = position;
+            playbackTimeUpdateRef.current = null;
+          }, 100);
+        }
       }
       if (typeof state.video_duration === 'number') {
         setPlaybackDuration(state.video_duration);
@@ -351,7 +385,14 @@ function AdminApp() {
     const channel = subscribeToPlayerState(playerId, applyState);
 
     // unsubscribe() returns a Promise but cleanup must be sync - ignore return value
-    return () => { channel.unsubscribe(); };
+    return () => { 
+      channel.unsubscribe();
+      // Clean up any pending playback time updates
+      if (playbackTimeUpdateRef.current) {
+        clearTimeout(playbackTimeUpdateRef.current);
+        playbackTimeUpdateRef.current = null;
+      }
+    };
   }, [playerId]);
 
   // Monitor Supabase Realtime connection status
@@ -448,6 +489,34 @@ function AdminApp() {
       console.error('Failed to send command:', error);
     }
   }, [playerId]);
+
+  // Debug keyboard shortcut: Shift+\ (|) to seek to (duration - 15 seconds)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if not in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // Check for Shift+\ (which produces '|' on most keyboards)
+      // Key code is 'Backslash' and shift key is pressed, or key is '|'
+      if (e.key === '|' || (e.key === '\\' && e.shiftKey) || (e.code === 'Backslash' && e.shiftKey)) {
+        e.preventDefault();
+        if (playbackDuration > 0) {
+          const seekPosition = Math.max(0, playbackDuration - 15);
+          console.log(`[WebAdmin] 🐛 DEBUG: Shift+\\ pressed - seeking to ${seekPosition.toFixed(1)}s (duration: ${playbackDuration.toFixed(1)}s)`);
+          sendCommand('seekTo', { position: seekPosition });
+        } else {
+          console.warn('[WebAdmin] 🐛 DEBUG: Shift+\\ pressed but video duration not available yet');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [playbackDuration, sendCommand]);
 
   // Send overlay settings to Electron when they change
   const updateOverlaySetting = useCallback((key: string, value: number | boolean) => {

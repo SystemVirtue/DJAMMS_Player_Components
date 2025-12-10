@@ -117,13 +117,35 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
   // Handle seek requests (e.g., debug skip to end)
   useEffect(() => {
     if (seekToPosition !== null && seekToPosition !== undefined && playerRef.current) {
-      console.log(`[FullscreenPlayer] Seeking to position: ${seekToPosition}s`);
-      playerRef.current.seekTo(seekToPosition);
-      if (onSeekComplete) {
-        onSeekComplete();
+      console.log(`[FullscreenPlayer] 🎯 Seeking to position: ${seekToPosition}s`);
+      console.log(`[FullscreenPlayer] 🎯 Player ref exists: ${!!playerRef.current}`);
+      console.log(`[FullscreenPlayer] 🎯 Current video: ${video?.title || 'none'}`);
+      
+      try {
+        playerRef.current.seekTo(seekToPosition);
+        console.log(`[FullscreenPlayer] 🎯 Seek command sent to player`);
+        
+        // Check for errors after a short delay
+        setTimeout(() => {
+          const activeVideo = playerRef.current?.getActiveVideo();
+          if (activeVideo?.error) {
+            console.error(`[FullscreenPlayer] 🚨 ERROR detected after seek:`, {
+              code: activeVideo.error.code,
+              message: activeVideo.error.message,
+              networkState: activeVideo.networkState,
+              readyState: activeVideo.readyState
+            });
+          }
+        }, 100);
+        
+        if (onSeekComplete) {
+          onSeekComplete();
+        }
+      } catch (error) {
+        console.error(`[FullscreenPlayer] 🚨 Exception during seek:`, error);
       }
     }
-  }, [seekToPosition, onSeekComplete]);
+  }, [seekToPosition, onSeekComplete, video]);
 
   useEffect(() => {
     // Handle video playback changes

@@ -1,5 +1,6 @@
 // utils/ipc.ts
 import { IPCAdapter } from '../types';
+import { logger } from './logger';
 
 export class ElectronIPCAdapter implements IPCAdapter {
   send(channel: string, data?: any): void {
@@ -26,7 +27,7 @@ export class WebIPCAdapter implements IPCAdapter {
 
   send(channel: string, data?: any): void {
     // No-op for web environment, or emit custom events
-    console.log('[WebIPC]', channel, data);
+    logger.debug('[WebIPC]', channel, data);
     // Could dispatch custom events for web integration
     window.dispatchEvent(new CustomEvent(`djamms:${channel}`, { detail: data }));
   }

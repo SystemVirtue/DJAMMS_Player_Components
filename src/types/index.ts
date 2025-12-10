@@ -12,6 +12,7 @@ export interface Video {
   playlist?: string; // Original folder name (may include YouTube Playlist ID prefix)
   playlistDisplayName?: string; // Display name without YouTube Playlist ID prefix
   filename?: string;
+  fileHash?: string; // Hash for change detection (size + mtime or SHA256)
 }
 
 // ============================================================================

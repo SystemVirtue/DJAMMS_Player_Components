@@ -1,6 +1,7 @@
 // src/services/LocalSearchService.ts
 import Fuse, { IFuseOptions, FuseResultMatch } from 'fuse.js';
 import { Video } from '../types';
+import { logger } from '../utils/logger';
 
 export interface SearchResult {
   item: Video;
@@ -57,7 +58,7 @@ export class LocalSearchService {
     }
 
     this.fuse = new Fuse(this.videos, DEFAULT_SEARCH_OPTIONS);
-    console.log(`[LocalSearchService] Indexed ${this.videos.length} videos from ${this.indexedPlaylists.size} playlists`);
+    logger.info(`[LocalSearchService] Indexed ${this.videos.length} videos from ${this.indexedPlaylists.size} playlists`);
   }
 
   /**

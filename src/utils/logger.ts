@@ -123,7 +123,7 @@ class Logger {
     if (!this.shouldLog('info')) return;
     const message = this.formatMessage('info', ...args);
     safeConsole.log(message, ...args);
-    if (this.forwardToMain) this.logToElectronMain('log', ...args);
+    if (this.forwardToMain) this.logToElectronMain('info', ...args);
   }
 
   warn(...args: any[]): void {

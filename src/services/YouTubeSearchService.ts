@@ -1,5 +1,6 @@
 // src/services/YouTubeSearchService.ts
 import axios from 'axios';
+import { logger } from '../utils/logger';
 
 export interface YouTubeVideo {
   id: string;
@@ -55,7 +56,7 @@ export class YouTubeSearchService {
    */
   async search(query: string, options?: YouTubeSearchOptions): Promise<YouTubeSearchResult> {
     if (!this.apiKey) {
-      console.warn('[YouTubeSearchService] API key not configured');
+      logger.warn('[YouTubeSearchService] API key not configured');
       return { videos: [], totalResults: 0 };
     }
 
@@ -116,7 +117,7 @@ export class YouTubeSearchService {
         totalResults: searchResponse.data.pageInfo?.totalResults || videos.length
       };
     } catch (error: any) {
-      console.error('[YouTubeSearchService] Search error:', error.response?.data || error.message);
+      logger.error('[YouTubeSearchService] Search error:', error.response?.data || error.message);
       throw new Error(error.response?.data?.error?.message || 'YouTube search failed');
     }
   }
@@ -126,7 +127,7 @@ export class YouTubeSearchService {
    */
   async getVideoDetails(videoId: string): Promise<YouTubeVideo | null> {
     if (!this.apiKey) {
-      console.warn('[YouTubeSearchService] API key not configured');
+      logger.warn('[YouTubeSearchService] API key not configured');
       return null;
     }
 
@@ -153,7 +154,7 @@ export class YouTubeSearchService {
         description: item.snippet.description
       };
     } catch (error: any) {
-      console.error('[YouTubeSearchService] Get video details error:', error.response?.data || error.message);
+      logger.error('[YouTubeSearchService] Get video details error:', error.response?.data || error.message);
       return null;
     }
   }
@@ -163,7 +164,7 @@ export class YouTubeSearchService {
    */
   async getTrendingMusic(regionCode = 'US', maxResults = 25): Promise<YouTubeVideo[]> {
     if (!this.apiKey) {
-      console.warn('[YouTubeSearchService] API key not configured');
+      logger.warn('[YouTubeSearchService] API key not configured');
       return [];
     }
 
@@ -190,7 +191,7 @@ export class YouTubeSearchService {
         description: item.snippet.description
       }));
     } catch (error: any) {
-      console.error('[YouTubeSearchService] Get trending error:', error.response?.data || error.message);
+      logger.error('[YouTubeSearchService] Get trending error:', error.response?.data || error.message);
       return [];
     }
   }
