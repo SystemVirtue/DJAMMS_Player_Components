@@ -1,7 +1,7 @@
 // DJAMMS Kiosk - Public Search & Request Interface
 // Styled with obie-v5 aesthetic
 
-import { useEffect, useState, useCallback, useMemo, createContext, useContext } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, createContext, useContext } from 'react';
 import {
   BackgroundPlaylist,
   DEFAULT_BACKGROUND_ASSETS,
