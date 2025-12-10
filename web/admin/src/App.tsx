@@ -24,7 +24,7 @@ import type {
   QueueVideoItem,
   CommandType 
 } from '@shared/types';
-import { ConnectPlayerModal, usePlayer } from '@shared/ConnectPlayerModal';
+import { ConnectPlayerModal, usePlayer, PlayerIdBadge } from '@shared/ConnectPlayerModal';
 import { cleanVideoTitle } from '@shared/video-utils';
 import { shuffleArray } from '@shared/array-utils';
 
@@ -174,7 +174,7 @@ export default function App() {
 
 function AdminApp() {
   // Get playerId from context (provided by ConnectPlayerModal)
-  const { playerId } = usePlayer();
+  const { playerId, disconnect } = usePlayer();
 
   // Player state (synced from Supabase)
   const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
@@ -885,6 +885,7 @@ function AdminApp() {
         <div className="header-left">
           <img src="/icon.png" alt="DJAMMS" className="app-logo" style={{ height: '40px', width: 'auto' }} />
           <div className={`online-indicator ${isConnected ? '' : 'offline'}`} title={isConnected ? 'Connected to Player' : 'Disconnected'}></div>
+          <PlayerIdBadge />
         </div>
         
         <div className="header-center">
@@ -1164,8 +1165,8 @@ function AdminApp() {
           {/* Search Tab */}
           {currentTab === 'search' && (
             <div className="tab-content active">
-              <div className="search-header">
-                <div className="search-input-container">
+              <div className="search-header" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+                <div className="search-input-container" style={{ flex: '1 1 300px', minWidth: '200px' }}>
                   <span className="material-symbols-rounded search-icon">search</span>
                   <input
                     type="text"
@@ -1181,18 +1182,62 @@ function AdminApp() {
                     <span className="material-symbols-rounded loading-icon" style={{ marginLeft: '8px', animation: 'spin 1s linear infinite' }}>progress_activity</span>
                   )}
                 </div>
-                <div className="search-filters">
-                  <select className="filter-select" value={searchScope} onChange={(e) => handleScopeChange(e.target.value)}>
-                    <option value="all">All Music</option>
-                    {selectedPlaylist && <option value="playlist">Selected Playlist: {getPlaylistDisplayName(selectedPlaylist)}</option>}
-                    <option value="no-karaoke">Exclude Karaoke</option>
-                    <option value="karaoke">Karaoke Only</option>
-                  </select>
-                  <select className="filter-select" value={searchSort} onChange={(e) => setSearchSort(e.target.value)}>
-                    <option value="az">A-Z</option>
-                    <option value="artist">Artist</option>
-                    <option value="title">Title</option>
-                  </select>
+                <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '12px', marginRight: '4px' }}>Filter:</span>
+                  {selectedPlaylist && (
+                    <button
+                      className={`radio-btn ${searchScope === 'playlist' ? 'active' : ''}`}
+                      onClick={() => handleScopeChange('playlist')}
+                      style={{ fontWeight: searchScope === 'playlist' ? 'bold' : 'normal' }}
+                    >
+                      📁 {getPlaylistDisplayName(selectedPlaylist)}
+                    </button>
+                  )}
+                  <button
+                    className={`radio-btn ${searchScope === 'all' ? 'active' : ''}`}
+                    onClick={() => handleScopeChange('all')}
+                  >
+                    All Music
+                  </button>
+                  <button
+                    className={`radio-btn ${searchScope === 'karaoke' ? 'active' : ''}`}
+                    onClick={() => handleScopeChange('karaoke')}
+                  >
+                    Karaoke Only
+                  </button>
+                  <button
+                    className={`radio-btn ${searchScope === 'no-karaoke' ? 'active' : ''}`}
+                    onClick={() => handleScopeChange('no-karaoke')}
+                  >
+                    Hide Karaoke
+                  </button>
+                </div>
+                <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '12px', marginRight: '4px' }}>Sort:</span>
+                  <button
+                    className={`radio-btn ${searchSort === 'relevance' ? 'active' : ''}`}
+                    onClick={() => setSearchSort('relevance')}
+                  >
+                    Relevance
+                  </button>
+                  <button
+                    className={`radio-btn ${searchSort === 'artist' ? 'active' : ''}`}
+                    onClick={() => setSearchSort('artist')}
+                  >
+                    Artist
+                  </button>
+                  <button
+                    className={`radio-btn ${searchSort === 'title' ? 'active' : ''}`}
+                    onClick={() => setSearchSort('title')}
+                  >
+                    Title
+                  </button>
+                  <button
+                    className={`radio-btn ${searchSort === 'playlist' ? 'active' : ''}`}
+                    onClick={() => setSearchSort('playlist')}
+                  >
+                    Playlist
+                  </button>
                 </div>
               </div>
               <div className="table-container">
@@ -1285,6 +1330,41 @@ function AdminApp() {
                       checked={settings.normalizeAudioLevels}
                       onChange={(e) => setSettings(s => ({ ...s, normalizeAudioLevels: e.target.checked }))}
                     />
+                  </div>
+                </div>
+
+                <div className="settings-section">
+                  <h2><span className="section-icon">🆔</span> Player Identity</h2>
+                  <div className="setting-item">
+                    <label>Player ID</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ 
+                        fontFamily: 'monospace',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        color: 'var(--accent)',
+                        backgroundColor: 'rgba(255, 30, 86, 0.1)',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        letterSpacing: '0.5px'
+                      }}>
+                        {playerId}
+                      </span>
+                      <button 
+                        className="action-btn"
+                        onClick={() => {
+                          // Clear stored player ID and reload to show ConnectPlayerModal
+                          disconnect();
+                          window.location.reload();
+                        }}
+                      >
+                        <span className="material-symbols-rounded">logout</span>
+                        Disconnect
+                      </button>
+                    </div>
+                    <p className="setting-description" style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      Connected to Electron Player. Disconnect to change Player ID.
+                    </p>
                   </div>
                 </div>
 
