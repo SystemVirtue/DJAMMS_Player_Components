@@ -305,21 +305,32 @@ export async function sendCommandAndWait(
 
     // 2. Insert to database FIRST (so we can subscribe to status changes)
     // Note: This is optional - if schema doesn't match, we'll skip DB insert but still broadcast
+    // Map to actual schema: admin_id (required), action_type, action_data
+    // Also try new columns if they exist: player_id, command_type, command_data, issued_by
+    const insertPayload: any = {
+      id: commandId,
+      admin_id: issuedBy, // Required field in schema
+      action_type: commandType, // Map command_type -> action_type
+      action_data: commandData, // Map command_data -> action_data
+      status: 'pending',
+      created_at: new Date().toISOString()
+    };
+    
+    // Try to include new columns if they exist (for future compatibility)
+    // These will be ignored if columns don't exist
+    insertPayload.player_id = playerId;
+    insertPayload.command_type = commandType;
+    insertPayload.command_data = commandData;
+    insertPayload.issued_by = issuedBy;
+    insertPayload.issued_at = new Date().toISOString();
+
     const { error: insertError } = await supabase
       .from('admin_commands')
-      .insert({
-        id: commandId,
-        player_id: playerId,
-        command_type: commandType,
-        command_data: commandData,
-        issued_by: issuedBy,
-        status: 'pending',
-        issued_at: new Date().toISOString()
-      });
+      .insert(insertPayload);
 
-    // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist)
+    // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist, 23502 = not-null constraint)
     // These are non-critical since broadcasting via Realtime channel works fine
-    if (insertError && insertError.code !== '42P01' && insertError.code !== 'PGRST204') {
+    if (insertError && insertError.code !== '42P01' && insertError.code !== 'PGRST204' && insertError.code !== '23502') {
       console.warn('[SupabaseClient] DB insert failed:', insertError.message);
     }
 
@@ -517,21 +528,32 @@ export async function insertCommand(
 
     // 3. Insert to database for persistence (fire-and-forget, don't block)
     // Note: This is optional - if schema doesn't match, we'll skip DB insert but still broadcast
+    // Map to actual schema: admin_id (required), action_type, action_data
+    // Also try new columns if they exist: player_id, command_type, command_data, issued_by
+    const insertPayload: any = {
+      id: commandId,
+      admin_id: issuedBy, // Required field in schema
+      action_type: commandType, // Map command_type -> action_type
+      action_data: commandData, // Map command_data -> action_data
+      status: 'pending',
+      created_at: new Date().toISOString()
+    };
+    
+    // Try to include new columns if they exist (for future compatibility)
+    // These will be ignored if columns don't exist
+    insertPayload.player_id = playerId;
+    insertPayload.command_type = commandType;
+    insertPayload.command_data = commandData;
+    insertPayload.issued_by = issuedBy;
+    insertPayload.issued_at = new Date().toISOString();
+
     supabase
       .from('admin_commands')
-      .insert({
-        id: commandId,
-        player_id: playerId,
-        command_type: commandType,
-        command_data: commandData,
-        issued_by: issuedBy,
-        status: 'pending',
-        issued_at: new Date().toISOString()
-      })
+      .insert(insertPayload)
       .then(({ error }) => {
-        // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist)
+        // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist, 23502 = not-null constraint)
         // These are non-critical since broadcasting via Realtime channel works fine
-        if (error && error.code !== '42P01' && error.code !== 'PGRST204') {
+        if (error && error.code !== '42P01' && error.code !== 'PGRST204' && error.code !== '23502') {
           console.warn('[SupabaseClient] DB insert failed:', error.message);
         }
       })
@@ -622,7 +644,11 @@ export async function searchLocalVideos(
     });
 
     if (error) {
-      console.warn('[SupabaseClient] FTS search_videos RPC failed, falling back to ILIKE:', error);
+      // Suppress schema mismatch errors (42804 = type mismatch, PGRST203 = function not found)
+      // These are non-critical since we have ILIKE fallback
+      if (error.code !== '42804' && error.code !== 'PGRST203') {
+        console.warn('[SupabaseClient] FTS search_videos RPC failed, falling back to ILIKE:', error);
+      }
       throw error;
     }
 
