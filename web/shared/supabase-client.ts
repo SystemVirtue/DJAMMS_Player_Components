@@ -176,9 +176,14 @@ export async function getPlayerState(playerId: string = DEFAULT_PLAYER_ID): Prom
     .from('player_state')
     .select('*')
     .eq('player_id', playerId)
-    .single();
+    .maybeSingle(); // Use maybeSingle() instead of single() to handle 0 rows gracefully
 
   if (error) {
+    // PGRST116 = no rows found, which is acceptable - player state doesn't exist yet
+    if (error.code === 'PGRST116') {
+      console.log(`[SupabaseClient] Player state not found for ${playerId} (player may not be initialized yet)`);
+      return null;
+    }
     console.error('[SupabaseClient] Error fetching player state:', error);
     return null;
   }
