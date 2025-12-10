@@ -469,12 +469,24 @@ class SupabaseService {
         // updateData.volume_level = state.volume;
       }
 
+      // Always sync queues (even if empty) to ensure Web Admin shows correct state
       if (state.activeQueue !== undefined) {
         updateData.active_queue = state.activeQueue.map(v => this.videoToQueueItem(v));
+      } else {
+        // If activeQueue is not provided but we have a last synced state, preserve it
+        // This prevents clearing the queue when syncState is called without queue data
+        if (this.lastSyncedState?.active_queue) {
+          updateData.active_queue = this.lastSyncedState.active_queue;
+        }
       }
 
       if (state.priorityQueue !== undefined) {
         updateData.priority_queue = state.priorityQueue.map(v => this.videoToQueueItem(v));
+      } else {
+        // Preserve priority queue if not provided
+        if (this.lastSyncedState?.priority_queue) {
+          updateData.priority_queue = this.lastSyncedState.priority_queue;
+        }
       }
 
       // Note: queue_index column may not exist in all database schemas
@@ -585,6 +597,15 @@ class SupabaseService {
         }
 
         const command = message.command;
+        
+        // CRITICAL: Verify command is for this player_id
+        // Check both top-level player_id and action_data.player_id for compatibility
+        const commandPlayerId = command.player_id || (command.command_data as any)?.player_id || (command.command_data as any)?.target_player_id;
+        if (commandPlayerId && commandPlayerId !== this.playerId) {
+          logger.debug(`[SupabaseService] Ignoring command for different player: ${commandPlayerId} (this player: ${this.playerId})`);
+          return;
+        }
+        
         logger.info('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id);
         
         // Process the command
