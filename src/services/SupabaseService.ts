@@ -67,6 +67,7 @@ class SupabaseService {
   
   // Track which columns exist in the database to avoid schema errors
   private metadataColumnExists: boolean | null = null; // null = not checked yet
+  private pathColumnExists: boolean | null = null; // null = not checked yet
   
   // Error tracking to suppress spam during long runtime
   private consecutiveStateSyncErrors = 0;
@@ -1217,6 +1218,17 @@ class SupabaseService {
         logger.debug(`[SupabaseService] Metadata column exists: ${this.metadataColumnExists}`);
       }
 
+      // Also check if path column exists
+      if (this.pathColumnExists === null) {
+        const { error: pathError } = await this.client
+          .from('local_videos')
+          .select('path')
+          .limit(1);
+        
+        this.pathColumnExists = !pathError || pathError.code !== 'PGRST204';
+        logger.debug(`[SupabaseService] Path column exists: ${this.pathColumnExists}`);
+      }
+
       return true;
     } catch (error) {
       logger.error('[SupabaseService] Error checking schema:', error);
@@ -1380,30 +1392,34 @@ class SupabaseService {
             file_hash: fileHash || null // Include hash in record
           };
           
-          // Only include metadata if the column exists in the database
-          // Check metadataColumnExists (will be null on first run, then checked in checkSchema)
-          // If it's explicitly false, we know the column doesn't exist and should skip it
-          if (this.metadataColumnExists !== false) {
-            record.metadata = {
-              sourceType: 'local',
-              playlist: video.playlist,
-              playlistDisplayName: video.playlistDisplayName,
-              filename: video.filename
-            };
-          }
+          // Always include metadata (column should exist after running SQL)
+          record.metadata = {
+            sourceType: 'local',
+            playlist: video.playlist,
+            playlistDisplayName: video.playlistDisplayName,
+            filename: video.filename
+          };
           
-          // Include 'path' column for backward compatibility if database still has it
-          // Set it to same value as file_path to satisfy NOT NULL constraint
-          record.path = filePath;
+          // Include 'path' column for backward compatibility if database has it
+          // Only include if column exists (checked during schema validation)
+          if (this.pathColumnExists !== false) {
+            record.path = filePath;
+          }
           
           return record;
         })
         .filter((record): record is any => record !== null); // Remove nulls (unchanged videos)
       
-      // If we know metadata column doesn't exist, remove it from all records now
+      // If we know columns don't exist, remove them from all records now
       if (this.metadataColumnExists === false) {
         for (const record of localVideoRecords) {
           delete record.metadata;
+        }
+      }
+      
+      if (this.pathColumnExists === false) {
+        for (const record of localVideoRecords) {
+          delete record.path;
         }
       }
 
@@ -1461,6 +1477,29 @@ class SupabaseService {
             
             if (retryError) {
               logger.error(`[SupabaseService] Error upserting batch ${i / batchSize + 1} after removing metadata:`, retryError);
+            } else {
+              upsertedCount += batch.length;
+            }
+            continue; // Skip to next batch
+          }
+          
+          // Check if it's a path column error
+          if (upsertError.code === 'PGRST204' && upsertError.message?.includes("'path'")) {
+            logger.debug('[SupabaseService] Path column does not exist - removing from batch');
+            this.pathColumnExists = false;
+            
+            // Remove path from all records in batch and retry
+            const batchWithoutPath = batch.map(record => {
+              const { path, ...recordWithoutPath } = record;
+              return recordWithoutPath;
+            });
+            
+            const { error: retryError } = await this.client
+              .from('local_videos')
+              .upsert(batchWithoutPath, { onConflict: 'player_id,file_path' });
+            
+            if (retryError) {
+              logger.error(`[SupabaseService] Error upserting batch ${i / batchSize + 1} after removing path:`, retryError);
             } else {
               upsertedCount += batch.length;
             }
