@@ -73,7 +73,7 @@ export const HEARTBEAT_INTERVAL = 30000;
 export const COMMAND_POLL_INTERVAL = 5000;
 
 // State sync debounce time (prevent excessive updates)
-export const STATE_SYNC_DEBOUNCE = 1000; // 1 second debounce to reduce update spam
+export const STATE_SYNC_DEBOUNCE = 300; // 300ms debounce for better responsiveness while reducing spam
 
 // Maximum age for pending commands before considered expired (5 minutes)
 export const COMMAND_EXPIRY_MS = 5 * 60 * 1000;

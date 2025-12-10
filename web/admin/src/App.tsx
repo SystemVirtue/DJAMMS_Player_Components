@@ -282,12 +282,18 @@ function AdminApp() {
   useEffect(() => {
     // Helper to apply state
     const applyState = (state: SupabasePlayerState) => {
+      const prevQueueLength = activeQueue.length;
+      const prevPriorityLength = priorityQueue.length;
+      const prevQueueIndex = queueIndex;
+      
       console.log('[WebAdmin] Received player state update:', {
         now_playing: state.now_playing_video?.title,
         is_playing: state.is_playing,
         queue_length: state.active_queue?.length || 0,
         queue_index: state.queue_index,
-        priority_length: state.priority_queue?.length || 0
+        priority_length: state.priority_queue?.length || 0,
+        queue_changed: prevQueueLength !== (state.active_queue?.length || 0) || prevQueueIndex !== (state.queue_index ?? 0),
+        priority_changed: prevPriorityLength !== (state.priority_queue?.length || 0)
       });
       setPlayerState(state);
       

@@ -1679,6 +1679,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const queueRef = useRef(queue);
   const queueIndexRef = useRef(queueIndex);
   const priorityQueueRef = useRef(priorityQueue);
+  const prevQueueIndexRef = useRef(queueIndex); // Track previous queueIndex for change detection
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -1881,8 +1882,22 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           priorityQueueRef.current = state.priorityQueue;
         }
         if (typeof state.queueIndex === 'number') {
+          const prevIndex = queueIndexRef.current;
           setQueueIndex(state.queueIndex);
           queueIndexRef.current = state.queueIndex;
+          
+          // Detect queue advancement: if queueIndex changed, force immediate sync
+          if (prevIndex !== state.queueIndex) {
+            console.log(`[PlayerWindow] Queue advanced: ${prevIndex} → ${state.queueIndex}, forcing immediate sync`);
+            // Force immediate sync with current queue state
+            setTimeout(() => {
+              syncState({
+                activeQueue: state.activeQueue || queueRef.current,
+                priorityQueue: state.priorityQueue || priorityQueueRef.current,
+                queueIndex: state.queueIndex
+              }, true); // immediate = true
+            }, 0);
+          }
         }
         
         // Handle current video change - send play command if video changed
@@ -1988,16 +2003,36 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   useEffect(() => {
     if (!supabaseInitialized) return;
     
-    syncState({
-      status: isPlaying ? 'playing' : 'paused',
-      isPlaying,
-      currentVideo,
-      currentPosition: playbackTime, // Include playback position for admin console timeline
-      volume: volume / 100,
-      activeQueue: queue,
-      priorityQueue,
-      queueIndex
-    });
+    // Detect queue advancement: if queueIndex changed, force immediate sync
+    const queueAdvanced = prevQueueIndexRef.current !== queueIndex;
+    if (queueAdvanced) {
+      console.log(`[PlayerWindow] Queue advanced in useEffect: ${prevQueueIndexRef.current} → ${queueIndex}, forcing immediate sync`);
+      prevQueueIndexRef.current = queueIndex;
+      // Force immediate sync for queue advancement
+      syncState({
+        status: isPlaying ? 'playing' : 'paused',
+        isPlaying,
+        currentVideo,
+        currentPosition: playbackTime,
+        volume: volume / 100,
+        activeQueue: queue,
+        priorityQueue,
+        queueIndex
+      }, true); // immediate = true
+    } else {
+      // Normal sync (debounced) for other state changes
+      prevQueueIndexRef.current = queueIndex;
+      syncState({
+        status: isPlaying ? 'playing' : 'paused',
+        isPlaying,
+        currentVideo,
+        currentPosition: playbackTime, // Include playback position for admin console timeline
+        volume: volume / 100,
+        activeQueue: queue,
+        priorityQueue,
+        queueIndex
+      });
+    }
   }, [supabaseInitialized, isPlaying, currentVideo, playbackTime, volume, queue, priorityQueue, queueIndex, syncState]);
 
   // Tools handlers

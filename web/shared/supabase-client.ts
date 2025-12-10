@@ -198,9 +198,21 @@ export async function getPlayerState(playerId: string = DEFAULT_PLAYER_ID): Prom
 export function subscribeToPlayerState(
   playerId: string = DEFAULT_PLAYER_ID,
   callback: (state: SupabasePlayerState) => void
-): RealtimeChannel {
+): RealtimeChannel & { stopPolling?: () => void } {
   // Use server-side filter if Realtime filters are enabled in Supabase dashboard
   // Falls back to client-side filtering if server-side filter fails
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let lastPolledState: SupabasePlayerState | null = null;
+  let isPolling = false;
+  
+  const stopPolling = () => {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+      isPolling = false;
+    }
+  };
+  
   const channel = supabase
     .channel(`player_state:${playerId}`)
     .on(
@@ -214,18 +226,67 @@ export function subscribeToPlayerState(
       (payload) => {
         const newState = payload.new as SupabasePlayerState;
         if (newState) {
+          console.log(`[SupabaseClient] Received Realtime update for player ${playerId}:`, {
+            now_playing: newState.now_playing_video?.title,
+            queue_length: newState.active_queue?.length,
+            priority_length: newState.priority_queue?.length
+          });
+          lastPolledState = newState;
           callback(newState);
+          
+          // Stop polling if Realtime is working
+          stopPolling();
+          console.log('[SupabaseClient] Realtime working, stopped fallback polling');
         }
       }
     )
     .subscribe((status) => {
       console.log(`[SupabaseClient] Player state subscription: ${status}`);
-      if (status === 'CHANNEL_ERROR') {
-        console.warn('[SupabaseClient] Realtime filter may not be enabled. Enable player_id filter in Supabase dashboard for better performance.');
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('[SupabaseClient] Realtime subscription failed, starting fallback polling');
+        
+        // Start fallback polling every 2 seconds
+        if (!isPolling) {
+          isPolling = true;
+          pollInterval = setInterval(async () => {
+            try {
+              const state = await getPlayerState(playerId);
+              if (state) {
+                // Only call callback if state actually changed
+                if (!lastPolledState || JSON.stringify(state) !== JSON.stringify(lastPolledState)) {
+                  console.log(`[SupabaseClient] Polled state update for player ${playerId}:`, {
+                    now_playing: state.now_playing_video?.title,
+                    queue_length: state.active_queue?.length,
+                    priority_length: state.priority_queue?.length
+                  });
+                  lastPolledState = state;
+                  callback(state);
+                }
+              }
+            } catch (error) {
+              console.error('[SupabaseClient] Polling error:', error);
+            }
+          }, 2000);
+        }
+      } else if (status === 'SUBSCRIBED') {
+        console.log('[SupabaseClient] Realtime subscription active');
+        // Stop polling if Realtime is working
+        stopPolling();
       }
     });
 
-  return channel;
+  // Add cleanup method and return enhanced channel
+  const enhancedChannel = channel as RealtimeChannel & { stopPolling: () => void };
+  enhancedChannel.stopPolling = stopPolling;
+  
+  // Override unsubscribe to also stop polling
+  const originalUnsubscribe = enhancedChannel.unsubscribe.bind(enhancedChannel);
+  enhancedChannel.unsubscribe = async () => {
+    stopPolling();
+    return originalUnsubscribe();
+  };
+
+  return enhancedChannel;
 }
 
 /**

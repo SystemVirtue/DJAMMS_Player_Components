@@ -470,20 +470,23 @@ class SupabaseService {
       }
 
       // Always sync queues (even if empty) to ensure Web Admin shows correct state
+      // IMPORTANT: If state.activeQueue is explicitly provided (even if empty array), sync it
+      // Only preserve old data if activeQueue is truly undefined (not provided)
       if (state.activeQueue !== undefined) {
         updateData.active_queue = state.activeQueue.map(v => this.videoToQueueItem(v));
       } else {
-        // If activeQueue is not provided but we have a last synced state, preserve it
+        // Only preserve if activeQueue was not provided at all (undefined)
         // This prevents clearing the queue when syncState is called without queue data
         if (this.lastSyncedState?.active_queue) {
           updateData.active_queue = this.lastSyncedState.active_queue;
         }
       }
 
+      // Same logic for priority queue
       if (state.priorityQueue !== undefined) {
         updateData.priority_queue = state.priorityQueue.map(v => this.videoToQueueItem(v));
       } else {
-        // Preserve priority queue if not provided
+        // Only preserve if priorityQueue was not provided at all (undefined)
         if (this.lastSyncedState?.priority_queue) {
           updateData.priority_queue = this.lastSyncedState.priority_queue;
         }
@@ -505,10 +508,16 @@ class SupabaseService {
       }
 
       // Deep equality check: skip sync if state is truly unchanged
-      // BUT: Always sync if queue data is present (even if identical) to ensure Web Admin gets updates
-      if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData) && !hasQueueData) {
-        logger.debug('Skipping state sync - no changes detected (deep equality)');
-        return; // Skip duplicate update (unless queue data is present)
+      // CRITICAL: Always sync queue data (even if arrays are identical) to ensure Web Admin gets updates
+      // This is because queueIndex might have changed even if queue arrays are identical
+      if (hasQueueData) {
+        // Always sync when queue data is present - don't skip even if arrays are identical
+        // The queueIndex might have changed, or Web endpoints need fresh data
+        logger.debug('Syncing state with queue data (always sync queues for Web Admin)');
+      } else if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData)) {
+        // Only skip if no queue data and everything else is identical
+        logger.debug('Skipping state sync - no changes detected (deep equality, no queue data)');
+        return;
       }
 
       // Check again if request was cancelled before making the request
@@ -521,8 +530,22 @@ class SupabaseService {
         status: updateData.status,
         queue_length: updateData.active_queue?.length,
         // queue_index: updateData.queue_index, // Column doesn't exist in schema
-        priority_length: updateData.priority_queue?.length
+        priority_length: updateData.priority_queue?.length,
+        has_queue_data: hasQueueData,
+        immediate: abortSignal.aborted ? false : 'checking...' // Will be set if immediate
       });
+      
+      // Log queue changes for debugging
+      if (hasQueueData && this.lastSyncedState) {
+        const prevActiveLength = this.lastSyncedState.active_queue?.length || 0;
+        const prevPriorityLength = this.lastSyncedState.priority_queue?.length || 0;
+        const newActiveLength = updateData.active_queue?.length || 0;
+        const newPriorityLength = updateData.priority_queue?.length || 0;
+        
+        if (prevActiveLength !== newActiveLength || prevPriorityLength !== newPriorityLength) {
+          logger.info(`[SupabaseService] Queue state changed: active ${prevActiveLength}→${newActiveLength}, priority ${prevPriorityLength}→${newPriorityLength}`);
+        }
+      }
 
       const { error } = await this.client
         .from('player_state')
@@ -556,7 +579,10 @@ class SupabaseService {
           logger.debug(`State sync recovered after ${this.consecutiveStateSyncErrors} errors`);
           this.consecutiveStateSyncErrors = 0;
         }
-        logger.debug('State synced successfully to Supabase');
+        logger.debug('State synced successfully to Supabase', {
+          queue_length: updateData.active_queue?.length,
+          priority_length: updateData.priority_queue?.length
+        });
         this.lastSyncedState = updateData;
       }
     } catch (error) {

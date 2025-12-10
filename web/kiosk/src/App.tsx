@@ -395,6 +395,11 @@ function KioskApp() {
   // Subscribe to real-time player state updates
   useEffect(() => {
     const channel = subscribeToPlayerState(playerId, (state) => {
+      console.log('[Kiosk] Received player state update:', {
+        now_playing: state.now_playing_video?.title,
+        queue_length: state.active_queue?.length || 0,
+        priority_length: state.priority_queue?.length || 0
+      });
       setPlayerState(state);
       setIsOnline(isPlayerOnline(state));
     });
