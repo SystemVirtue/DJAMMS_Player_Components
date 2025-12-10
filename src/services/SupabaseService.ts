@@ -65,6 +65,9 @@ class SupabaseService {
   private schemaFixAttempted: boolean = false;
   private schemaFixFailed: boolean = false;
   
+  // Track which columns exist in the database to avoid schema errors
+  private metadataColumnExists: boolean | null = null; // null = not checked yet
+  
   // Error tracking to suppress spam during long runtime
   private consecutiveStateSyncErrors = 0;
   private consecutiveCommandPollErrors = 0;
@@ -1203,6 +1206,17 @@ class SupabaseService {
         return false;
       }
 
+      // Also check if metadata column exists
+      if (this.metadataColumnExists === null) {
+        const { error: metadataError } = await this.client
+          .from('local_videos')
+          .select('metadata')
+          .limit(1);
+        
+        this.metadataColumnExists = !metadataError || metadataError.code !== 'PGRST204';
+        logger.debug(`[SupabaseService] Metadata column exists: ${this.metadataColumnExists}`);
+      }
+
       return true;
     } catch (error) {
       logger.error('[SupabaseService] Error checking schema:', error);
@@ -1343,6 +1357,8 @@ class SupabaseService {
       }
 
       // Convert videos to Supabase format and filter out unchanged videos
+      // Note: We'll check metadataColumnExists during checkSchema, but also handle it dynamically
+      // during upsert errors to avoid including it if the column doesn't exist
       const localVideoRecords = allVideos
         .map(video => {
           const filePath = video.path || video.file_path || video.src;
@@ -1361,14 +1377,20 @@ class SupabaseService {
             filename: video.filename || filePath.split('/').pop() || 'unknown',
             duration: video.duration || null,
             is_available: true,
-            file_hash: fileHash || null, // Include hash in record
-            metadata: {
+            file_hash: fileHash || null // Include hash in record
+          };
+          
+          // Only include metadata if the column exists in the database
+          // Check metadataColumnExists (will be null on first run, then checked in checkSchema)
+          // If it's explicitly false, we know the column doesn't exist and should skip it
+          if (this.metadataColumnExists !== false) {
+            record.metadata = {
               sourceType: 'local',
               playlist: video.playlist,
               playlistDisplayName: video.playlistDisplayName,
               filename: video.filename
-            }
-          };
+            };
+          }
           
           // Include 'path' column for backward compatibility if database still has it
           // Set it to same value as file_path to satisfy NOT NULL constraint
@@ -1377,6 +1399,13 @@ class SupabaseService {
           return record;
         })
         .filter((record): record is any => record !== null); // Remove nulls (unchanged videos)
+      
+      // If we know metadata column doesn't exist, remove it from all records now
+      if (this.metadataColumnExists === false) {
+        for (const record of localVideoRecords) {
+          delete record.metadata;
+        }
+      }
 
       const changedCount = localVideoRecords.length;
       const unchangedCount = allVideos.length - changedCount;
@@ -1415,7 +1444,30 @@ class SupabaseService {
           .upsert(batch, { onConflict: 'player_id,file_path' });
 
         if (upsertError) {
-          // If schema error (PGRST204 = column not found), try to fix it (only once)
+          // Check if it's a metadata column error
+          if (upsertError.code === 'PGRST204' && upsertError.message?.includes("'metadata'")) {
+            logger.debug('[SupabaseService] Metadata column does not exist - removing from batch');
+            this.metadataColumnExists = false;
+            
+            // Remove metadata from all records in batch and retry
+            const batchWithoutMetadata = batch.map(record => {
+              const { metadata, ...recordWithoutMetadata } = record;
+              return recordWithoutMetadata;
+            });
+            
+            const { error: retryError } = await this.client
+              .from('local_videos')
+              .upsert(batchWithoutMetadata, { onConflict: 'player_id,file_path' });
+            
+            if (retryError) {
+              logger.error(`[SupabaseService] Error upserting batch ${i / batchSize + 1} after removing metadata:`, retryError);
+            } else {
+              upsertedCount += batch.length;
+            }
+            continue; // Skip to next batch
+          }
+          
+          // Other schema errors - try to fix (only once)
           if (upsertError.code === 'PGRST204' && !this.schemaFixAttempted) {
             logger.error('[SupabaseService] Schema error detected. Attempting to fix...');
             this.schemaFixAttempted = true;
