@@ -445,6 +445,15 @@ function AdminApp() {
     };
   }, [playerId]);
 
+  // Cleanup overlay settings debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (overlaySettingsDebounceRef.current) {
+        clearTimeout(overlaySettingsDebounceRef.current);
+      }
+    };
+  }, []);
+
   // Search videos when query changes, or show all videos when empty
   useEffect(() => {
     const performSearch = async () => {
@@ -518,12 +527,21 @@ function AdminApp() {
     };
   }, [playbackDuration, sendCommand]);
 
-  // Send overlay settings to Electron when they change
+  // Send overlay settings to Electron when they change (debounced to prevent excessive commands)
   const updateOverlaySetting = useCallback((key: string, value: number | boolean) => {
     setOverlaySettings(prev => {
       const updated = { ...prev, [key]: value };
-      // Send command to player with full settings object
-      sendCommand('overlay_settings_update', updated);
+      
+      // Clear existing debounce timer
+      if (overlaySettingsDebounceRef.current) {
+        clearTimeout(overlaySettingsDebounceRef.current);
+      }
+      
+      // Debounce command send by 500ms (user stops changing for 500ms before sending)
+      overlaySettingsDebounceRef.current = setTimeout(() => {
+        sendCommand('overlay_settings_update', updated);
+      }, 500);
+      
       return updated;
     });
   }, [sendCommand]);

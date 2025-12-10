@@ -6,7 +6,8 @@ import { Search, X, Loader2 } from 'lucide-react';
 import { SearchKeyboard } from './SearchKeyboard';
 import { VideoResultCard, VideoGrid } from './VideoResultCard';
 import { 
-  searchLocalVideos, 
+  searchLocalVideos,
+  getAllLocalVideos,
   blockingCommands,
   localVideoToQueueItem 
 } from '@shared/supabase-client';
@@ -26,29 +27,50 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
   const [selectedVideo, setSelectedVideo] = useState<SupabaseLocalVideo | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
+  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide' | 'all'>('hide'); // Filter for karaoke videos
 
-  // Debounced search
-  useEffect(() => {
-    if (searchQuery.trim().length < 2) {
-      setResults([]);
-      return;
+  // Helper to check if video is karaoke
+  const isKaraokeVideo = (video: SupabaseLocalVideo): boolean => {
+    const title = video.title?.toLowerCase() || '';
+    const path = video.path?.toLowerCase() || '';
+    return title.includes('karaoke') || path.includes('karaoke');
+  };
+
+  // Filter results based on karaoke filter
+  const filteredResults = results.filter(video => {
+    if (karaokeFilter === 'all') return true;
+    const hasKaraoke = isKaraokeVideo(video);
+    if (karaokeFilter === 'show') {
+      return hasKaraoke; // Only show karaoke items
+    } else {
+      return !hasKaraoke; // Hide karaoke items
     }
+  });
 
+  // Debounced search - show ALL videos when query is empty (browse mode)
+  useEffect(() => {
     const timer = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const searchResults = await searchLocalVideos(searchQuery, playerId, 50);
-        setResults(searchResults);
+        if (searchQuery.trim().length < 2) {
+          // Browse mode: show ALL videos from the player's database
+          const allVideos = await getAllLocalVideos(playerId, 1000, 0);
+          setResults(allVideos);
+        } else {
+          // Search mode: search for matching videos
+          const searchResults = await searchLocalVideos(searchQuery, playerId, 1000);
+          setResults(searchResults);
+        }
       } catch (error) {
         console.error('Search error:', error);
         setResults([]);
       } finally {
         setIsLoading(false);
       }
-    }, 300);
+    }, searchQuery.trim().length < 2 ? 0 : 300); // Immediate for browse mode, debounced for search
 
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, playerId]);
 
   const handleKeyPress = useCallback((key: string) => {
     setSearchQuery(prev => prev + key);
@@ -132,19 +154,69 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
         </div>
       </div>
 
+      {/* Filter Controls */}
+      <div className="px-6 py-2">
+        <div className="flex gap-2 justify-center">
+          <button
+            onClick={() => setKaraokeFilter('all')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              karaokeFilter === 'all'
+                ? 'bg-yellow-400 text-slate-900'
+                : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+            }`}
+          >
+            All Songs
+          </button>
+          <button
+            onClick={() => setKaraokeFilter('hide')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              karaokeFilter === 'hide'
+                ? 'bg-yellow-400 text-slate-900'
+                : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+            }`}
+          >
+            Hide Karaoke
+          </button>
+          <button
+            onClick={() => setKaraokeFilter('show')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              karaokeFilter === 'show'
+                ? 'bg-yellow-400 text-slate-900'
+                : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+            }`}
+          >
+            Karaoke Only
+          </button>
+        </div>
+      </div>
+
       {/* Results Area */}
       <div className="flex-1 overflow-y-auto px-6 pb-4">
-        {results.length > 0 ? (
-          <VideoGrid>
-            {results.map(video => (
-              <VideoResultCard
-                key={video.id}
-                video={video}
-                isSelected={selectedVideo?.id === video.id}
-                onClick={() => handleVideoSelect(video)}
-              />
-            ))}
-          </VideoGrid>
+        {isLoading ? (
+          <div className="text-center py-12">
+            <Loader2 size={64} className="text-yellow-400 animate-spin mx-auto mb-4" />
+            <p className="text-gray-400 text-lg">Loading songs...</p>
+          </div>
+        ) : filteredResults.length > 0 ? (
+          <>
+            <div className="mb-4 text-gray-400 text-sm text-center">
+              {searchQuery.trim().length < 2 ? (
+                <span>Showing {filteredResults.length} songs from library</span>
+              ) : (
+                <span>Found {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''} for "{searchQuery}"</span>
+              )}
+            </div>
+            <VideoGrid>
+              {filteredResults.map(video => (
+                <VideoResultCard
+                  key={video.id}
+                  video={video}
+                  isSelected={selectedVideo?.id === video.id}
+                  onClick={() => handleVideoSelect(video)}
+                />
+              ))}
+            </VideoGrid>
+          </>
         ) : searchQuery.length >= 2 && !isLoading ? (
           <div className="text-center py-12">
             <div className="kiosk-card bg-red-900/80 text-red-200 mb-4">
@@ -157,8 +229,8 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
         ) : (
           <div className="text-center py-12">
             <Search size={64} className="text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400 text-lg">Search for your favorite songs</p>
-            <p className="text-gray-500 text-sm mt-2">Use the keyboard below to type your search</p>
+            <p className="text-gray-400 text-lg">Browse all songs or search for your favorites</p>
+            <p className="text-gray-500 text-sm mt-2">Use the keyboard below to search, or browse all songs</p>
           </div>
         )}
       </div>

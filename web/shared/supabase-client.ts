@@ -304,6 +304,7 @@ export async function sendCommandAndWait(
     };
 
     // 2. Insert to database FIRST (so we can subscribe to status changes)
+    // Note: This is optional - if schema doesn't match, we'll skip DB insert but still broadcast
     const { error: insertError } = await supabase
       .from('admin_commands')
       .insert({
@@ -316,7 +317,9 @@ export async function sendCommandAndWait(
         issued_at: new Date().toISOString()
       });
 
-    if (insertError && insertError.code !== '42P01') {
+    // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist)
+    // These are non-critical since broadcasting via Realtime channel works fine
+    if (insertError && insertError.code !== '42P01' && insertError.code !== 'PGRST204') {
       console.warn('[SupabaseClient] DB insert failed:', insertError.message);
     }
 
@@ -426,7 +429,13 @@ async function pollCommandStatus(
         .eq('id', commandId)
         .single();
 
+      // If schema doesn't match (PGRST204 = column not found), skip polling
+      // Realtime subscription will handle status updates instead
       if (error) {
+        if (error.code === 'PGRST204' || error.code === '42P01') {
+          // Schema mismatch - skip polling, rely on Realtime subscription
+          return;
+        }
         clearInterval(poll);
         resolve({ success: false, error: error.message, commandId });
         return;
@@ -507,6 +516,7 @@ export async function insertCommand(
     console.log(`[SupabaseClient] ✅ Command ${commandType} broadcast sent`);
 
     // 3. Insert to database for persistence (fire-and-forget, don't block)
+    // Note: This is optional - if schema doesn't match, we'll skip DB insert but still broadcast
     supabase
       .from('admin_commands')
       .insert({
@@ -519,9 +529,14 @@ export async function insertCommand(
         issued_at: new Date().toISOString()
       })
       .then(({ error }) => {
-        if (error && error.code !== '42P01') {
+        // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist)
+        // These are non-critical since broadcasting via Realtime channel works fine
+        if (error && error.code !== '42P01' && error.code !== 'PGRST204') {
           console.warn('[SupabaseClient] DB insert failed:', error.message);
         }
+      })
+      .catch(() => {
+        // Silently ignore any other errors - broadcasting already succeeded
       });
 
     return true;

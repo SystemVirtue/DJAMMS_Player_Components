@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { QueueVideoItem, SupabaseLocalVideo } from '@shared/types';
-import { searchLocalVideos, blockingCommands, localVideoToQueueItem } from '@shared/supabase-client';
+import { searchLocalVideos, getAllLocalVideos, blockingCommands, localVideoToQueueItem } from '@shared/supabase-client';
 import { cleanVideoTitle } from '@shared/video-utils';
 import './JukeboxSearchMode.css';
 
@@ -139,18 +139,19 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
   const resultsRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Debounced search
+  // Debounced search - show ALL videos when query is empty (browse mode)
   const performSearch = useCallback(async (query: string) => {
-    if (query.length < 2) {
-      setSearchResults([]);
-      setIsSearching(false);
-      return;
-    }
-    
     setIsSearching(true);
     try {
-      const results = await searchLocalVideos(query, 50, playerId);
-      setSearchResults(results || []);
+      if (query.length < 2) {
+        // Browse mode: show ALL videos from the player's database
+        const allVideos = await getAllLocalVideos(playerId, 1000, 0);
+        setSearchResults(allVideos || []);
+      } else {
+        // Search mode: search for matching videos
+        const results = await searchLocalVideos(query, playerId, 1000);
+        setSearchResults(results || []);
+      }
     } catch (error) {
       console.error('[JukeboxSearchMode] Search error:', error);
       setSearchResults([]);
@@ -159,15 +160,18 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
     }
   }, [playerId]);
 
-  // Handle search input changes
+  // Handle search input changes - immediate for browse mode, debounced for search
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
     
+    // Immediate for browse mode (empty query), debounced for search
+    const delay = searchQuery.trim().length < 2 ? 0 : 300;
+    
     debounceRef.current = setTimeout(() => {
       performSearch(searchQuery);
-    }, 300);
+    }, delay);
     
     return () => {
       if (debounceRef.current) {
@@ -358,41 +362,33 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
       
       {/* Main Results Area */}
       <main className="jukebox-results" ref={resultsRef}>
-        {searchQuery.length === 0 ? (
-          // Empty state with quick filters
-          <div className="jukebox-empty-state">
-            <div className="empty-state-content">
-              <div className="empty-state-icon">🎶</div>
-              <h2 className="empty-state-title">Start Searching</h2>
-              <p className="empty-state-subtitle">Type to find your favorite songs</p>
-            </div>
-            
-            <div className="quick-filters">
-              <h3 className="quick-filters-title">Quick Browse</h3>
-              <div className="quick-filters-grid">
-                {QUICK_FILTERS.map((filter) => (
-                  <button
-                    key={filter.id}
-                    className="quick-filter-chip"
-                    onClick={() => setSearchQuery(filter.id)}
-                  >
-                    <span className="filter-icon">{filter.icon}</span>
-                    <span className="filter-label">{filter.label.split(' ').slice(1).join(' ')}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+        {isSearching ? (
+          // Loading state
+          <div className="jukebox-loading">
+            <div className="loading-spinner" />
+            <p>{searchQuery.trim().length < 2 ? 'Loading songs...' : 'Searching...'}</p>
           </div>
         ) : filteredResults.length === 0 && !isSearching ? (
           // No results
           <div className="jukebox-no-results">
             <div className="no-results-icon">😢</div>
             <h2>No songs found</h2>
-            <p>{searchResults.length > 0 ? `No ${karaokeFilter === 'show' ? 'karaoke' : 'non-karaoke'} matches` : 'Try a different search term'}</p>
+            <p>
+              {searchQuery.trim().length < 2 
+                ? 'No songs available for this filter'
+                : searchResults.length > 0 
+                  ? `No ${karaokeFilter === 'show' ? 'karaoke' : 'non-karaoke'} matches`
+                  : 'Try a different search term'}
+            </p>
           </div>
         ) : (
           // Results grid
           <div className="results-grid">
+            {searchQuery.trim().length < 2 && filteredResults.length > 0 && (
+              <div className="results-header" style={{ gridColumn: '1 / -1', padding: '1rem', textAlign: 'center', color: '#888', fontSize: '0.9rem' }}>
+                Showing {filteredResults.length} song{filteredResults.length !== 1 ? 's' : ''} from library
+              </div>
+            )}
             {filteredResults.map((video, index) => (
               <div
                 key={video.id}
