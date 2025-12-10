@@ -603,10 +603,12 @@ class SupabaseService {
         const commandPlayerId = command.player_id || (command.command_data as any)?.player_id || (command.command_data as any)?.target_player_id;
         if (commandPlayerId && commandPlayerId !== this.playerId) {
           logger.debug(`[SupabaseService] Ignoring command for different player: ${commandPlayerId} (this player: ${this.playerId})`);
+          // Still acknowledge the command to prevent timeout, but don't process it
+          this.markCommandExecuted(command.id, false, `Command for different player: ${commandPlayerId}`);
           return;
         }
         
-        logger.info('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id);
+        logger.info('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id, `(player: ${commandPlayerId || 'none'})`);
         
         // Process the command
         await this.processCommand(command);
@@ -977,12 +979,13 @@ class SupabaseService {
         // Execute only the FIRST handler to prevent duplicate actions from multiple registrations
         await handlers[0](command);
         logger.info(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
+        // Mark command as executed in database (fire-and-forget)
+        this.markCommandExecuted(command.id, true);
       } else {
         logger.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
+        // Still acknowledge the command to prevent timeout, even if no handler
+        this.markCommandExecuted(command.id, false, `No handler registered for command type: ${command.command_type}`);
       }
-
-      // Mark command as executed in database (fire-and-forget)
-      this.markCommandExecuted(command.id, true);
     } catch (error) {
       logger.error(`[SupabaseService] ❌ Error processing command ${command.id}:`, error);
       this.markCommandExecuted(command.id, false, String(error));
