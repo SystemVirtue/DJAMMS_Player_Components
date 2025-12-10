@@ -1,7 +1,7 @@
 // DJAMMS Kiosk - Public Search & Request Interface
 // Styled with obie-v5 aesthetic
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, createContext, useContext } from 'react';
 import {
   BackgroundPlaylist,
   DEFAULT_BACKGROUND_ASSETS,
@@ -19,14 +19,341 @@ import {
   isPlayerOnline,
   onConnectionChange
 } from '@shared/supabase-client';
-import ConnectPlayerModal, { usePlayer } from '@shared/ConnectPlayerModal';
+import {
+  getPlayerId,
+  setPlayerId,
+  clearPlayerId,
+  validatePlayerId,
+  isValidPlayerIdFormat,
+  DEFAULT_PLAYER_ID,
+  MIN_PLAYER_ID_LENGTH
+} from '@shared/player-utils';
 import type { SupabasePlayerState, QueueVideoItem } from '@shared/types';
+
+// Player Context
+interface PlayerContextValue {
+  playerId: string;
+  disconnect: () => void;
+}
+
+const PlayerContext = createContext<PlayerContextValue | null>(null);
+
+export function usePlayer(): PlayerContextValue {
+  const context = useContext(PlayerContext);
+  if (!context) {
+    throw new Error('usePlayer must be used within KioskApp');
+  }
+  return context;
+}
 
 // Get UI mode from URL parameter: ?ui=classic or ?ui=jukebox (default: jukebox)
 function getUIMode(): 'classic' | 'jukebox' {
   const params = new URLSearchParams(window.location.search);
   const ui = params.get('ui');
   return ui === 'classic' ? 'classic' : 'jukebox';
+}
+
+// Connection Flow Component
+function ConnectionFlow({ onConnected }: { onConnected: (playerId: string) => void }) {
+  const [step, setStep] = useState<'one' | 'two' | 'three'>('one');
+  const [storedPlayerId, setStoredPlayerId] = useState<string | null>(null);
+  const [input, setInput] = useState(DEFAULT_PLAYER_ID);
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState<'error' | 'info' | 'success'>('info');
+  const [connecting, setConnecting] = useState(false);
+  const [showPopover, setShowPopover] = useState(false);
+
+  // Initialize - check localStorage
+  useEffect(() => {
+    const stored = getPlayerId();
+    if (stored) {
+      setStoredPlayerId(stored);
+      setStep('one');
+      setShowPopover(true);
+      // Auto-close popover after 3 seconds
+      const timer = setTimeout(() => {
+        setShowPopover(false);
+        setStep('three');
+        // Start connection
+        connectToPlayer(stored);
+      }, 3000);
+      return () => clearTimeout(timer);
+    } else {
+      // No stored ID - go directly to STEP TWO
+      setStep('two');
+    }
+  }, []);
+
+  // STEP THREE: Connect to Supabase
+  const connectToPlayer = async (playerIdToConnect: string) => {
+    setConnecting(true);
+    setMessage('Connecting...');
+    setMessageType('info');
+
+    const isValid = await validatePlayerId(playerIdToConnect);
+    
+    if (!isValid) {
+      setMessage('Player ID not found. Make sure the Electron Player is running with this ID.');
+      setMessageType('error');
+      setConnecting(false);
+      // Go back to STEP TWO
+      setStep('two');
+      setInput(playerIdToConnect);
+      return;
+    }
+
+    // Success - store and connect
+    setPlayerId(playerIdToConnect);
+    setMessage('Connected!');
+    setMessageType('success');
+    setConnecting(false);
+    
+    // Notify parent
+    setTimeout(() => {
+      onConnected(playerIdToConnect);
+    }, 500);
+  };
+
+  // Handle connect button (STEP TWO)
+  const handleConnect = async () => {
+    const clean = input.trim().toUpperCase();
+    
+    if (!isValidPlayerIdFormat(clean)) {
+      setMessage(`Player ID must be at least ${MIN_PLAYER_ID_LENGTH} characters`);
+      setMessageType('error');
+      return;
+    }
+
+    setStep('three');
+    await connectToPlayer(clean);
+  };
+
+  // Handle Enter key
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !connecting && step === 'two') {
+      handleConnect();
+    }
+  };
+
+  // STEP ONE: Popover
+  if (step === 'one' && showPopover && storedPlayerId) {
+    return (
+      <div style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
+        fontFamily: 'system-ui, -apple-system, sans-serif'
+      }}>
+        <div style={{
+          backgroundColor: '#1a1a2e',
+          padding: '32px',
+          borderRadius: '16px',
+          textAlign: 'center',
+          maxWidth: '400px',
+          width: '90%',
+          border: '1px solid #333',
+          boxShadow: '0 25px 50px rgba(0,0,0,0.5)'
+        }}>
+          <p style={{
+            fontSize: '20px',
+            marginBottom: '24px',
+            color: '#00bcd4'
+          }}>
+            Connecting to {storedPlayerId}
+          </p>
+          <button
+            onClick={() => {
+              setShowPopover(false);
+              setStep('two');
+              setInput(storedPlayerId);
+            }}
+            style={{
+              fontSize: '16px',
+              fontWeight: 'bold',
+              padding: '12px 24px',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: '#00bcd4',
+              color: 'white',
+              transition: 'all 0.2s'
+            }}
+          >
+            Update Player ID
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // STEP TWO: Enter Player ID
+  if (step === 'two') {
+    return (
+      <div style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
+        fontFamily: 'system-ui, -apple-system, sans-serif'
+      }}>
+        <div style={{
+          backgroundColor: '#1a1a2e',
+          padding: '48px',
+          borderRadius: '24px',
+          textAlign: 'center',
+          maxWidth: '600px',
+          width: '90%',
+          border: '1px solid #333',
+          boxShadow: '0 25px 50px rgba(0,0,0,0.5)'
+        }}>
+          {/* Logo/Icon */}
+          <div style={{
+            width: '80px',
+            height: '80px',
+            background: 'linear-gradient(135deg, #00bcd4, #0077b6)',
+            borderRadius: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 24px',
+            fontSize: '40px'
+          }}>
+            🎵
+          </div>
+
+          <h1 style={{
+            fontSize: '36px',
+            fontWeight: 'bold',
+            marginBottom: '16px',
+            color: '#00bcd4'
+          }}>
+            Connect to DJAMMS Player
+          </h1>
+          
+          <p style={{
+            fontSize: '18px',
+            marginBottom: '32px',
+            color: '#aaa'
+          }}>
+            Enter the Player ID to connect to the jukebox
+            <br />
+            <span style={{ fontSize: '14px', opacity: 0.7 }}>
+              (minimum {MIN_PLAYER_ID_LENGTH} characters)
+            </span>
+          </p>
+          
+          {/* Input */}
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value.toUpperCase())}
+            onKeyDown={handleKeyDown}
+            placeholder={DEFAULT_PLAYER_ID}
+            disabled={connecting}
+            maxLength={32}
+            style={{
+              width: '100%',
+              fontSize: '32px',
+              textAlign: 'center',
+              backgroundColor: '#0d0d1a',
+              border: '2px solid #333',
+              borderRadius: '12px',
+              padding: '20px',
+              marginBottom: '24px',
+              color: 'white',
+              letterSpacing: '4px',
+              fontFamily: 'monospace',
+              outline: 'none',
+              transition: 'border-color 0.2s',
+              boxSizing: 'border-box'
+            }}
+            onFocus={(e) => e.target.style.borderColor = '#00bcd4'}
+            onBlur={(e) => e.target.style.borderColor = '#333'}
+            autoFocus
+          />
+          
+          {/* Connect Button */}
+          <button
+            onClick={handleConnect}
+            disabled={connecting || input.trim().length < MIN_PLAYER_ID_LENGTH}
+            style={{
+              width: '100%',
+              fontSize: '24px',
+              fontWeight: 'bold',
+              padding: '20px 40px',
+              borderRadius: '12px',
+              border: 'none',
+              cursor: connecting || input.trim().length < MIN_PLAYER_ID_LENGTH ? 'not-allowed' : 'pointer',
+              backgroundColor: connecting || input.trim().length < MIN_PLAYER_ID_LENGTH ? '#333' : '#00bcd4',
+              color: 'white',
+              transition: 'all 0.2s',
+              opacity: connecting || input.trim().length < MIN_PLAYER_ID_LENGTH ? 0.5 : 1
+            }}
+          >
+            {connecting ? 'Connecting...' : 'Connect'}
+          </button>
+          
+          {/* Message */}
+          {message && (
+            <p style={{
+              marginTop: '24px',
+              fontSize: '16px',
+              color: messageType === 'error' ? '#ff6b6b' : 
+                     messageType === 'success' ? '#4ecdc4' : '#888'
+            }}>
+              {message}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // STEP THREE: Connecting (show loading)
+  if (step === 'three' && connecting) {
+    return (
+      <div style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999
+      }}>
+        <div style={{ textAlign: 'center', color: 'white' }}>
+          <div style={{
+            width: '64px',
+            height: '64px',
+            border: '4px solid #00bcd4',
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 16px'
+          }} />
+          <p style={{ fontSize: '24px', opacity: 0.8 }}>Connecting...</p>
+          {message && (
+            <p style={{ fontSize: '16px', marginTop: '16px', color: messageType === 'error' ? '#ff6b6b' : '#888' }}>
+              {message}
+            </p>
+          )}
+        </div>
+        <style>{`
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // Inner app component that has access to Player context
@@ -170,16 +497,28 @@ function KioskApp() {
   );
 }
 
-// Main App wrapped with ConnectPlayerModal
+// Main App with custom connection flow
 function App() {
+  const [playerId, setPlayerIdState] = useState<string | null>(null);
+  const [showConnectionFlow, setShowConnectionFlow] = useState(true);
+
+  const handleConnected = (connectedPlayerId: string) => {
+    setPlayerIdState(connectedPlayerId);
+    setShowConnectionFlow(false);
+  };
+
+  if (showConnectionFlow) {
+    return <ConnectionFlow onConnected={handleConnected} />;
+  }
+
+  if (!playerId) {
+    return null;
+  }
+
   return (
-    <ConnectPlayerModal
-      title="Connect to DJAMMS Player"
-      description="Enter the Player ID to connect to the jukebox"
-      appName="DJAMMS Kiosk"
-    >
+    <PlayerContext.Provider value={{ playerId, disconnect: () => window.location.reload() }}>
       <KioskApp />
-    </ConnectPlayerModal>
+    </PlayerContext.Provider>
   );
 }
 
