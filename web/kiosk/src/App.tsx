@@ -63,29 +63,8 @@ function ConnectionFlow({ onConnected }: { onConnected: (playerId: string) => vo
   const [connecting, setConnecting] = useState(false);
   const [showPopover, setShowPopover] = useState(false);
 
-  // Initialize - check localStorage
-  useEffect(() => {
-    const stored = getPlayerId();
-    if (stored) {
-      setStoredPlayerId(stored);
-      setStep('one');
-      setShowPopover(true);
-      // Auto-close popover after 3 seconds
-      const timer = setTimeout(() => {
-        setShowPopover(false);
-        setStep('three');
-        // Start connection
-        connectToPlayer(stored);
-      }, 3000);
-      return () => clearTimeout(timer);
-    } else {
-      // No stored ID - go directly to STEP TWO
-      setStep('two');
-    }
-  }, []);
-
   // STEP THREE: Connect to Supabase
-  const connectToPlayer = async (playerIdToConnect: string) => {
+  const connectToPlayer = useCallback(async (playerIdToConnect: string) => {
     setConnecting(true);
     setMessage('Connecting...');
     setMessageType('info');
@@ -112,7 +91,28 @@ function ConnectionFlow({ onConnected }: { onConnected: (playerId: string) => vo
     setTimeout(() => {
       onConnected(playerIdToConnect);
     }, 500);
-  };
+  }, [onConnected]);
+
+  // Initialize - check localStorage
+  useEffect(() => {
+    const stored = getPlayerId();
+    if (stored) {
+      setStoredPlayerId(stored);
+      setStep('one');
+      setShowPopover(true);
+      // Auto-close popover after 3 seconds
+      const timer = setTimeout(() => {
+        setShowPopover(false);
+        setStep('three');
+        // Start connection
+        connectToPlayer(stored);
+      }, 3000);
+      return () => clearTimeout(timer);
+    } else {
+      // No stored ID - go directly to STEP TWO
+      setStep('two');
+    }
+  }, [connectToPlayer]);
 
   // Handle connect button (STEP TWO)
   const handleConnect = async () => {
