@@ -162,7 +162,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
     } finally {
       setIsSearching(false);
     }
-  }, [playerId, searchResults.length]);
+  }, [playerId]);
 
   // Handle search input changes - immediate for browse mode, debounced for search
   useEffect(() => {
