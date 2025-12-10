@@ -154,11 +154,15 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
       }
     } catch (error) {
       console.error('[JukeboxSearchMode] Search error:', error);
-      setSearchResults([]);
+      // Don't clear results on error - keep existing results if available
+      // Only set empty if we don't have any results yet
+      if (searchResults.length === 0) {
+        setSearchResults([]);
+      }
     } finally {
       setIsSearching(false);
     }
-  }, [playerId]);
+  }, [playerId, searchResults.length]);
 
   // Handle search input changes - immediate for browse mode, debounced for search
   useEffect(() => {

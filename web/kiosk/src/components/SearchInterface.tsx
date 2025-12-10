@@ -55,15 +55,19 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
         if (searchQuery.trim().length < 2) {
           // Browse mode: show ALL videos from the player's database
           const allVideos = await getAllLocalVideos(playerId, 1000, 0);
-          setResults(allVideos);
+          setResults(allVideos || []);
         } else {
           // Search mode: search for matching videos
           const searchResults = await searchLocalVideos(searchQuery, playerId, 1000);
-          setResults(searchResults);
+          setResults(searchResults || []);
         }
       } catch (error) {
-        console.error('Search error:', error);
-        setResults([]);
+        console.error('[SearchInterface] Search error:', error);
+        // Don't clear results on error - keep existing results if available
+        // Only set empty if we don't have any results yet
+        if (results.length === 0) {
+          setResults([]);
+        }
       } finally {
         setIsLoading(false);
       }
