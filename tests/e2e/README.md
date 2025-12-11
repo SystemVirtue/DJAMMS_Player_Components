@@ -1,170 +1,221 @@
 # DJAMMS E2E Test Suite
 
-Automated end-to-end tests for DJAMMS Web Admin and Web Kiosk endpoints using Playwright.
+Comprehensive Playwright test suite for Admin Web UI and Kiosk endpoints.
+
+## Test Structure
+
+- **`specs/admin-ui.spec.ts`** - Admin UI comprehensive tests
+  - Core functionality (navigation, controls, connection)
+  - Queue management (reorder, remove, skip, shuffle)
+  - Search functionality
+  - Settings configuration
+  - Tools
+  - Realtime sync
+  - Error handling
+
+- **`specs/kiosk-ui.spec.ts`** - Kiosk UI comprehensive tests
+  - Core functionality (connection, display)
+  - Search interface and on-screen keyboard
+  - Song requests
+  - Now Playing and Coming Up ticker
+  - UI modes (classic and jukebox)
+  - Realtime sync
+  - Responsive design
+  - Error handling
+
+- **`specs/integration.spec.ts`** - Integration tests
+  - Admin-Kiosk integration
+  - Realtime sync between clients
+  - Cross-client state consistency
+  - Queue update propagation
+
+- **`specs/web-endpoints.spec.ts`** - Legacy basic tests (kept for compatibility)
 
 ## Prerequisites
 
-- Node.js 18+
-- Running DJAMMS Electron app (localhost:3000)
-- Running Web Admin (localhost:5176)
-- Running Web Kiosk (localhost:5175)
+1. **Start the development servers:**
+   ```bash
+   # Terminal 1: Admin UI
+   cd web/admin
+   npm run dev
+   # Runs on http://localhost:5176
 
-## Installation
+   # Terminal 2: Kiosk UI
+   cd web/kiosk
+   npm run dev
+   # Runs on http://localhost:5175
+   ```
 
-```bash
-cd tests/e2e
-npm install
-npx playwright install  # Install browser engines
-```
+2. **Ensure Supabase is configured:**
+   - Player state should exist in Supabase
+   - Realtime should be enabled for `player_state` table
+   - Test player ID should be configured (default: `DJAMMS_TEST`)
 
 ## Running Tests
 
-### All Tests (All Browsers)
+### All Tests
 ```bash
 npm test
+# or
+npx playwright test
 ```
 
-### Admin Tests Only
+### Specific Test Suites
 ```bash
+# Admin UI only
 npm run test:admin
-```
 
-### Kiosk Tests Only
-```bash
+# Kiosk UI only
 npm run test:kiosk
+
+# Integration tests only
+npm run test:integration
+
+# All tests
+npm run test:all
 ```
 
-### With UI Mode (Interactive)
+### With Options
 ```bash
-npm run test:ui
-```
-
-### With Browser Visible
-```bash
+# Run with browser visible (headed mode)
 npm run test:headed
-```
 
-### Debug Mode
-```bash
+# Run in debug mode
 npm run test:debug
+
+# Run with Playwright UI
+npm run test:ui
+
+# Run specific test file
+npx playwright test specs/admin-ui.spec.ts
+
+# Run specific test
+npx playwright test -g "should load admin page"
 ```
-
-## Test Reports
-
-After running tests, view the HTML report:
-```bash
-npm run report
-```
-
-Reports are saved to:
-- `./reports/html/` - HTML report
-- `./reports/results.json` - JSON results
-- `./reports/screenshots/` - Failure screenshots
-- `./reports/test-results/` - Test artifacts
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ADMIN_URL` | `http://localhost:5176` | Web Admin endpoint |
-| `KIOSK_URL` | `http://localhost:5175` | Web Kiosk endpoint |
+- `ADMIN_URL` - Admin UI URL (default: `http://localhost:5176`)
+- `KIOSK_URL` - Kiosk UI URL (default: `http://localhost:5175`)
+- `TEST_PLAYER_ID` - Player ID for testing (default: `DJAMMS_TEST`)
 
-### Custom URLs
+Example:
 ```bash
-ADMIN_URL=https://admin.djamms.com KIOSK_URL=https://kiosk.djamms.com npm test
+ADMIN_URL=http://localhost:5176 KIOSK_URL=http://localhost:5175 TEST_PLAYER_ID=MY_TEST_PLAYER npm test
 ```
 
 ## Test Coverage
 
-### Web Admin Console Tests
-- ✅ Page load verification
-- ✅ Navigation tabs (Queue, Search, Browse, Settings, Tools)
-- ✅ Player controls (Skip, Shuffle, Play/Pause)
-- ✅ Volume slider interaction
-- ✅ Now Playing display
-- ✅ Playlist sidebar
-- ✅ Search functionality
-- ✅ Browse tab
-- ✅ Settings display
-- ✅ Tools display
-- ✅ Sidebar toggle
-- ✅ Console error monitoring
+### Admin UI Tests
+- ✅ Page loading and connection flow
+- ✅ Navigation between tabs
+- ✅ Player controls (Skip, Shuffle, Play/Pause, Volume)
+- ✅ Queue management (display, clear, shuffle)
+- ✅ Search functionality (query, filter, sort)
+- ✅ Settings configuration
+- ✅ Tools (Clear Queue, Shuffle Queue)
+- ✅ Realtime sync verification
+- ✅ Connection status indicator
+- ✅ Error handling (rapid clicks, network errors)
 
-### Web Kiosk Tests
-- ✅ Page load verification
+### Kiosk UI Tests
+- ✅ Page loading and connection flow
+- ✅ Now Playing display
 - ✅ Search interface
-- ✅ Song search
-- ✅ Now Playing section
+- ✅ On-screen keyboard input
+- ✅ Song requests
 - ✅ Coming Up ticker
 - ✅ Credits display
-- ✅ Song request flow
-- ✅ Responsive design (desktop, tablet, portrait)
-- ✅ Background video/image
-- ✅ Console error monitoring
+- ✅ UI modes (classic and jukebox)
+- ✅ Realtime sync
+- ✅ Responsive design
+- ✅ Error handling
 
 ### Integration Tests
-- ✅ Admin/Kiosk Supabase connection
-- ✅ Player state sync between endpoints
+- ✅ Admin-Kiosk connection to same player
+- ✅ Now Playing sync between clients
+- ✅ Queue update propagation
+- ✅ Connection status synchronization
+- ✅ Realtime updates (Kiosk request → Admin update)
+- ✅ Cross-client state consistency
 
-### Edge Cases
-- ✅ Rapid button clicks handling
-- ✅ Empty search handling
-- ✅ XSS prevention (special characters)
-- ✅ Network timeout graceful degradation
+## Test Reports
 
-## Writing New Tests
+After running tests, reports are generated in:
+- **HTML Report**: `reports/html/index.html`
+- **JSON Report**: `reports/results.json`
+- **Screenshots**: `reports/screenshots/` (on failure)
+- **Videos**: `reports/test-results/` (on retry)
 
-Tests use Playwright's test syntax:
-
-```typescript
-import { test, expect } from '@playwright/test';
-
-test('should do something', async ({ page }) => {
-  await page.goto('http://localhost:5176');
-  await expect(page.locator('.element')).toBeVisible();
-});
-```
-
-### Using Console Monitor
-
-```typescript
-import { ConsoleMonitor } from '../utils/console-monitor';
-
-test('check for errors', async ({ page }) => {
-  const monitor = new ConsoleMonitor();
-  monitor.attach(page);
-  
-  await page.goto(ADMIN_URL);
-  
-  const errors = monitor.getErrors();
-  expect(errors.length).toBe(0);
-});
-```
-
-## CI Integration
-
-For CI environments:
+View HTML report:
 ```bash
-CI=true npm test
+npx playwright show-report reports/html
 ```
-
-This enables:
-- 2 retries on failure
-- Single worker
-- No parallel execution
 
 ## Troubleshooting
 
-### Browser not installed
-```bash
-npx playwright install chromium
-```
+### Tests fail with connection errors
+- Ensure both Admin and Kiosk dev servers are running
+- Check Supabase connection and realtime configuration
+- Verify test player ID exists in Supabase
 
 ### Tests timeout
-Increase timeout in `playwright.config.ts`:
-```typescript
-timeout: 60 * 1000, // 60 seconds
-```
+- Increase timeout in `playwright.config.ts`
+- Check network connectivity
+- Verify Supabase is accessible
 
-### Screenshots not capturing
-Check the `reports/screenshots/` directory and ensure write permissions.
+### Realtime sync tests fail
+- Ensure Supabase Realtime is enabled for `player_state` table
+- Check that player state exists in database
+- Verify realtime filters are configured in Supabase dashboard
+
+### Screenshots show wrong state
+- Tests may need adjustment for your specific UI implementation
+- Update selectors in test files to match your actual DOM structure
+- Check that test player ID has data in Supabase
+
+## Writing New Tests
+
+1. **Use helper functions:**
+   - `connectToPlayer(page, playerId)` - Connect to player
+   - `typeOnKeyboard(page, text)` - Type on kiosk keyboard
+
+2. **Follow patterns:**
+   - Use `test.beforeEach` for setup
+   - Wait for elements with appropriate timeouts
+   - Use `page.waitForTimeout()` for async operations
+   - Check for element existence before interaction
+
+3. **Test structure:**
+   ```typescript
+   test.describe('Feature Name', () => {
+     test.beforeEach(async ({ page }) => {
+       // Setup
+     });
+
+     test('should do something', async ({ page }) => {
+       // Test steps
+       await expect(element).toBeVisible();
+     });
+   });
+   ```
+
+## CI/CD Integration
+
+Tests can be run in CI/CD pipelines:
+
+```yaml
+# Example GitHub Actions
+- name: Install dependencies
+  run: npm ci
+
+- name: Install Playwright
+  run: npx playwright install --with-deps
+
+- name: Run tests
+  run: npm test
+  env:
+    ADMIN_URL: ${{ secrets.ADMIN_URL }}
+    KIOSK_URL: ${{ secrets.KIOSK_URL }}
+    TEST_PLAYER_ID: ${{ secrets.TEST_PLAYER_ID }}
+```

@@ -695,6 +695,72 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
   });
 
+  // Subscribe to realtime queue updates from Supabase
+  useEffect(() => {
+    if (!supabaseInitialized || !isElectron) return;
+
+    const supabaseService = getSupabaseService();
+    if (!supabaseService.initialized) return;
+
+    console.log('[PlayerWindow] Subscribing to realtime queue updates');
+
+    const unsubscribe = supabaseService.onQueueUpdate((activeQueue, priorityQueue) => {
+      console.log('[PlayerWindow] 📥 Received realtime queue update:', {
+        activeQueueLength: activeQueue.length,
+        priorityQueueLength: priorityQueue.length
+      });
+
+      // Convert QueueVideoItem[] to Video[]
+      const activeQueueVideos: Video[] = activeQueue.map(q => ({
+        id: q.id,
+        src: q.src,
+        title: q.title,
+        artist: q.artist,
+        path: q.path,
+        playlist: q.playlist,
+        playlistDisplayName: q.playlistDisplayName,
+        duration: q.duration
+      }));
+
+      const priorityQueueVideos: Video[] = priorityQueue.map(q => ({
+        id: q.id,
+        src: q.src,
+        title: q.title,
+        artist: q.artist,
+        path: q.path,
+        playlist: q.playlist,
+        playlistDisplayName: q.playlistDisplayName,
+        duration: q.duration
+      }));
+
+      // Update local state (preserve current queueIndex if video is playing)
+      setQueue(activeQueueVideos);
+      setPriorityQueue(priorityQueueVideos);
+
+      // Also update main process queue state
+      if (isElectron) {
+        // Clear and rebuild queue in main process
+        (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+        activeQueueVideos.forEach((video) => {
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'add_to_queue', 
+            payload: { video } 
+          });
+        });
+        priorityQueueVideos.forEach((video) => {
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'add_to_priority_queue', 
+            payload: { video } 
+          });
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [supabaseInitialized, isElectron]);
+
   // Search state - now managed by useSearch hook (called after playerId and supabaseInitialized are available)
   const {
     searchQuery,

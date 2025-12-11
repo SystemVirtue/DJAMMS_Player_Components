@@ -7,6 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Video, PlayerState, VideoRefs, CrossfadeMode, TransitionReason } from '../types';
 import { createIPCAdapter } from '../utils/ipc';
 import { logger } from '../utils/logger';
+import { getSupabaseService } from '../services/SupabaseService';
 
 // ============================================================================
 // TYPES (local to this module for backwards compatibility)
@@ -232,6 +233,17 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     logger.debug(`[TRANSITION] Starting transition (reason: ${reason})`);
     transitionLockRef.current = true;
     
+    // Notify SupabaseService of transition lock
+    try {
+      const supabaseService = getSupabaseService();
+      if (supabaseService.initialized) {
+        supabaseService.setTransitioning(true);
+      }
+    } catch (error) {
+      // Non-critical - Supabase may not be initialized
+      logger.debug('[useVideoPlayer] Could not notify SupabaseService of transition:', error);
+    }
+    
     // Notify external system
     onVideoEnd?.();
     ipcAdapter.send('playback-ended', {
@@ -244,6 +256,17 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     setTimeout(() => {
       transitionLockRef.current = false;
       logger.debug(`[TRANSITION] Lock released`);
+      
+      // Notify SupabaseService that transition is complete
+      try {
+        const supabaseService = getSupabaseService();
+        if (supabaseService.initialized) {
+          supabaseService.setTransitioning(false);
+        }
+      } catch (error) {
+        // Non-critical
+        logger.debug('[useVideoPlayer] Could not notify SupabaseService of transition end:', error);
+      }
     }, 100);
     
   }, [currentVideo, onVideoEnd, ipcAdapter]);
@@ -919,6 +942,17 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     transitionLockRef.current = true;
     isCrossfadingRef.current = true;
 
+    // Notify SupabaseService of transition lock
+    try {
+      const supabaseService = getSupabaseService();
+      if (supabaseService.initialized) {
+        supabaseService.setTransitioning(true);
+      }
+    } catch (error) {
+      // Non-critical
+      logger.debug('[useVideoPlayer] Could not notify SupabaseService of skip transition:', error);
+    }
+
     const startVolume = activeVideo.volume;
     const startOpacity = parseFloat(activeVideo.style.opacity) || 1;
     const fadeStart = Date.now();
@@ -956,6 +990,17 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
         // Release lock
         setTimeout(() => {
           transitionLockRef.current = false;
+          
+          // Notify SupabaseService that transition is complete
+          try {
+            const supabaseService = getSupabaseService();
+            if (supabaseService.initialized) {
+              supabaseService.setTransitioning(false);
+            }
+          } catch (error) {
+            // Non-critical
+            logger.debug('[useVideoPlayer] Could not notify SupabaseService of skip transition end:', error);
+          }
         }, 100);
       }
     };

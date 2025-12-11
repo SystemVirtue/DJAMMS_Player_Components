@@ -35,6 +35,7 @@ import {
 } from '../config/supabase';
 import { Video } from '../types';
 import { logger } from '../utils/logger';
+import { mergeQueueUpdates, MergeQueueOptions } from '../utils/queueMerge';
 
 // Event types for command handlers
 export type CommandHandler = (command: SupabaseCommand) => Promise<void> | void;
@@ -52,6 +53,7 @@ class SupabaseService {
   // Subscriptions
   private commandChannel: RealtimeChannel | null = null;
   private commandSendChannels: Map<string, RealtimeChannel> = new Map(); // Reused channels for sending commands
+  private playerStateChannel: RealtimeChannel | null = null; // Realtime subscription for player_state updates
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private stateSyncTimeout: ReturnType<typeof setTimeout> | null = null;
   private commandPollInterval: ReturnType<typeof setInterval> | null = null;
@@ -100,6 +102,22 @@ class SupabaseService {
   private reconnectionBackoffMs = 1000; // Start with 1 second
   private reconnectionTimeout: ReturnType<typeof setTimeout> | null = null;
   private connectionStatusCallbacks: Set<(status: 'connected' | 'disconnected' | 'reconnecting') => void> = new Set();
+
+  // Queue sync and conflict resolution
+  private lastQueueUpdateTime: string | null = null; // Timestamp of last successful queue write
+  private queueUpdateCallbacks: Set<(queue: QueueVideoItem[], priorityQueue: QueueVideoItem[]) => void> = new Set();
+  private isTransitioning: boolean = false; // Flag to prevent writes during crossfade/swap
+  private transitionLockCallbacks: Set<(isTransitioning: boolean) => void> = new Set();
+
+  // Offline queue handling
+  interface QueuedQueueUpdate {
+    activeQueue: QueueVideoItem[];
+    priorityQueue: QueueVideoItem[];
+    timestamp: number;
+    retryCount: number;
+  }
+  private queuedQueueUpdates: QueuedQueueUpdate[] = [];
+  private retryQueueTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private constructor() {
     // Private constructor for singleton
@@ -154,6 +172,9 @@ class SupabaseService {
       // Start command listener
       await this.startCommandListener();
 
+      // Start player state realtime subscription
+      await this.startPlayerStateSubscription();
+
       // Start heartbeat
       this.startHeartbeat();
 
@@ -201,11 +222,22 @@ class SupabaseService {
       this.commandChannel = null;
     }
 
+    if (this.playerStateChannel) {
+      await this.playerStateChannel.unsubscribe();
+      this.playerStateChannel = null;
+    }
+
     // Unsubscribe from all command send channels
     for (const [playerId, channel] of this.commandSendChannels.entries()) {
       await channel.unsubscribe();
     }
     this.commandSendChannels.clear();
+
+    // Clear retry queue timeout
+    if (this.retryQueueTimeout) {
+      clearTimeout(this.retryQueueTimeout);
+      this.retryQueueTimeout = null;
+    }
 
     this.isInitialized = false;
     this.isOnline = false;
@@ -322,6 +354,21 @@ class SupabaseService {
     priorityQueue?: Video[];
     queueIndex?: number;
   }, immediate: boolean = false): void {
+    // If transitioning, queue the update instead of writing immediately
+    if (this.isTransitioning && (state.activeQueue !== undefined || state.priorityQueue !== undefined)) {
+      logger.debug('[SupabaseService] Transition in progress, queueing queue update');
+      this.queueQueueUpdate(state.activeQueue, state.priorityQueue);
+      return;
+    }
+
+    // If offline, queue the update
+    if (this.connectionStatus === 'disconnected' || this.connectionStatus === 'reconnecting') {
+      if (state.activeQueue !== undefined || state.priorityQueue !== undefined) {
+        logger.debug('[SupabaseService] Offline, queueing queue update');
+        this.queueQueueUpdate(state.activeQueue, state.priorityQueue);
+      }
+      // Still allow other state updates to be queued (they'll be retried on reconnect)
+    }
     const requestId = crypto.randomUUID();
     
     // Cancel any pending debounced request
@@ -584,6 +631,11 @@ class SupabaseService {
           priority_length: updateData.priority_queue?.length
         });
         this.lastSyncedState = updateData;
+        
+        // Update lastQueueUpdateTime if queue data was synced
+        if (updateData.active_queue !== undefined || updateData.priority_queue !== undefined) {
+          this.lastQueueUpdateTime = updateData.last_updated || new Date().toISOString();
+        }
       }
     } catch (error) {
       // Suppress exceptions during long runtime - Supabase errors shouldn't crash the app
@@ -772,6 +824,10 @@ class SupabaseService {
     if (status === 'connected') {
       this.reconnectionAttempts = 0;
       this.reconnectionBackoffMs = 1000;
+      // Flush queued queue updates on reconnect
+      this.flushQueuedQueueUpdates().catch(err => {
+        logger.warn('[SupabaseService] Error flushing queued updates on reconnect:', err);
+      });
     }
   }
 
@@ -793,6 +849,345 @@ class SupabaseService {
    */
   public getConnectionStatus(): 'connected' | 'disconnected' | 'reconnecting' {
     return this.connectionStatus;
+  }
+
+  // ==================== Player State Realtime Subscription ====================
+
+  /**
+   * Start realtime subscription to player_state table changes
+   * Listens for queue updates from Admin UI and applies conflict resolution
+   */
+  private async startPlayerStateSubscription(): Promise<void> {
+    if (!this.client) throw new Error('Client not initialized');
+
+    logger.info(`[SupabaseService] Setting up player_state realtime subscription for player: ${this.playerId}`);
+
+    this.playerStateChannel = this.client
+      .channel(`player-state:${this.playerId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'player_state',
+          filter: `player_id=eq.${this.playerId}`
+        },
+        (payload) => {
+          this.handlePlayerStateUpdate(payload);
+        }
+      )
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          logger.info('[SupabaseService] ✅ Player state realtime subscription active');
+          this.setConnectionStatus('connected');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          logger.warn('[SupabaseService] ⚠️ Player state subscription error:', err);
+          this.setConnectionStatus('disconnected');
+        } else if (status === 'CLOSED') {
+          logger.warn('[SupabaseService] ⚠️ Player state subscription closed');
+          this.setConnectionStatus('disconnected');
+        } else {
+          logger.debug(`[SupabaseService] Player state subscription status: ${status}`);
+        }
+      });
+  }
+
+  /**
+   * Handle player_state UPDATE event from realtime
+   * Implements conflict resolution: last write wins based on updated_at
+   */
+  private handlePlayerStateUpdate(payload: any): void {
+    try {
+      const newState = payload.new as SupabasePlayerState;
+      if (!newState) {
+        logger.warn('[SupabaseService] Received invalid player_state update');
+        return;
+      }
+
+      const remoteUpdatedAt = newState.updated_at || newState.last_updated;
+      if (!remoteUpdatedAt) {
+        logger.debug('[SupabaseService] Player state update missing updated_at, skipping conflict check');
+        // Still notify callbacks but without conflict resolution
+        this.notifyQueueUpdateCallbacks(newState.active_queue || [], newState.priority_queue || []);
+        return;
+      }
+
+      // Conflict resolution: compare timestamps
+      if (this.lastQueueUpdateTime) {
+        const localTime = new Date(this.lastQueueUpdateTime).getTime();
+        const remoteTime = new Date(remoteUpdatedAt).getTime();
+
+        // If local write is newer, ignore remote update (last write wins)
+        if (localTime > remoteTime) {
+          logger.debug('[SupabaseService] Ignoring remote queue update - local write is newer', {
+            localTime: this.lastQueueUpdateTime,
+            remoteTime: remoteUpdatedAt
+          });
+          return;
+        }
+      }
+
+      // Remote is newer or equal - apply merge strategy
+      logger.info('[SupabaseService] 📥 Received remote queue update, applying merge', {
+        remoteUpdatedAt,
+        activeQueueLength: newState.active_queue?.length || 0,
+        priorityQueueLength: newState.priority_queue?.length || 0
+      });
+
+      // Get current local state for merge
+      const localActiveQueue = this.lastSyncedState?.active_queue || [];
+      const localPriorityQueue = this.lastSyncedState?.priority_queue || [];
+      const currentVideoId = this.lastSyncedState?.now_playing_video?.id || null;
+      const isPlaying = this.lastSyncedState?.status === 'playing' || false;
+
+      // Merge queues using utility function
+      const mergedActiveQueue = mergeQueueUpdates({
+        localQueue: localActiveQueue,
+        remoteQueue: newState.active_queue || [],
+        isPlaying,
+        currentVideoId,
+        isTransitioning: this.isTransitioning
+      });
+
+      // Priority queue: adopt remote entirely (no merge needed)
+      const mergedPriorityQueue = newState.priority_queue || [];
+
+      // Update lastSyncedState with merged queues
+      this.lastSyncedState = {
+        ...this.lastSyncedState,
+        active_queue: mergedActiveQueue,
+        priority_queue: mergedPriorityQueue,
+        updated_at: remoteUpdatedAt
+      };
+
+      // Notify callbacks with merged queues
+      this.notifyQueueUpdateCallbacks(mergedActiveQueue, mergedPriorityQueue);
+
+      // Update lastQueueUpdateTime to prevent processing this update again
+      this.lastQueueUpdateTime = remoteUpdatedAt;
+
+    } catch (error) {
+      logger.error('[SupabaseService] Error handling player_state update:', error);
+    }
+  }
+
+  /**
+   * Notify all queue update callbacks
+   */
+  private notifyQueueUpdateCallbacks(activeQueue: QueueVideoItem[], priorityQueue: QueueVideoItem[]): void {
+    this.queueUpdateCallbacks.forEach(callback => {
+      try {
+        callback(activeQueue, priorityQueue);
+      } catch (error) {
+        logger.error('[SupabaseService] Error in queue update callback:', error);
+      }
+    });
+  }
+
+  /**
+   * Subscribe to queue updates from realtime
+   * Callback receives merged queues after conflict resolution
+   */
+  public onQueueUpdate(callback: (activeQueue: QueueVideoItem[], priorityQueue: QueueVideoItem[]) => void): () => void {
+    this.queueUpdateCallbacks.add(callback);
+    return () => {
+      this.queueUpdateCallbacks.delete(callback);
+    };
+  }
+
+  // ==================== Transition Lock ====================
+
+  /**
+   * Set transition lock state (prevents writes during crossfade/swap)
+   */
+  public setTransitioning(isTransitioning: boolean): void {
+    if (this.isTransitioning === isTransitioning) return;
+    
+    this.isTransitioning = isTransitioning;
+    logger.debug(`[SupabaseService] Transition lock: ${isTransitioning ? 'LOCKED' : 'UNLOCKED'}`);
+    
+    // Notify callbacks
+    this.transitionLockCallbacks.forEach(callback => {
+      try {
+        callback(isTransitioning);
+      } catch (error) {
+        logger.error('[SupabaseService] Error in transition lock callback:', error);
+      }
+    });
+  }
+
+  /**
+   * Get current transition lock state
+   */
+  public getTransitioning(): boolean {
+    return this.isTransitioning;
+  }
+
+  /**
+   * Subscribe to transition lock state changes
+   */
+  public onTransitionLockChange(callback: (isTransitioning: boolean) => void): () => void {
+    this.transitionLockCallbacks.add(callback);
+    // Immediately call with current state
+    callback(this.isTransitioning);
+    return () => {
+      this.transitionLockCallbacks.delete(callback);
+    };
+  }
+
+  // ==================== Offline Queue Handling ====================
+
+  /**
+   * Queue a queue update for retry when connection is restored
+   */
+  private queueQueueUpdate(activeQueue?: Video[], priorityQueue?: Video[]): void {
+    if (activeQueue === undefined && priorityQueue === undefined) return;
+
+    const queueItem: QueuedQueueUpdate = {
+      activeQueue: activeQueue ? activeQueue.map(v => this.videoToQueueItem(v)) : [],
+      priorityQueue: priorityQueue ? priorityQueue.map(v => this.videoToQueueItem(v)) : [],
+      timestamp: Date.now(),
+      retryCount: 0
+    };
+
+    this.queuedQueueUpdates.push(queueItem);
+
+    // Limit queue size
+    const MAX_QUEUE_SIZE = 10;
+    if (this.queuedQueueUpdates.length > MAX_QUEUE_SIZE) {
+      this.queuedQueueUpdates.shift(); // Remove oldest
+    }
+
+    logger.debug(`[SupabaseService] Queued queue update (${this.queuedQueueUpdates.length} in queue)`);
+  }
+
+  /**
+   * Retry queued queue updates with exponential backoff
+   */
+  private async retryQueuedQueueUpdates(): Promise<void> {
+    if (this.queuedQueueUpdates.length === 0) return;
+    if (this.connectionStatus !== 'connected') return;
+
+    const update = this.queuedQueueUpdates[0];
+    if (!update) return;
+
+    try {
+      // Convert queue items back to Video format for sync
+      const activeQueueVideos = update.activeQueue.map(q => this.queueItemToVideo(q));
+      const priorityQueueVideos = update.priorityQueue.map(q => this.queueItemToVideo(q));
+
+      // Sync immediately (bypass debounce and transition lock for retries)
+      // Use syncPlayerState with immediate flag
+      this.syncPlayerState({
+        activeQueue: activeQueueVideos,
+        priorityQueue: priorityQueueVideos
+      }, true);
+      
+      // Wait a bit for sync to complete
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Success - remove from queue
+      this.queuedQueueUpdates.shift();
+      logger.info('[SupabaseService] ✅ Retried queued queue update successfully');
+
+      // Retry next item if any
+      if (this.queuedQueueUpdates.length > 0) {
+        this.scheduleNextRetry();
+      }
+    } catch (error) {
+      update.retryCount++;
+      const maxRetries = 5;
+      
+      if (update.retryCount >= maxRetries) {
+        // Max retries reached - remove from queue
+        logger.warn(`[SupabaseService] Max retries reached for queued update, removing`);
+        this.queuedQueueUpdates.shift();
+      } else {
+        // Schedule retry with exponential backoff
+        logger.debug(`[SupabaseService] Retry failed (${update.retryCount}/${maxRetries}), scheduling retry`);
+        this.scheduleNextRetry(update.retryCount);
+      }
+    }
+  }
+
+  /**
+   * Schedule next retry with exponential backoff
+   */
+  private scheduleNextRetry(retryCount: number = 0): void {
+    if (this.retryQueueTimeout) {
+      clearTimeout(this.retryQueueTimeout);
+    }
+
+    const delay = Math.min(1000 * Math.pow(2, retryCount), 30000); // 1s, 2s, 4s, 8s, 16s, max 30s
+    
+    this.retryQueueTimeout = setTimeout(() => {
+      this.retryQueuedQueueUpdates();
+    }, delay);
+  }
+
+  /**
+   * Flush queued queue updates on reconnect
+   */
+  private async flushQueuedQueueUpdates(): Promise<void> {
+    if (this.queuedQueueUpdates.length === 0) return;
+    if (this.connectionStatus !== 'connected') return;
+
+    logger.info(`[SupabaseService] Flushing ${this.queuedQueueUpdates.length} queued queue updates`);
+    
+    // Fetch latest state first to merge correctly
+    try {
+      const latestState = await this.client!
+        .from('player_state')
+        .select('*')
+        .eq('player_id', this.playerId)
+        .single();
+
+      if (latestState.data) {
+        // Merge with latest remote state
+        const remoteState = latestState.data as SupabasePlayerState;
+        const lastUpdate = this.queuedQueueUpdates[this.queuedQueueUpdates.length - 1];
+        
+        if (lastUpdate) {
+          const mergedActive = mergeQueueUpdates({
+            localQueue: lastUpdate.activeQueue,
+            remoteQueue: remoteState.active_queue || [],
+            isPlaying: remoteState.status === 'playing',
+            currentVideoId: remoteState.now_playing_video?.id,
+            isTransitioning: false
+          });
+
+          // Sync merged state
+          this.syncPlayerState({
+            activeQueue: mergedActive.map(q => this.queueItemToVideo(q)),
+            priorityQueue: lastUpdate.priorityQueue.map(q => this.queueItemToVideo(q))
+          }, true);
+          
+          // Wait a bit for sync to complete
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+    } catch (error) {
+      logger.warn('[SupabaseService] Error fetching latest state for merge:', error);
+    }
+
+    // Clear queue after flush
+    this.queuedQueueUpdates = [];
+  }
+
+  /**
+   * Convert QueueVideoItem back to Video (for retry)
+   */
+  private queueItemToVideo(item: QueueVideoItem): Video {
+    return {
+      id: item.id,
+      title: item.title,
+      artist: item.artist || undefined,
+      src: item.src,
+      path: item.path,
+      duration: item.duration,
+      playlist: item.playlist,
+      playlistDisplayName: item.playlistDisplayName
+    };
   }
 
   /**

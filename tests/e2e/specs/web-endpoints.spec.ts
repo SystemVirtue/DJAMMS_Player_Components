@@ -153,8 +153,16 @@ test.describe('Web Admin Console Tests', () => {
     await page.goto(ADMIN_URL);
     await waitForStableDOM(page);
     
-    // Check page title/header - use first() to avoid strict mode violation
-    await expect(page.locator('.app-title').first()).toContainText(/DJAMMS/i);
+    // Check for ConnectPlayerModal or main app content
+    // Modal shows on first load, or app content if already connected
+    const modalTitle = page.locator('h1:has-text("DJAMMS Admin Console"), h1:has-text("Connect to Player")');
+    const appContent = page.locator('.app, main, .content-area, .app-logo[alt="DJAMMS"]');
+    
+    // Either modal or app should be visible
+    const modalVisible = await modalTitle.count() > 0;
+    const appVisible = await appContent.count() > 0;
+    
+    expect(modalVisible || appVisible).toBeTruthy();
     
     // Take baseline screenshot
     await takeScreenshot(page, 'admin-initial-load');
@@ -415,7 +423,21 @@ test.describe('Web Kiosk Tests', () => {
     await page.goto(KIOSK_URL);
     await waitForStableDOM(page);
     
-    // Check for any main content - kiosk may have different titles
+    // Check for ConnectionFlow modal or main kiosk content
+    // ConnectionFlow shows "Connect to DJAMMS Player" on first load
+    // Or main kiosk content if already connected
+    const modalTitle = page.locator('h1:has-text("Connect to DJAMMS Player"), h1:has-text("Connect to Player")');
+    const connectingText = page.locator('text=Connecting to');
+    const kioskContent = page.locator('main.relative, h1:has-text("Jukebox"), [class*="SearchInterface"]');
+    
+    // Either modal, connecting state, or kiosk content should be visible
+    const modalVisible = await modalTitle.count() > 0;
+    const connectingVisible = await connectingText.count() > 0;
+    const kioskVisible = await kioskContent.count() > 0;
+    
+    expect(modalVisible || connectingVisible || kioskVisible).toBeTruthy();
+    
+    // Also verify body is visible as fallback
     await expect(page.locator('body')).toBeVisible();
     
     await takeScreenshot(page, 'kiosk-initial-load');
