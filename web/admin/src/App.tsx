@@ -238,6 +238,7 @@ function AdminApp() {
     normalizeAudioLevels: false,
     enableFullscreenPlayer: true,
     fadeDuration: 2.0,
+    forceAutoPlay: false, // Force auto-play, disables pause button
   });
 
   // Player overlay settings (synced to Electron via command)
@@ -445,6 +446,87 @@ function AdminApp() {
     };
   }, [playerId]);
 
+  // Force auto-play logic (when enabled)
+  const autoPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSkippingRef = useRef(false);
+  const currentVideoRef = useRef<NowPlayingVideo | null>(null);
+  const isPlayingRef = useRef(false);
+  const forceAutoPlayRef = useRef(false);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    currentVideoRef.current = currentVideo;
+    isPlayingRef.current = isPlaying;
+    forceAutoPlayRef.current = settings.forceAutoPlay;
+  }, [currentVideo, isPlaying, settings.forceAutoPlay]);
+
+  useEffect(() => {
+    // Track if we're currently skipping
+    isSkippingRef.current = isCommandPending;
+  }, [isCommandPending]);
+
+  useEffect(() => {
+    if (!settings.forceAutoPlay) {
+      // Clear any pending auto-play timer
+      if (autoPlayTimerRef.current) {
+        clearTimeout(autoPlayTimerRef.current);
+        autoPlayTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Clear previous timer
+    if (autoPlayTimerRef.current) {
+      clearTimeout(autoPlayTimerRef.current);
+      autoPlayTimerRef.current = null;
+    }
+
+    // If we're skipping or a command is pending, don't auto-play
+    if (isSkippingRef.current || isCommandPending) {
+      return;
+    }
+
+    // Case 1: No video loaded for >2 seconds - skip to next
+    if (!currentVideo) {
+      autoPlayTimerRef.current = setTimeout(async () => {
+        // Use refs to check current state (avoid closure issues)
+        if (!currentVideoRef.current && !isSkippingRef.current && !isCommandPending && forceAutoPlayRef.current) {
+          console.log('[WebAdmin] Auto-play: No video loaded, skipping to next');
+          await blockingCommands.skip(playerId);
+        }
+      }, 2000);
+      return;
+    }
+
+    // Case 2: Video is paused for >2 seconds - force play
+    if (!isPlaying && currentVideo) {
+      autoPlayTimerRef.current = setTimeout(async () => {
+        // Use refs to check current state (avoid closure issues)
+        if (!isPlayingRef.current && currentVideoRef.current && !isSkippingRef.current && !isCommandPending && forceAutoPlayRef.current) {
+          console.log('[WebAdmin] Auto-play: Video paused for >2s, forcing play');
+          await blockingCommands.resume(playerId);
+        }
+      }, 2000);
+      return;
+    }
+
+    // Case 3: Video is playing - clear any pending timers
+    if (isPlaying && currentVideo) {
+      // Video is playing, no action needed
+      return;
+    }
+  }, [settings.forceAutoPlay, isPlaying, currentVideo, isCommandPending, playerId]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (autoPlayTimerRef.current) {
+        clearTimeout(autoPlayTimerRef.current);
+        autoPlayTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Load all videos from local_videos table for Browse/Search
   // Also subscribe to changes so we auto-refresh when Electron re-indexes playlists
   useEffect(() => {
@@ -632,6 +714,7 @@ function AdminApp() {
   // Player control functions - now use blocking commands
   const handlePauseClick = () => {
     if (isCommandPending) return; // Block if command in progress
+    if (settings.forceAutoPlay) return; // Disabled when force auto-play is enabled
     if (isPlaying) {
       setShowPauseDialog(true);
     } else {
@@ -640,6 +723,7 @@ function AdminApp() {
   };
 
   const confirmPause = async () => {
+    if (settings.forceAutoPlay) return; // Don't allow pause when force auto-play is enabled
     setShowPauseDialog(false);
     setIsPlaying(false); // Optimistic update
     const success = await sendBlockingCommand(() => blockingCommands.pause(playerId));
@@ -982,13 +1066,40 @@ function AdminApp() {
             >
               <span className="control-btn-label">{isCommandPending ? '...' : 'SHUFFLE'}</span>
             </button>
-            <button 
-              className={`control-btn play-btn ${isCommandPending ? 'btn-loading' : ''}`}
-              onClick={handlePauseClick}
-              disabled={isCommandPending}
-            >
-              <span className="material-symbols-rounded">{isPlaying ? 'pause' : 'play_arrow'}</span>
-            </button>
+            {settings.forceAutoPlay ? (
+              <div 
+                className="control-btn play-btn"
+                style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column',
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  backgroundColor: isPlaying ? '#22c55e' : 'var(--bg-elevated)',
+                  color: isPlaying ? '#fff' : '#22c55e',
+                  cursor: 'default',
+                  fontWeight: 600,
+                  fontSize: '9px',
+                  letterSpacing: '0.5px',
+                  lineHeight: '1.2',
+                  width: '48px',
+                  height: '48px',
+                  textAlign: 'center'
+                }}
+                title="Auto-play is enabled. Pause is disabled."
+              >
+                <span>AUTO-PLAY</span>
+                <span>ENABLED</span>
+              </div>
+            ) : (
+              <button 
+                className={`control-btn play-btn ${isCommandPending ? 'btn-loading' : ''} ${isPlaying ? 'playing' : ''}`}
+                onClick={handlePauseClick}
+                disabled={isCommandPending}
+                style={isPlaying ? { backgroundColor: '#22c55e', color: '#fff' } : {}}
+              >
+                <span className="material-symbols-rounded">{isPlaying ? 'pause' : 'play_arrow'}</span>
+              </button>
+            )}
             <div className="volume-control">
               <span className="material-symbols-rounded">volume_up</span>
               <input 
@@ -1400,6 +1511,29 @@ function AdminApp() {
                       checked={settings.normalizeAudioLevels}
                       onChange={(e) => setSettings(s => ({ ...s, normalizeAudioLevels: e.target.checked }))}
                     />
+                  </div>
+                </div>
+
+                <div className="settings-section">
+                  <h2><span className="section-icon">🎮</span> Player Controls</h2>
+                  <p className="section-description">Control playback behavior and pause functionality</p>
+                  
+                  <div className="setting-item">
+                    <label>Force Auto-Play (this will disable 'Pause' toggle)</label>
+                    <div className="button-group">
+                      <button
+                        className={`toggle-btn ${!settings.forceAutoPlay ? 'active' : ''}`}
+                        onClick={() => setSettings(s => ({ ...s, forceAutoPlay: false }))}
+                      >
+                        DISABLE
+                      </button>
+                      <button
+                        className={`toggle-btn ${settings.forceAutoPlay ? 'active' : ''}`}
+                        onClick={() => setSettings(s => ({ ...s, forceAutoPlay: true }))}
+                      >
+                        ENABLE
+                      </button>
+                    </div>
                   </div>
                 </div>
 
