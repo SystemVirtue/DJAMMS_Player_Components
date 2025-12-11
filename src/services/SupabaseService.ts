@@ -40,6 +40,14 @@ import { mergeQueueUpdates, MergeQueueOptions } from '../utils/queueMerge';
 // Event types for command handlers
 export type CommandHandler = (command: SupabaseCommand) => Promise<void> | void;
 
+// Offline queue handling type
+interface QueuedQueueUpdate {
+  activeQueue: QueueVideoItem[];
+  priorityQueue: QueueVideoItem[];
+  timestamp: number;
+  retryCount: number;
+}
+
 /**
  * SupabaseService Singleton
  */
@@ -110,12 +118,6 @@ class SupabaseService {
   private transitionLockCallbacks: Set<(isTransitioning: boolean) => void> = new Set();
 
   // Offline queue handling
-  interface QueuedQueueUpdate {
-    activeQueue: QueueVideoItem[];
-    priorityQueue: QueueVideoItem[];
-    timestamp: number;
-    retryCount: number;
-  }
   private queuedQueueUpdates: QueuedQueueUpdate[] = [];
   private retryQueueTimeout: ReturnType<typeof setTimeout> | null = null;
 

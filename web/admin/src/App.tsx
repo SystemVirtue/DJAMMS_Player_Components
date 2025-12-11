@@ -306,7 +306,14 @@ function AdminApp() {
         setIsPlaying(state.is_playing);
       }
       if (state.active_queue) {
+        console.log('[WebAdmin] Setting active queue:', state.active_queue.length, 'items');
         setActiveQueue(state.active_queue);
+      } else {
+        console.warn('[WebAdmin] State update has no active_queue:', state);
+        // Clear queue if state explicitly has null/undefined active_queue
+        if (state.active_queue === null || state.active_queue === undefined) {
+          setActiveQueue([]);
+        }
       }
       if (state.priority_queue) {
         // Track if the current video came from priority queue
@@ -380,9 +387,24 @@ function AdminApp() {
 
     // Fetch initial state on mount (realtime subscription only fires on CHANGES)
     const loadInitialState = async () => {
-      const state = await getPlayerState(playerId);
-      if (state) {
-        applyState(state);
+      try {
+        console.log('[WebAdmin] Fetching initial player state for:', playerId);
+        const state = await getPlayerState(playerId);
+        if (state) {
+          console.log('[WebAdmin] Initial state received:', {
+            has_active_queue: !!state.active_queue,
+            active_queue_length: state.active_queue?.length || 0,
+            has_priority_queue: !!state.priority_queue,
+            priority_queue_length: state.priority_queue?.length || 0,
+            has_now_playing: !!state.now_playing_video,
+            now_playing_title: state.now_playing_video?.title
+          });
+          applyState(state);
+        } else {
+          console.warn('[WebAdmin] No player state found. Player may not be initialized yet.');
+        }
+      } catch (error) {
+        console.error('[WebAdmin] Error loading initial state:', error);
       }
     };
     loadInitialState();
@@ -415,7 +437,9 @@ function AdminApp() {
   useEffect(() => {
     const loadAllVideos = async () => {
       try {
+        console.log('[WebAdmin] Loading all videos for player:', playerId);
         const videos = await getAllLocalVideos(playerId);
+        console.log('[WebAdmin] Loaded', videos.length, 'videos');
         setAllVideos(videos);
         
         // Group videos by playlist (playlist is stored in metadata)
@@ -427,9 +451,10 @@ function AdminApp() {
           if (!grouped[playlist]) grouped[playlist] = [];
           grouped[playlist].push(video);
         });
+        console.log('[WebAdmin] Grouped into', Object.keys(grouped).length, 'playlists:', Object.keys(grouped));
         setPlaylists(grouped);
       } catch (error) {
-        console.error('Failed to load videos:', error);
+        console.error('[WebAdmin] Failed to load videos:', error);
       }
     };
     loadAllVideos();
@@ -1021,7 +1046,12 @@ function AdminApp() {
                 <span className="playlist-header-label">PLAYLISTS</span>
               </div>
               <div className="playlist-list">
-                {getPlaylistList().map(playlist => (
+                {getPlaylistList().length === 0 ? (
+                  <div style={{ padding: '16px', color: 'var(--text-tertiary)', fontSize: '12px', textAlign: 'center' }}>
+                    {allVideos === undefined ? 'Loading playlists...' : 'No playlists found. Player may need to index videos.'}
+                  </div>
+                ) : (
+                  getPlaylistList().map(playlist => (
                   <div
                     key={playlist.name}
                     className={`playlist-item ${selectedPlaylist === playlist.name ? 'selected' : ''}`}
@@ -1043,7 +1073,8 @@ function AdminApp() {
                     )}
                     <span className="playlist-count">{playlist.count}</span>
                   </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </nav>
@@ -1140,7 +1171,9 @@ function AdminApp() {
                     <tbody>
                       {activeQueue.length === 0 ? (
                         <tr className="empty-state">
-                          <td colSpan={5}>Queue is empty. Add tracks from Search or Browse.</td>
+                          <td colSpan={5}>
+                            {playerState ? 'Queue is empty. Add tracks from Search or Browse.' : 'Waiting for player to initialize...'}
+                          </td>
                         </tr>
                       ) : (() => {
                         // Reorder: videos after current index first ("up next"), then videos before ("already played")

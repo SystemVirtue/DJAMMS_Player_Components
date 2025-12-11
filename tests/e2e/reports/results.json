@@ -1,7 +1,7 @@
 {
   "config": {
-    "configFile": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/playwright.config.ts",
-    "rootDir": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs",
+    "configFile": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/playwright.config.ts",
+    "rootDir": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/specs",
     "forbidOnly": false,
     "fullyParallel": true,
     "globalSetup": null,
@@ -39,7 +39,7 @@
     "quiet": false,
     "projects": [
       {
-        "outputDir": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results",
+        "outputDir": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/reports/test-results",
         "repeatEach": 1,
         "retries": 1,
         "metadata": {
@@ -47,7 +47,7 @@
         },
         "id": "chromium",
         "name": "chromium",
-        "testDir": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs",
+        "testDir": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/specs",
         "testIgnore": [],
         "testMatch": [
           "**/*.@(spec|test).?(c|m)[jt]s?(x)"
@@ -55,7 +55,7 @@
         "timeout": 30000
       },
       {
-        "outputDir": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results",
+        "outputDir": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/reports/test-results",
         "repeatEach": 1,
         "retries": 1,
         "metadata": {
@@ -63,7 +63,7 @@
         },
         "id": "firefox",
         "name": "firefox",
-        "testDir": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs",
+        "testDir": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/specs",
         "testIgnore": [],
         "testMatch": [
           "**/*.@(spec|test).?(c|m)[jt]s?(x)"
@@ -71,7 +71,7 @@
         "timeout": 30000
       },
       {
-        "outputDir": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results",
+        "outputDir": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/reports/test-results",
         "repeatEach": 1,
         "retries": 1,
         "metadata": {
@@ -79,7 +79,7 @@
         },
         "id": "webkit",
         "name": "webkit",
-        "testDir": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs",
+        "testDir": "/Users/mikeclarkin/Cursor/DJAMMS_Player_Components/tests/e2e/specs",
         "testIgnore": [],
         "testMatch": [
           "**/*.@(spec|test).?(c|m)[jt]s?(x)"
@@ -92,7 +92,7 @@
     "updateSnapshots": "missing",
     "updateSourceMethod": "patch",
     "version": "1.57.0",
-    "workers": 2,
+    "workers": 4,
     "webServer": null
   },
   "suites": [
@@ -111,7 +111,7 @@
           "specs": [
             {
               "title": "should load admin page successfully",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -124,96 +124,18 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 1628,
-                      "error": {
-                        "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5176/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5176/\", waiting until \"load\"\u001b[22m\n",
-                        "stack": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5176/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5176/\", waiting until \"load\"\u001b[22m\n\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:153:16",
-                        "location": {
-                          "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                          "column": 16,
-                          "line": 153
-                        },
-                        "snippet": "  151 |\n  152 |   test('should load admin page successfully', async ({ page }) => {\n> 153 |     await page.goto(ADMIN_URL);\n      |                ^\n  154 |     await waitForStableDOM(page);\n  155 |     \n  156 |     // Check page title/header"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                            "column": 16,
-                            "line": 153
-                          },
-                          "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5176/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5176/\", waiting until \"load\"\u001b[22m\n\n\n  151 |\n  152 |   test('should load admin page successfully', async ({ page }) => {\n> 153 |     await page.goto(ADMIN_URL);\n      |                ^\n  154 |     await waitForStableDOM(page);\n  155 |     \n  156 |     // Check page title/header\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:153:16"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 2806,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-02T19:56:24.126Z",
+                      "startTime": "2025-12-11T13:20:28.859Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results/web-endpoints-Web-Admin-Co-413b2-oad-admin-page-successfully-chromium/test-failed-1.png"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                        "column": 16,
-                        "line": 153
-                      }
-                    },
-                    {
-                      "workerIndex": 3,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 1625,
-                      "error": {
-                        "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5176/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5176/\", waiting until \"load\"\u001b[22m\n",
-                        "stack": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5176/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5176/\", waiting until \"load\"\u001b[22m\n\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:153:16",
-                        "location": {
-                          "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                          "column": 16,
-                          "line": 153
-                        },
-                        "snippet": "  151 |\n  152 |   test('should load admin page successfully', async ({ page }) => {\n> 153 |     await page.goto(ADMIN_URL);\n      |                ^\n  154 |     await waitForStableDOM(page);\n  155 |     \n  156 |     // Check page title/header"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                            "column": 16,
-                            "line": 153
-                          },
-                          "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5176/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5176/\", waiting until \"load\"\u001b[22m\n\n\n  151 |\n  152 |   test('should load admin page successfully', async ({ page }) => {\n> 153 |     await page.goto(ADMIN_URL);\n      |                ^\n  154 |     await waitForStableDOM(page);\n  155 |     \n  156 |     // Check page title/header\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:153:16"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 1,
-                      "startTime": "2025-12-02T19:56:29.426Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "video",
-                          "contentType": "video/webm",
-                          "path": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results/web-endpoints-Web-Admin-Co-413b2-oad-admin-page-successfully-chromium-retry1/video.webm"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results/web-endpoints-Web-Admin-Co-413b2-oad-admin-page-successfully-chromium-retry1/trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                        "column": 16,
-                        "line": 153
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "40a9255bbd15c28fceed-9c1ac999896bb6a7a225",
@@ -226,12 +148,12 @@
         {
           "title": "Web Kiosk Tests",
           "file": "web-endpoints.spec.ts",
-          "line": 397,
+          "line": 403,
           "column": 6,
           "specs": [
             {
               "title": "should load kiosk page successfully",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -244,101 +166,23 @@
                     {
                       "workerIndex": 1,
                       "parallelIndex": 1,
-                      "status": "failed",
-                      "duration": 1634,
-                      "error": {
-                        "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5175/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5175/\", waiting until \"load\"\u001b[22m\n",
-                        "stack": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5175/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5175/\", waiting until \"load\"\u001b[22m\n\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:417:16",
-                        "location": {
-                          "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                          "column": 16,
-                          "line": 417
-                        },
-                        "snippet": "  415 |\n  416 |   test('should load kiosk page successfully', async ({ page }) => {\n> 417 |     await page.goto(KIOSK_URL);\n      |                ^\n  418 |     await waitForStableDOM(page);\n  419 |     \n  420 |     // Check for any main content - kiosk may have different titles"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                            "column": 16,
-                            "line": 417
-                          },
-                          "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5175/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5175/\", waiting until \"load\"\u001b[22m\n\n\n  415 |\n  416 |   test('should load kiosk page successfully', async ({ page }) => {\n> 417 |     await page.goto(KIOSK_URL);\n      |                ^\n  418 |     await waitForStableDOM(page);\n  419 |     \n  420 |     // Check for any main content - kiosk may have different titles\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:417:16"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 2440,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-02T19:56:24.137Z",
+                      "startTime": "2025-12-11T13:20:28.849Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results/web-endpoints-Web-Kiosk-Te-869b7-oad-kiosk-page-successfully-chromium/test-failed-1.png"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                        "column": 16,
-                        "line": 417
-                      }
-                    },
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 1,
-                      "status": "failed",
-                      "duration": 1586,
-                      "error": {
-                        "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5175/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5175/\", waiting until \"load\"\u001b[22m\n",
-                        "stack": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5175/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5175/\", waiting until \"load\"\u001b[22m\n\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:417:16",
-                        "location": {
-                          "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                          "column": 16,
-                          "line": 417
-                        },
-                        "snippet": "  415 |\n  416 |   test('should load kiosk page successfully', async ({ page }) => {\n> 417 |     await page.goto(KIOSK_URL);\n      |                ^\n  418 |     await waitForStableDOM(page);\n  419 |     \n  420 |     // Check for any main content - kiosk may have different titles"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                            "column": 16,
-                            "line": 417
-                          },
-                          "message": "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5175/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:5175/\", waiting until \"load\"\u001b[22m\n\n\n  415 |\n  416 |   test('should load kiosk page successfully', async ({ page }) => {\n> 417 |     await page.goto(KIOSK_URL);\n      |                ^\n  418 |     await waitForStableDOM(page);\n  419 |     \n  420 |     // Check for any main content - kiosk may have different titles\n    at /Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts:417:16"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 1,
-                      "startTime": "2025-12-02T19:56:28.878Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "video",
-                          "contentType": "video/webm",
-                          "path": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results/web-endpoints-Web-Kiosk-Te-869b7-oad-kiosk-page-successfully-chromium-retry1/video.webm"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/reports/test-results/web-endpoints-Web-Kiosk-Te-869b7-oad-kiosk-page-successfully-chromium-retry1/trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/Users/mikeclarkin/Music/DJAMMS/DJAMMS_Electron/DJAMMS_PLAYER_REACT_MIGRATION/tests/e2e/specs/web-endpoints.spec.ts",
-                        "column": 16,
-                        "line": 417
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "40a9255bbd15c28fceed-4a85e70c755ce792d659",
               "file": "web-endpoints.spec.ts",
-              "line": 416,
+              "line": 422,
               "column": 7
             }
           ]
@@ -348,11 +192,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2025-12-02T19:56:22.410Z",
-    "duration": 9403.743999999999,
-    "expected": 0,
+    "startTime": "2025-12-11T13:20:27.154Z",
+    "duration": 5444.951999999999,
+    "expected": 2,
     "skipped": 0,
-    "unexpected": 2,
+    "unexpected": 0,
     "flaky": 0
   }
 }

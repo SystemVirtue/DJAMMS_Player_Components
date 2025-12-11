@@ -550,7 +550,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         // Trigger immediate sync so Web Admin sees the shuffled queue right away
         // We call syncState inside the setter to access the new queue value
         setTimeout(() => {
-          syncState({
+          // Skip sync if this update came from a remote source (prevents recursion)
+      if (isReceivingRemoteUpdateRef.current) {
+        console.log('[PlayerWindow] Skipping syncState - update came from remote source');
+        return;
+      }
+      
+      syncState({
             activeQueue: newQueue,
             queueIndex: 0
           }, true); // immediate = true to bypass debounce
@@ -653,7 +659,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         
         // Sync immediately
         setTimeout(() => {
-          syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true);
+          // Skip sync if this update came from a remote source (prevents recursion)
+      if (isReceivingRemoteUpdateRef.current) {
+        console.log('[PlayerWindow] Skipping syncState - update came from remote source');
+        return;
+      }
+      
+      syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true);
         }, 0);
         
         return newQueue;
@@ -710,6 +722,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         priorityQueueLength: priorityQueue.length
       });
 
+      // Set flag to prevent syncState from triggering on this update
+      isReceivingRemoteUpdateRef.current = true;
+
       // Convert QueueVideoItem[] to Video[]
       const activeQueueVideos: Video[] = activeQueue.map(q => ({
         id: q.id,
@@ -736,6 +751,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       // Update local state (preserve current queueIndex if video is playing)
       setQueue(activeQueueVideos);
       setPriorityQueue(priorityQueueVideos);
+      
+      // Clear flag after state update (use longer timeout to ensure useEffect has time to check flag)
+      setTimeout(() => {
+        isReceivingRemoteUpdateRef.current = false;
+      }, 500);
 
       // Also update main process queue state
       if (isElectron) {
@@ -1746,6 +1766,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const queueIndexRef = useRef(queueIndex);
   const priorityQueueRef = useRef(priorityQueue);
   const prevQueueIndexRef = useRef(queueIndex); // Track previous queueIndex for change detection
+  const isReceivingRemoteUpdateRef = useRef(false); // Flag to prevent sync loop when receiving remote updates
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -1957,7 +1978,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             console.log(`[PlayerWindow] Queue advanced: ${prevIndex} → ${state.queueIndex}, forcing immediate sync`);
             // Force immediate sync with current queue state
             setTimeout(() => {
-              syncState({
+              // Skip sync if this update came from a remote source (prevents recursion)
+      if (isReceivingRemoteUpdateRef.current) {
+        console.log('[PlayerWindow] Skipping syncState - update came from remote source');
+        return;
+      }
+      
+      syncState({
                 activeQueue: state.activeQueue || queueRef.current,
                 priorityQueue: state.priorityQueue || priorityQueueRef.current,
                 queueIndex: state.queueIndex
@@ -2068,6 +2095,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // This ensures Web Admin / Kiosk see up-to-date state
   useEffect(() => {
     if (!supabaseInitialized) return;
+    
+    // Skip sync if this update came from a remote source (prevents recursion)
+    if (isReceivingRemoteUpdateRef.current) {
+      console.log('[PlayerWindow] Skipping syncState - update came from remote source');
+      return;
+    }
     
     // Detect queue advancement: if queueIndex changed, force immediate sync
     const queueAdvanced = prevQueueIndexRef.current !== queueIndex;
