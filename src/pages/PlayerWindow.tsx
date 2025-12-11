@@ -1076,12 +1076,21 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           if (savedEnablePlayer && isElectron) {
             setTimeout(async () => {
               try {
-                await (window as any).electronAPI.createPlayerWindow(savedDisplayId ?? undefined);
+                await (window as any).electronAPI.createPlayerWindow(savedDisplayId ?? undefined, savedFullscreen ?? true);
                 setPlayerWindowOpen(true);
               } catch (error) {
                 console.error('[PlayerWindow] Failed to open player window on startup:', error);
               }
             }, 1000); // Delay to ensure main window is ready
+          }
+          
+          // Listen for auto-disabled fullscreen event (when Admin and Player are on same display)
+          if (isElectron && (window as any).electronAPI?.on) {
+            (window as any).electronAPI.on('player-fullscreen-auto-disabled', () => {
+              console.log('[PlayerWindow] Fullscreen auto-disabled (Admin and Player on same display)');
+              setSettings(s => ({ ...s, playerFullscreen: false }));
+              handleUpdateSetting('playerFullscreen', false);
+            });
           }
           
           // Load saved overlay settings

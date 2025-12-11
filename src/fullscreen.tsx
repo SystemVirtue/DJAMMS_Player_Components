@@ -275,9 +275,34 @@ function FullscreenApp() {
     if (isElectron && (window as any).electronAPI?.onControlPlayer) {
       console.log('[FullscreenApp] Setting up Electron IPC listener')
       unsubscribeIPC = (window as any).electronAPI.onControlPlayer((action: string, data?: any) => {
-        handleControl(action, data)
+        if (action === 'resize') {
+          // Handle window resize for windowed mode
+          const mode = data?.mode || 'fullscreen'
+          console.log('[FullscreenApp] Resize event:', mode)
+          // Video players will automatically resize to fit window
+          // Force a re-layout
+          window.dispatchEvent(new Event('resize'))
+        } else {
+          handleControl(action, data)
+        }
       })
     }
+    
+    // Handle window resize events (for windowed mode)
+    const handleWindowResize = () => {
+      // Video players should automatically resize to fit window
+      // This ensures proper sizing when window is resized
+      const videoElements = document.querySelectorAll('video')
+      videoElements.forEach(video => {
+        // Video elements with object-fit: contain will automatically resize
+        // Just ensure they're visible
+        if (video.style.display === 'none') {
+          video.style.display = 'block'
+        }
+      })
+    }
+    
+    window.addEventListener('resize', handleWindowResize)
 
     // Browser postMessage listener (fallback for non-Electron environments)
     const messageHandler = (event: MessageEvent) => {
@@ -337,6 +362,7 @@ function FullscreenApp() {
     return () => {
       window.removeEventListener('message', messageHandler)
       window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('resize', handleWindowResize)
       if (unsubscribeIPC) unsubscribeIPC()
     }
   }, [isElectron, duration])

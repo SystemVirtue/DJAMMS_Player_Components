@@ -239,6 +239,7 @@ function AdminApp() {
     enableFullscreenPlayer: true,
     fadeDuration: 2.0,
     forceAutoPlay: false, // Force auto-play, disables pause button
+    playerFullscreen: false, // Player window fullscreen mode
   });
 
   // Player overlay settings (synced to Electron via command)
@@ -1617,25 +1618,36 @@ function AdminApp() {
                   </div>
 
                   <div className="setting-item">
-                    <label>Fullscreen Mode</label>
+                    <label>Fullscreen Player</label>
                     <div className="button-group">
-                      <button 
-                        className="action-btn"
-                        onClick={() => sendCommand('player_fullscreen_toggle', { fullscreen: true })}
+                      <button
+                        className={`toggle-btn ${!settings.playerFullscreen ? 'active' : ''}`}
+                        onClick={async () => {
+                          const newValue = false;
+                          setSettings(s => ({ ...s, playerFullscreen: newValue }));
+                          await sendCommand('player_fullscreen_toggle', { fullscreen: newValue });
+                        }}
                         disabled={isCommandPending}
                       >
-                        <span className="material-symbols-rounded">fullscreen</span>
-                        Enter Fullscreen
+                        DISABLE
                       </button>
-                      <button 
-                        className="action-btn"
-                        onClick={() => sendCommand('player_fullscreen_toggle', { fullscreen: false })}
+                      <button
+                        className={`toggle-btn ${settings.playerFullscreen ? 'active' : ''}`}
+                        onClick={async () => {
+                          const newValue = true;
+                          setSettings(s => ({ ...s, playerFullscreen: newValue }));
+                          await sendCommand('player_fullscreen_toggle', { fullscreen: newValue });
+                        }}
                         disabled={isCommandPending}
                       >
-                        <span className="material-symbols-rounded">fullscreen_exit</span>
-                        Exit Fullscreen
+                        ENABLE
                       </button>
                     </div>
+                    <p className="setting-description" style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {settings.playerFullscreen 
+                        ? 'Player window displays fullscreen on selected display' 
+                        : 'Player window displays as resizable windowed mode'}
+                    </p>
                   </div>
 
                   <div className="setting-item">

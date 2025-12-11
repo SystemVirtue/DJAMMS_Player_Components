@@ -261,7 +261,7 @@ function createMainWindow() {
   createApplicationMenu();
 }
 
-function createFullscreenWindow(displayId) {
+function createFullscreenWindow(displayId, fullscreen = true) {
   // IMPORTANT: Close any existing fullscreen window to ensure only one exists at a time
   // This prevents errors where app reloads but previous player window isn't closed
   if (fullscreenWindow) {
@@ -280,15 +280,23 @@ function createFullscreenWindow(displayId) {
   const displays = screen.getAllDisplays();
   const targetDisplay = displays.find(d => d.id === displayId) || displays[displays.length - 1];
 
+  // Windowed mode: use 80% of display size, centered, with frame
+  // Fullscreen mode: use full display, no frame
+  const windowWidth = fullscreen ? targetDisplay.size.width : Math.floor(targetDisplay.size.width * 0.8);
+  const windowHeight = fullscreen ? targetDisplay.size.height : Math.floor(targetDisplay.size.height * 0.8);
+  const windowX = fullscreen ? targetDisplay.bounds.x : targetDisplay.bounds.x + Math.floor((targetDisplay.size.width - windowWidth) / 2);
+  const windowY = fullscreen ? targetDisplay.bounds.y : targetDisplay.bounds.y + Math.floor((targetDisplay.size.height - windowHeight) / 2);
+
   fullscreenWindow = new BrowserWindow({
-    x: targetDisplay.bounds.x,
-    y: targetDisplay.bounds.y,
-    width: targetDisplay.size.width,
-    height: targetDisplay.size.height,
-    fullscreen: true,
-    frame: false,
+    x: windowX,
+    y: windowY,
+    width: windowWidth,
+    height: windowHeight,
+    fullscreen: fullscreen,
+    frame: !fullscreen, // Show frame in windowed mode
     backgroundColor: '#000000',
-    alwaysOnTop: true,
+    alwaysOnTop: fullscreen, // Only always on top in fullscreen
+    resizable: !fullscreen, // Allow resizing in windowed mode
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -965,9 +973,28 @@ ipcMain.handle('get-player-window-status', async () => {
 });
 
 // Create player window (maps to fullscreen window)
-ipcMain.handle('create-player-window', async (event, displayId) => {
+ipcMain.handle('create-player-window', async (event, displayId, fullscreen = true) => {
   try {
-    const win = createFullscreenWindow(displayId);
+    // Check if Admin and Player are on the same display - auto-disable fullscreen if so
+    if (mainWindow && fullscreen) {
+      const displays = screen.getAllDisplays();
+      const adminBounds = mainWindow.getBounds();
+      const adminDisplay = screen.getDisplayMatching(adminBounds);
+      const targetDisplay = displays.find(d => d.id === displayId) || displays[displays.length - 1];
+      
+      // If Admin and Player are on the same display, force windowed mode
+      if (adminDisplay.id === targetDisplay.id) {
+        console.log('[Electron] Admin and Player are on the same display - forcing windowed mode');
+        fullscreen = false;
+        
+        // Notify main window to update setting
+        if (mainWindow) {
+          mainWindow.webContents.send('player-fullscreen-auto-disabled');
+        }
+      }
+    }
+    
+    const win = createFullscreenWindow(displayId, fullscreen);
     return { success: true, windowId: win.id };
   } catch (error) {
     console.error('Error creating player window:', error);
@@ -1037,7 +1064,71 @@ ipcMain.handle('set-player-fullscreen', async (event, fullscreen) => {
     return { success: false, error: 'No player window open' };
   }
   
-  fullscreenWindow.setFullScreen(fullscreen);
+  // Check if Admin and Player are on the same display - auto-disable fullscreen if so
+  if (mainWindow && fullscreen) {
+    const displays = screen.getAllDisplays();
+    const adminBounds = mainWindow.getBounds();
+    const adminDisplay = screen.getDisplayMatching(adminBounds);
+    const playerBounds = fullscreenWindow.getBounds();
+    const playerDisplay = screen.getDisplayMatching(playerBounds);
+    
+    // If Admin and Player are on the same display, force windowed mode
+    if (adminDisplay.id === playerDisplay.id) {
+      console.log('[Electron] Admin and Player are on the same display - forcing windowed mode');
+      fullscreen = false;
+      
+      // Notify main window to update setting
+      if (mainWindow) {
+        mainWindow.webContents.send('player-fullscreen-auto-disabled');
+      }
+    }
+  }
+  
+  // Get current display ID
+  const displays = screen.getAllDisplays();
+  const currentBounds = fullscreenWindow.getBounds();
+  const currentDisplay = screen.getDisplayMatching(currentBounds);
+  const displayId = currentDisplay.id;
+  
+  // If switching to windowed mode, we need to recreate the window with frame
+  // If switching to fullscreen, we can just toggle fullscreen
+  if (!fullscreen && fullscreenWindow.isFullScreen()) {
+    // Switching to windowed: recreate window with frame
+    const savedState = {
+      displayId: displayId,
+      fullscreen: false
+    };
+    
+    // Close current window
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+    
+    // Recreate in windowed mode
+    const win = createFullscreenWindow(displayId, false);
+    
+    // Notify renderer to resize video players
+    if (win && win.webContents) {
+      win.webContents.once('did-finish-load', () => {
+        win.webContents.send('control-player', { action: 'resize', data: { mode: 'windowed' } });
+      });
+    }
+    
+    return { success: true };
+  } else if (fullscreen && !fullscreenWindow.isFullScreen()) {
+    // Switching to fullscreen: just toggle
+    fullscreenWindow.setFullScreen(true);
+    fullscreenWindow.setAlwaysOnTop(true);
+    fullscreenWindow.setResizable(false);
+    
+    // Notify renderer
+    if (fullscreenWindow.webContents) {
+      fullscreenWindow.webContents.send('control-player', { action: 'resize', data: { mode: 'fullscreen' } });
+    }
+    
+    return { success: true };
+  }
+  
+  // Already in the requested state
   return { success: true };
 });
 
