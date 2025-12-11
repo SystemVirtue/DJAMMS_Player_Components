@@ -402,7 +402,9 @@ function AdminApp() {
           });
           applyState(state);
         } else {
-          console.warn('[WebAdmin] No player state found. Player may not be initialized yet.');
+          // Player state not found - this is normal if player hasn't initialized yet
+          // Don't show as error, just log for debugging
+          console.log('[WebAdmin] Player state not found yet. Waiting for player to initialize...');
         }
       } catch (error) {
         console.error('[WebAdmin] Error loading initial state:', error);

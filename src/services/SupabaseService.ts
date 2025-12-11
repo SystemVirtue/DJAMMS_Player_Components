@@ -117,6 +117,7 @@ class SupabaseService {
   private queueUpdateCallbacks: Set<(queue: QueueVideoItem[], priorityQueue: QueueVideoItem[]) => void> = new Set();
   private isTransitioning: boolean = false; // Flag to prevent writes during crossfade/swap
   private transitionLockCallbacks: Set<(isTransitioning: boolean) => void> = new Set();
+  private isProcessingRemoteUpdate: boolean = false; // Flag to prevent sync during remote update processing
 
   // Offline queue handling
   private queuedQueueUpdates: QueuedQueueUpdate[] = [];
@@ -562,13 +563,42 @@ class SupabaseService {
         return; // Only last_updated and no queue data, skip
       }
 
+      // Skip sync if we're currently processing a remote update (prevents recursion loop)
+      if (this.isProcessingRemoteUpdate) {
+        logger.debug('[SupabaseService] Skipping state sync - processing remote update');
+        return;
+      }
+
       // Deep equality check: skip sync if state is truly unchanged
-      // CRITICAL: Always sync queue data (even if arrays are identical) to ensure Web Admin gets updates
-      // This is because queueIndex might have changed even if queue arrays are identical
+      // For queue data, check if it's actually different from last synced state
       if (hasQueueData) {
-        // Always sync when queue data is present - don't skip even if arrays are identical
-        // The queueIndex might have changed, or Web endpoints need fresh data
-        logger.debug('Syncing state with queue data (always sync queues for Web Admin)');
+        // Check if queue data is actually different from last synced
+        const lastActiveQueue = this.lastSyncedState?.active_queue || [];
+        const lastPriorityQueue = this.lastSyncedState?.priority_queue || [];
+        const newActiveQueue = updateData.active_queue || [];
+        const newPriorityQueue = updateData.priority_queue || [];
+        
+        // Compare queue lengths and content (quick check)
+        const activeQueueChanged = lastActiveQueue.length !== newActiveQueue.length ||
+          lastActiveQueue.some((item, idx) => item.id !== newActiveQueue[idx]?.id);
+        const priorityQueueChanged = lastPriorityQueue.length !== newPriorityQueue.length ||
+          lastPriorityQueue.some((item, idx) => item.id !== newPriorityQueue[idx]?.id);
+        
+        // If queues haven't changed and nothing else changed, skip sync
+        if (!activeQueueChanged && !priorityQueueChanged) {
+          // Check if other fields changed
+          const otherFieldsChanged = Object.keys(updateData).some(key => {
+            if (key === 'active_queue' || key === 'priority_queue' || key === 'last_updated') return false;
+            return !isEqual(this.lastSyncedState?.[key as keyof SupabasePlayerState], updateData[key as keyof SupabasePlayerState]);
+          });
+          
+          if (!otherFieldsChanged) {
+            logger.debug('[SupabaseService] Skipping state sync - queue data unchanged');
+            return;
+          }
+        }
+        
+        logger.debug('Syncing state with queue data (queue changed or other fields changed)');
       } else if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData)) {
         // Only skip if no queue data and everything else is identical
         logger.debug('Skipping state sync - no changes detected (deep equality, no queue data)');
@@ -972,37 +1002,48 @@ class SupabaseService {
         priorityQueueLength: newState.priority_queue?.length || 0
       });
 
-      // Get current local state for merge
-      const localActiveQueue = this.lastSyncedState?.active_queue || [];
-      const localPriorityQueue = this.lastSyncedState?.priority_queue || [];
-      const currentVideoId = this.lastSyncedState?.now_playing_video?.id || null;
-      const isPlaying = this.lastSyncedState?.status === 'playing' || false;
+      // Set flag to prevent sync during remote update processing
+      this.isProcessingRemoteUpdate = true;
 
-      // Merge queues using utility function
-      const mergedActiveQueue = mergeQueueUpdates({
-        localQueue: localActiveQueue,
-        remoteQueue: newState.active_queue || [],
-        isPlaying,
-        currentVideoId,
-        isTransitioning: this.isTransitioning
-      });
+      try {
+        // Get current local state for merge
+        const localActiveQueue = this.lastSyncedState?.active_queue || [];
+        const localPriorityQueue = this.lastSyncedState?.priority_queue || [];
+        const currentVideoId = this.lastSyncedState?.now_playing_video?.id || null;
+        const isPlaying = this.lastSyncedState?.status === 'playing' || false;
 
-      // Priority queue: adopt remote entirely (no merge needed)
-      const mergedPriorityQueue = newState.priority_queue || [];
+        // Merge queues using utility function
+        const mergedActiveQueue = mergeQueueUpdates({
+          localQueue: localActiveQueue,
+          remoteQueue: newState.active_queue || [],
+          isPlaying,
+          currentVideoId,
+          isTransitioning: this.isTransitioning
+        });
 
-      // Update lastSyncedState with merged queues
-      this.lastSyncedState = {
-        ...this.lastSyncedState,
-        active_queue: mergedActiveQueue,
-        priority_queue: mergedPriorityQueue,
-        updated_at: remoteUpdatedAt
-      };
+        // Priority queue: adopt remote entirely (no merge needed)
+        const mergedPriorityQueue = newState.priority_queue || [];
 
-      // Notify callbacks with merged queues
-      this.notifyQueueUpdateCallbacks(mergedActiveQueue, mergedPriorityQueue);
+        // Update lastSyncedState with merged queues
+        this.lastSyncedState = {
+          ...this.lastSyncedState,
+          active_queue: mergedActiveQueue,
+          priority_queue: mergedPriorityQueue,
+          updated_at: remoteUpdatedAt
+        };
 
-      // Update lastQueueUpdateTime to prevent processing this update again
-      this.lastQueueUpdateTime = remoteUpdatedAt;
+        // Notify callbacks with merged queues (this will trigger PlayerWindow updates)
+        this.notifyQueueUpdateCallbacks(mergedActiveQueue, mergedPriorityQueue);
+
+        // Update lastQueueUpdateTime to prevent processing this update again
+        this.lastQueueUpdateTime = remoteUpdatedAt;
+      } finally {
+        // Clear flag after a short delay to allow callbacks to complete
+        // This prevents any syncState calls triggered by the callbacks from syncing back
+        setTimeout(() => {
+          this.isProcessingRemoteUpdate = false;
+        }, 100);
+      }
 
     } catch (error) {
       logger.error('[SupabaseService] Error handling player_state update:', error);
