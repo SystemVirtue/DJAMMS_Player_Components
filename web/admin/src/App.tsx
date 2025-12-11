@@ -186,6 +186,7 @@ function AdminApp() {
   const [playbackDuration, setPlaybackDuration] = useState(0); // Total duration in seconds
   const playbackTimeUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null); // For debouncing playback time updates
   const lastPlaybackTimeRef = useRef(0); // Track last applied playback time to detect jumps
+  const overlaySettingsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null); // For debouncing overlay settings updates
 
   // Queue state (from Supabase player_state)
   const [activeQueue, setActiveQueue] = useState<QueueVideoItem[]>([]);
