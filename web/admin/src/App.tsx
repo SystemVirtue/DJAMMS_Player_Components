@@ -415,7 +415,7 @@ function AdminApp() {
   useEffect(() => {
     const loadAllVideos = async () => {
       try {
-        const videos = await getAllLocalVideos();
+        const videos = await getAllLocalVideos(playerId);
         setAllVideos(videos);
         
         // Group videos by playlist (playlist is stored in metadata)
@@ -472,7 +472,7 @@ function AdminApp() {
             setSearchTotalCount(allVideos.length);
           } else {
             // Fetch all videos if not loaded yet
-            const videos = await getAllLocalVideos();
+            const videos = await getAllLocalVideos(playerId);
             setSearchResults(videos);
             setSearchTotalCount(videos.length);
           }

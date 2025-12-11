@@ -634,7 +634,7 @@ class SupabaseService {
         if (commandPlayerId && commandPlayerId !== this.playerId) {
           logger.debug(`[SupabaseService] Ignoring command for different player: ${commandPlayerId} (this player: ${this.playerId})`);
           // Still acknowledge the command to prevent timeout, but don't process it
-          this.markCommandExecuted(command.id, false, `Command for different player: ${commandPlayerId}`);
+          await this.markCommandExecuted(command.id, false, `Command for different player: ${commandPlayerId}`);
           return;
         }
         
@@ -1009,16 +1009,16 @@ class SupabaseService {
         // Execute only the FIRST handler to prevent duplicate actions from multiple registrations
         await handlers[0](command);
         logger.info(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
-        // Mark command as executed in database (fire-and-forget)
-        this.markCommandExecuted(command.id, true);
+        // Mark command as executed in database (await to ensure acknowledgment)
+        await this.markCommandExecuted(command.id, true);
       } else {
         logger.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
         // Still acknowledge the command to prevent timeout, even if no handler
-        this.markCommandExecuted(command.id, false, `No handler registered for command type: ${command.command_type}`);
+        await this.markCommandExecuted(command.id, false, `No handler registered for command type: ${command.command_type}`);
       }
     } catch (error) {
       logger.error(`[SupabaseService] ❌ Error processing command ${command.id}:`, error);
-      this.markCommandExecuted(command.id, false, String(error));
+      await this.markCommandExecuted(command.id, false, String(error));
     } finally {
       // Remove from processing set (but keep in processed set to prevent re-execution)
       this.processingCommandIds.delete(command.id);
@@ -1027,31 +1027,67 @@ class SupabaseService {
 
   /**
    * Mark a command as executed or failed
-   * Updates database status for audit trail (fire-and-forget, non-blocking)
+   * Updates database status for audit trail and broadcasts acknowledgment
+   * CRITICAL: This must succeed for Web Admin to receive acknowledgment
    */
-  private markCommandExecuted(
+  private async markCommandExecuted(
     commandId: string, 
     success: boolean, 
     errorMessage?: string
-  ): void {
-    if (!this.client) return;
+  ): Promise<void> {
+    if (!this.client) {
+      logger.error('[SupabaseService] Cannot mark command executed - client not initialized');
+      return;
+    }
 
     logger.info(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
 
-    // Update database (fire-and-forget for minimal latency)
-    this.client
-      .from('admin_commands')
-      .update({
+    // Try to update database - this is critical for Web Admin acknowledgment
+    try {
+      const updatePayload: any = {
         status: success ? 'executed' : 'failed',
-        executed_at: new Date().toISOString(),
-        execution_result: success ? { success: true } : { error: errorMessage }
-      })
-      .eq('id', commandId)
-      .then(({ error }) => {
-        if (error) {
-          logger.warn('[SupabaseService] Error marking command as executed:', error.message);
+        executed_at: new Date().toISOString()
+      };
+      
+      // Try to include execution_result if column exists
+      if (success) {
+        updatePayload.execution_result = { success: true };
+      } else {
+        updatePayload.execution_result = { error: errorMessage };
+        updatePayload.error_message = errorMessage; // Also try error_message column
+      }
+
+      const { error } = await this.client
+        .from('admin_commands')
+        .update(updatePayload)
+        .eq('id', commandId);
+
+      if (error) {
+        // Log error but don't fail - try alternative acknowledgment methods
+        logger.warn(`[SupabaseService] Database update failed for command ${commandId}:`, error.message, error.code);
+        
+        // If schema mismatch, try minimal update with only status
+        if (error.code === 'PGRST204' || error.code === '42P01') {
+          logger.debug('[SupabaseService] Schema mismatch detected, trying minimal update');
+          const { error: minimalError } = await this.client
+            .from('admin_commands')
+            .update({
+              status: success ? 'executed' : 'failed'
+            })
+            .eq('id', commandId);
+          
+          if (minimalError) {
+            logger.error(`[SupabaseService] Minimal update also failed for command ${commandId}:`, minimalError.message);
+          } else {
+            logger.info(`[SupabaseService] ✅ Minimal update succeeded for command ${commandId}`);
+          }
         }
-      });
+      } else {
+        logger.info(`[SupabaseService] ✅ Command ${commandId} marked as ${success ? 'executed' : 'failed'} in database`);
+      }
+    } catch (err) {
+      logger.error(`[SupabaseService] Exception marking command ${commandId} as executed:`, err);
+    }
   }
 
   /**
