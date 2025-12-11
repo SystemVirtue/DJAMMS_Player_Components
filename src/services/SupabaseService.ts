@@ -12,7 +12,8 @@
  */
 
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
-import isEqual from 'fast-deep-equal';
+// @ts-ignore - fast-deep-equal has inconsistent export types
+import isEqual from 'fast-deep-equal/es6/index.js';
 import {
   SupabasePlayerState,
   SupabaseCommand,
