@@ -1424,7 +1424,7 @@ class SupabaseService {
           const staleIds = staleCommands.map(cmd => cmd.id);
           this.client
             .from('admin_commands')
-            .update({ status: 'executed', executed_at: new Date().toISOString() })
+            .update({ status: 'completed', executed_at: new Date().toISOString() })
             .in('id', staleIds)
             .then(({ error: updateError }) => {
               if (updateError) {
@@ -1520,7 +1520,7 @@ class SupabaseService {
     // Try to update database - this is critical for Web Admin acknowledgment
     try {
       const updatePayload: any = {
-        status: success ? 'executed' : 'failed',
+        status: success ? 'completed' : 'failed',
         executed_at: new Date().toISOString()
       };
       
@@ -1547,7 +1547,7 @@ class SupabaseService {
           const { error: minimalError } = await this.client
             .from('admin_commands')
             .update({
-              status: success ? 'executed' : 'failed'
+              status: success ? 'completed' : 'failed'
             })
             .eq('id', commandId);
           

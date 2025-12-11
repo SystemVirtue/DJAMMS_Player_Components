@@ -1842,15 +1842,27 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         playbackTime,
         playbackDuration
       });
+      // If video failed to play, still advance to next (don't get stuck)
+      // But add a small delay to ensure cleanup is complete
+      setTimeout(() => {
+        playNextVideo();
+      }, 100);
+      return;
     } else if (playbackTime < 1 && playbackDuration === 0) {
       console.error('🚨 [PlayerWindow] Video ended with 0 duration - MEDIA_ERR_SRC_NOT_SUPPORTED likely:', {
         title: currentVideo?.title,
         path: currentVideo?.path || currentVideo?.src,
         src: currentVideo?.src
       });
+      // If video has 0 duration, advance to next with delay
+      setTimeout(() => {
+        playNextVideo();
+      }, 100);
+      return;
     }
     
     // Use unified playNextVideo which checks priority queue first
+    // For normal video end, advance immediately
     playNextVideo();
     // Note: Preloading of next video is handled automatically by the useEffect
     // that watches nextVideoToPreload, which updates when queue advances
@@ -2023,9 +2035,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             previousVideoId = newVideoId;
             
             // Send play command if video changed and is playing
+            // Use setTimeout to ensure state is updated before sending play command
             if (state.isPlaying && newVideo) {
               console.log('🎬 [PlayerWindow] Queue state update - Sending play command (isPlaying=true)');
-              sendPlayCommand(newVideo);
+              // Small delay to ensure video state is set before sending play command
+              // Use the newVideo directly (it's already set in state above)
+              setTimeout(() => {
+                // Use newVideo directly since it's the source of truth from queue state
+                sendPlayCommand(newVideo);
+              }, 50);
             } else {
               console.log('🎬 [PlayerWindow] Queue state update - NOT sending play command (isPlaying=false or no video)');
             }
