@@ -27,6 +27,7 @@ import type {
 import { ConnectPlayerModal, usePlayer, PlayerIdBadge } from '@shared/ConnectPlayerModal';
 import { cleanVideoTitle } from '@shared/video-utils';
 import { shuffleArray } from '@shared/array-utils';
+import { initializePingHandler, cleanupPingHandler } from '@shared/ping-handler';
 
 // Helper to strip YouTube Playlist ID prefix from folder name
 // Handles both underscore and dot separators: PLxxxxxx_Name or PLxxxxxx.Name
@@ -431,6 +432,16 @@ function AdminApp() {
     });
     return unsubscribe;
   }, []);
+
+  // Initialize ping handler
+  useEffect(() => {
+    if (playerId) {
+      initializePingHandler(playerId, 'web-admin');
+    }
+    return () => {
+      cleanupPingHandler();
+    };
+  }, [playerId]);
 
   // Load all videos from local_videos table for Browse/Search
   // Also subscribe to changes so we auto-refresh when Electron re-indexes playlists

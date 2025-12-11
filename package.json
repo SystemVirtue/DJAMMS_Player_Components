@@ -31,7 +31,15 @@
     "dev:admin": "npm run dev --prefix web/admin",
     "build:kiosk": "npm run build --prefix web/kiosk",
     "build:admin": "npm run build --prefix web/admin",
-    "install:web": "npm install --prefix web/kiosk && npm install --prefix web/admin"
+    "install:web": "npm install --prefix web/kiosk && npm install --prefix web/admin",
+    "supabase": "supabase",
+    "supabase:login": "supabase login",
+    "supabase:link": "supabase link",
+    "supabase:db:push": "supabase db push",
+    "supabase:db:reset": "supabase db reset",
+    "supabase:migration:new": "supabase migration new",
+    "supabase:migration:list": "supabase migration list",
+    "supabase:status": "supabase status"
   },
   "keywords": [
     "react",
@@ -78,6 +86,7 @@
     "react-dom": "^18.2.0",
     "rollup": "^3.0.0",
     "rollup-plugin-dts": "^5.0.0",
+    "supabase": "^2.66.0",
     "tailwindcss": "^3.4.18",
     "ts-jest": "^29.4.6",
     "tslib": "^2.0.0",

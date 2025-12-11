@@ -22,7 +22,7 @@ import {
   MAX_PLAYER_ID_LENGTH
 } from '../utils/playerUtils';
 import { useVideoPlayer } from '../hooks/useVideoPlayer';
-import { QueueTab, SearchTab } from '../components/tabs';
+import { QueueTab, SearchTab, ConnectionsTab } from '../components/tabs';
 import { SettingsTab } from '../components/SettingsTab';
 import { ToolsTab } from '../components/ToolsTab';
 
@@ -39,7 +39,7 @@ interface DisplayInfo {
   isPrimary: boolean;
 }
 
-type TabId = 'queue' | 'search' | 'settings' | 'tools';
+type TabId = 'queue' | 'search' | 'settings' | 'tools' | 'connections';
 
 // Navigation items configuration
 const navItems: { id: TabId; icon: string; label: string }[] = [
@@ -47,6 +47,7 @@ const navItems: { id: TabId; icon: string; label: string }[] = [
   { id: 'search', icon: 'search', label: 'Search' },
   { id: 'settings', icon: 'settings', label: 'Settings' },
   { id: 'tools', icon: 'build', label: 'Tools' },
+  { id: 'connections', icon: 'hub', label: 'Connections' },
 ];
 
 // Player ID Setting Component (inline for simplicity)
@@ -3486,6 +3487,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           )}
 
           {/* Tools Tab */}
+          {/* Connections Tab */}
+          {currentTab === 'connections' && (
+            <ConnectionsTab playerId={playerId || DEFAULT_PLAYER_ID} />
+          )}
+
           {currentTab === 'tools' && (
             <div className="tab-content active">
               <div className="tools-container">

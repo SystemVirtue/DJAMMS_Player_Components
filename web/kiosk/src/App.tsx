@@ -19,6 +19,7 @@ import {
   isPlayerOnline,
   onConnectionChange
 } from '@shared/supabase-client';
+import { initializePingHandler, cleanupPingHandler } from '@shared/ping-handler';
 import {
   getPlayerId,
   setPlayerId,
@@ -416,6 +417,16 @@ function KioskApp() {
     });
     return unsubscribe;
   }, []);
+
+  // Initialize ping handler
+  useEffect(() => {
+    if (playerId) {
+      initializePingHandler(playerId, 'web-kiosk');
+      return () => {
+        cleanupPingHandler();
+      };
+    }
+  }, [playerId]);
 
   // Handle successful song request
   const handleSongRequested = useCallback((video: QueueVideoItem) => {

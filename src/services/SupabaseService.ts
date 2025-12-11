@@ -36,6 +36,7 @@ import {
 import { Video } from '../types';
 import { logger } from '../utils/logger';
 import { mergeQueueUpdates, MergeQueueOptions } from '../utils/queueMerge';
+import { getIOLogger } from './IOLogger';
 
 // Event types for command handlers
 export type CommandHandler = (command: SupabaseCommand) => Promise<void> | void;
@@ -176,6 +177,11 @@ class SupabaseService {
 
       // Start player state realtime subscription
       await this.startPlayerStateSubscription();
+
+      // Initialize IO Logger with Supabase client
+      const { getIOLogger } = await import('./IOLogger');
+      const ioLogger = getIOLogger();
+      await ioLogger.initialize(this.client, this.playerId);
 
       // Start heartbeat
       this.startHeartbeat();
@@ -596,10 +602,22 @@ class SupabaseService {
         }
       }
 
-      const { error } = await this.client
+      // Log IO event
+      const requestStr = JSON.stringify({
+        type: 'state_sync',
+        status: updateData.status,
+        queue_length: updateData.active_queue?.length,
+        priority_length: updateData.priority_queue?.length
+      }, null, 2);
+      const requestId = await getIOLogger().logSent('supabase', requestStr, 'player_state');
+
+      // Select updated_at after update to get the actual timestamp from database trigger
+      const { data: updatedRow, error } = await this.client
         .from('player_state')
         .update(updateData)
-        .eq('id', this.playerStateId);
+        .eq('id', this.playerStateId)
+        .select('updated_at, last_updated')
+        .single();
 
       // Check if request was cancelled after the request
       if (abortSignal.aborted) {
@@ -607,6 +625,9 @@ class SupabaseService {
       }
 
       if (error) {
+        // Log error to IO logger
+        await getIOLogger().logError('supabase', error.message || String(error), 'player_state', requestStr);
+        
         this.consecutiveStateSyncErrors++;
         const now = Date.now();
         const shouldLog = (now - this.lastErrorLogTime) > this.ERROR_SUPPRESSION_MS;
@@ -624,6 +645,12 @@ class SupabaseService {
           }
         }
       } else {
+        // Log successful response
+        await getIOLogger().logReceived('supabase', JSON.stringify({
+          success: true,
+          updated_at: updatedRow?.updated_at,
+          queue_length: updateData.active_queue?.length
+        }, null, 2), 'player_state', requestId);
         if (this.consecutiveStateSyncErrors > 0) {
           logger.debug(`State sync recovered after ${this.consecutiveStateSyncErrors} errors`);
           this.consecutiveStateSyncErrors = 0;
@@ -635,8 +662,10 @@ class SupabaseService {
         this.lastSyncedState = updateData;
         
         // Update lastQueueUpdateTime if queue data was synced
+        // Use the actual updated_at from database (set by trigger) for accurate conflict resolution
         if (updateData.active_queue !== undefined || updateData.priority_queue !== undefined) {
-          this.lastQueueUpdateTime = updateData.last_updated || new Date().toISOString();
+          // Prefer updated_at from database trigger, fallback to last_updated or current time
+          this.lastQueueUpdateTime = updatedRow?.updated_at || updatedRow?.last_updated || new Date().toISOString();
         }
       }
     } catch (error) {
@@ -693,6 +722,13 @@ class SupabaseService {
         }
         
         logger.info('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id, `(player: ${commandPlayerId || 'none'})`);
+        
+        // Log received command
+        await getIOLogger().logReceived('web-admin', JSON.stringify({
+          command_type: command.command_type,
+          command_id: command.id,
+          command_data: command.command_data
+        }, null, 2), 'broadcast');
         
         // Process the command
         await this.processCommand(command);
@@ -1564,11 +1600,24 @@ class SupabaseService {
         created_at: new Date().toISOString()
       };
       
+      // Log sent command
+      const requestId = await getIOLogger().logSent('web-admin', JSON.stringify({
+        command_type: commandType,
+        command_id: commandId,
+        command_data: payload
+      }, null, 2), 'broadcast');
+      
       await commandChannel.send({
         type: 'broadcast',
         event: 'command',
         payload: { command, timestamp: new Date().toISOString() }
       });
+      
+      // Log successful send
+      await getIOLogger().logReceived('web-admin', JSON.stringify({
+        success: true,
+        command_id: commandId
+      }, null, 2), 'broadcast', requestId);
     } catch (broadcastError) {
       logger.warn('[SupabaseService] Broadcast failed (command still in DB):', broadcastError);
       // Remove failed channel from cache so it can be recreated
