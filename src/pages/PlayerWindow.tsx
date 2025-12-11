@@ -2035,11 +2035,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         if (newVideo) {
           const newVideoId = newVideo.id || newVideo.src;
           
+          // Capture state before updating (to check if we're restoring from null)
+          const wasCurrentVideoNull = !currentVideoRef.current;
+          const videoChanged = newVideoId !== previousVideoId;
+          
           // Always update if video changed OR if currentVideo is null/undefined (during skip transitions)
-          const shouldUpdate = newVideoId !== previousVideoId || !currentVideoRef.current;
+          const shouldUpdate = videoChanged || wasCurrentVideoNull;
           
           if (shouldUpdate) {
-            console.log('[PlayerWindow] Queue state update - new video:', newVideo.title);
+            console.log('[PlayerWindow] Queue state update - new video:', newVideo.title, wasCurrentVideoNull ? '(was null, restoring)' : '(changed)');
             console.log('🎬 [PlayerWindow] Queue state update - Video details:', {
               title: newVideo.title,
               artist: newVideo.artist,
@@ -2052,11 +2056,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             currentVideoRef.current = newVideo;
             previousVideoId = newVideoId;
             
-            // Send play command if video changed and is playing
-            // Also send if we're transitioning (currentVideo was null/undefined)
-            const shouldPlay = state.isPlaying && newVideo && (newVideoId !== previousVideoId || !currentVideoRef.current);
+            // Send play command if:
+            // 1. Video changed and is playing, OR
+            // 2. Current video was null (during skip transition) and is playing
+            const shouldPlay = state.isPlaying && newVideo && (videoChanged || wasCurrentVideoNull);
             if (shouldPlay) {
-              console.log('🎬 [PlayerWindow] Queue state update - Sending play command (isPlaying=true)');
+              console.log('🎬 [PlayerWindow] Queue state update - Sending play command (isPlaying=true)', wasCurrentVideoNull ? '- restoring from null' : '');
               // Small delay to ensure video state is set before sending play command
               // Use the newVideo directly (it's already set in state above)
               setTimeout(() => {
