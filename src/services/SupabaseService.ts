@@ -920,6 +920,34 @@ class SupabaseService {
     return this.connectionStatus;
   }
 
+  /**
+   * Fetch current player state from Supabase (for polling when queue is empty)
+   */
+  public async fetchPlayerState(): Promise<SupabasePlayerState | null> {
+    if (!this.client || !this.playerId) {
+      logger.warn('[SupabaseService] Cannot fetch player state - client or playerId not initialized');
+      return null;
+    }
+
+    try {
+      const { data, error } = await this.client
+        .from('player_state')
+        .select('*')
+        .eq('player_id', this.playerId)
+        .maybeSingle();
+
+      if (error) {
+        logger.warn('[SupabaseService] Error fetching player state:', error.message);
+        return null;
+      }
+
+      return data as SupabasePlayerState | null;
+    } catch (error) {
+      logger.error('[SupabaseService] Exception fetching player state:', error);
+      return null;
+    }
+  }
+
   // ==================== Player State Realtime Subscription ====================
 
   /**

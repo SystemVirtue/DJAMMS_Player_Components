@@ -2065,7 +2065,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     });
     
     // Request initial state
-    (window as any).electronAPI.getQueueState?.().then((state: any) => {
+    (window as any).electronAPI.getQueueState?.().then(async (state: any) => {
       if (state) {
         if (state.activeQueue) {
           setQueue(state.activeQueue);
@@ -2092,13 +2092,89 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         }
         if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
+        
+        // Check if active queue is empty/null - if so, poll Supabase
+        const activeQueueEmpty = !state.activeQueue || state.activeQueue.length === 0;
+        const noCurrentVideo = !state.currentVideo && !state.nowPlaying;
+        
+        if (activeQueueEmpty && noCurrentVideo && supabaseInitialized) {
+          console.log('[PlayerWindow] Active queue is empty - polling Supabase for queue state');
+          
+          // Poll Supabase to get active_queue
+          const supabaseService = getSupabaseService();
+          if (supabaseService.initialized) {
+            try {
+              const playerState = await supabaseService.fetchPlayerState();
+              if (playerState && playerState.active_queue && playerState.active_queue.length > 0) {
+                console.log('[PlayerWindow] ✅ Found active queue in Supabase:', playerState.active_queue.length, 'items');
+                
+                // Convert QueueVideoItem[] to Video[]
+                const activeQueueVideos: Video[] = playerState.active_queue.map(q => ({
+                  id: q.id,
+                  src: q.src,
+                  title: q.title,
+                  artist: q.artist,
+                  path: q.path,
+                  playlist: q.playlist,
+                  playlistDisplayName: q.playlistDisplayName,
+                  duration: q.duration
+                }));
+                
+                // Update queue state
+                setQueue(activeQueueVideos);
+                queueRef.current = activeQueueVideos;
+                setQueueIndex(0);
+                queueIndexRef.current = 0;
+                
+                // Send queue to main process
+                if (isElectron) {
+                  (window as any).electronAPI.sendQueueCommand?.({
+                    action: 'set_queue',
+                    payload: {
+                      activeQueue: activeQueueVideos,
+                      priorityQueue: playerState.priority_queue?.map(q => ({
+                        id: q.id,
+                        src: q.src,
+                        title: q.title,
+                        artist: q.artist,
+                        path: q.path,
+                        playlist: q.playlist,
+                        playlistDisplayName: q.playlistDisplayName,
+                        duration: q.duration
+                      })) || [],
+                      queueIndex: 0
+                    }
+                  });
+                }
+                
+                // Autoplay index 0 video
+                if (activeQueueVideos.length > 0) {
+                  const firstVideo = activeQueueVideos[0];
+                  console.log('[PlayerWindow] 🎬 Autoplaying index 0 video:', firstVideo.title);
+                  setCurrentVideo(firstVideo);
+                  currentVideoRef.current = firstVideo;
+                  setIsPlaying(true);
+                  
+                  // Wait a bit for state to settle, then send play command
+                  setTimeout(() => {
+                    sendPlayCommand(firstVideo);
+                  }, 200);
+                }
+              } else {
+                console.log('[PlayerWindow] No active queue found in Supabase');
+              }
+            } catch (error) {
+              console.error('[PlayerWindow] Error fetching player state from Supabase:', error);
+            }
+          }
+        }
       }
     });
     
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [isElectron, sendPlayCommand]);
+  }, [isElectron, sendPlayCommand, supabaseInitialized]);
 
   // Sync overlay settings to Player Window when they change
   useEffect(() => {
