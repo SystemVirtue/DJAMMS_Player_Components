@@ -2016,11 +2016,29 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         }
         
         // Handle current video change - send play command if video changed
+        // First, try to get video from state.currentVideo or state.nowPlaying
+        // If not available, derive from queue[queueIndex] if queue and index are available
+        let newVideo: Video | null = null;
         if (state.currentVideo || state.nowPlaying) {
-          const newVideo = state.currentVideo || state.nowPlaying;
+          newVideo = state.currentVideo || state.nowPlaying;
+        } else if (state.activeQueue && typeof state.queueIndex === 'number' && state.activeQueue.length > 0) {
+          // Derive current video from queue index if nowPlaying is missing (during transitions)
+          const queueIndex = state.queueIndex >= 0 && state.queueIndex < state.activeQueue.length 
+            ? state.queueIndex 
+            : 0;
+          newVideo = state.activeQueue[queueIndex] || null;
+          if (newVideo) {
+            console.log('[PlayerWindow] Queue state update - Derived current video from queue index:', queueIndex, newVideo.title);
+          }
+        }
+        
+        if (newVideo) {
           const newVideoId = newVideo.id || newVideo.src;
           
-          if (newVideoId !== previousVideoId) {
+          // Always update if video changed OR if currentVideo is null/undefined (during skip transitions)
+          const shouldUpdate = newVideoId !== previousVideoId || !currentVideoRef.current;
+          
+          if (shouldUpdate) {
             console.log('[PlayerWindow] Queue state update - new video:', newVideo.title);
             console.log('🎬 [PlayerWindow] Queue state update - Video details:', {
               title: newVideo.title,
@@ -2035,8 +2053,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             previousVideoId = newVideoId;
             
             // Send play command if video changed and is playing
-            // Use setTimeout to ensure state is updated before sending play command
-            if (state.isPlaying && newVideo) {
+            // Also send if we're transitioning (currentVideo was null/undefined)
+            const shouldPlay = state.isPlaying && newVideo && (newVideoId !== previousVideoId || !currentVideoRef.current);
+            if (shouldPlay) {
               console.log('🎬 [PlayerWindow] Queue state update - Sending play command (isPlaying=true)');
               // Small delay to ensure video state is set before sending play command
               // Use the newVideo directly (it's already set in state above)
@@ -2053,10 +2072,22 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             consecutiveFailuresRef.current = 0; // Reset failure count on new video
           }
         } else {
-          // No video playing
-          setCurrentVideo(null);
-          currentVideoRef.current = null;
-          previousVideoId = null;
+          // Only clear currentVideo if queue is truly empty and not playing
+          // Don't clear during transitions (when queueIndex might be valid but nowPlaying is temporarily null)
+          const queueHasItems = state.activeQueue && state.activeQueue.length > 0;
+          const isTransitioning = typeof state.queueIndex === 'number' && state.queueIndex >= 0 && queueHasItems;
+          
+          if (!isTransitioning && !state.isPlaying) {
+            // No video playing and not transitioning - safe to clear
+            console.log('[PlayerWindow] Queue state update - Clearing current video (queue empty, not playing)');
+            setCurrentVideo(null);
+            currentVideoRef.current = null;
+            previousVideoId = null;
+          } else if (isTransitioning) {
+            console.log('[PlayerWindow] Queue state update - Preserving current video during transition (queueIndex:', state.queueIndex, 'queueLength:', state.activeQueue?.length, ')');
+            // During transition, keep current video until new one is set
+            // Don't clear it
+          }
         }
         
         if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
