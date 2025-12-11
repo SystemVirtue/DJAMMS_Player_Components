@@ -1777,6 +1777,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const priorityQueueRef = useRef(priorityQueue);
   const prevQueueIndexRef = useRef(queueIndex); // Track previous queueIndex for change detection
   const isReceivingRemoteUpdateRef = useRef(false); // Flag to prevent sync loop when receiving remote updates
+  const lastSyncedQueueRef = useRef<string>(''); // Track last synced queue to prevent duplicate syncs
+  const isUpdatingFromMainProcessRef = useRef(false); // Flag to prevent sync when updating from main process
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -1979,6 +1981,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     
     const unsubscribe = (window as any).electronAPI.onQueueState?.((state: any) => {
       if (state) {
+        // Set flag to prevent sync when updating from main process (prevents recursion)
+        isUpdatingFromMainProcessRef.current = true;
+        
         // Update local state from authoritative main process state
         if (state.activeQueue) {
           setQueue(state.activeQueue);
@@ -1995,23 +2000,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setQueueIndex(state.queueIndex);
           queueIndexRef.current = state.queueIndex;
           
-          // Detect queue advancement: if queueIndex changed, force immediate sync
+          // Note: Don't sync here - the useEffect will handle it
+          // This prevents recursion loops when queue state comes from main process
           if (prevIndex !== state.queueIndex) {
-            console.log(`[PlayerWindow] Queue advanced: ${prevIndex} → ${state.queueIndex}, forcing immediate sync`);
-            // Force immediate sync with current queue state
-            setTimeout(() => {
-              // Skip sync if this update came from a remote source (prevents recursion)
-      if (isReceivingRemoteUpdateRef.current) {
-        console.log('[PlayerWindow] Skipping syncState - update came from remote source');
-        return;
-      }
-      
-      syncState({
-                activeQueue: state.activeQueue || queueRef.current,
-                priorityQueue: state.priorityQueue || priorityQueueRef.current,
-                queueIndex: state.queueIndex
-              }, true); // immediate = true
-            }, 0);
+            console.log(`[PlayerWindow] Queue advanced: ${prevIndex} → ${state.queueIndex} (sync will be handled by useEffect)`);
           }
         }
         
@@ -2097,6 +2089,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         
         if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
+        
+        // Clear flag after state updates complete (allow useEffect to check flag)
+        setTimeout(() => {
+          isUpdatingFromMainProcessRef.current = false;
+        }, 100);
       }
     });
     
@@ -2242,11 +2239,34 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       return;
     }
     
+    // Skip sync if updating from main process (prevents recursion loop)
+    if (isUpdatingFromMainProcessRef.current) {
+      console.log('[PlayerWindow] Skipping syncState - update came from main process');
+      return;
+    }
+    
+    // Create a hash of queue state to detect if it actually changed
+    const queueHash = JSON.stringify({
+      activeQueue: queue.map(v => v.id),
+      priorityQueue: priorityQueue.map(v => v.id),
+      queueIndex
+    });
+    
+    // Skip if queue hasn't actually changed (prevents unnecessary syncs)
+    if (queueHash === lastSyncedQueueRef.current && !currentVideo && !isPlaying) {
+      // Only skip if nothing else changed - but if video or playing state changed, still sync
+      const otherStateChanged = currentVideo || isPlaying;
+      if (!otherStateChanged) {
+        return;
+      }
+    }
+    
     // Detect queue advancement: if queueIndex changed, force immediate sync
     const queueAdvanced = prevQueueIndexRef.current !== queueIndex;
     if (queueAdvanced) {
       console.log(`[PlayerWindow] Queue advanced in useEffect: ${prevQueueIndexRef.current} → ${queueIndex}, forcing immediate sync`);
       prevQueueIndexRef.current = queueIndex;
+      lastSyncedQueueRef.current = queueHash;
       // Force immediate sync for queue advancement
       syncState({
         status: isPlaying ? 'playing' : 'paused',
@@ -2261,6 +2281,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     } else {
       // Normal sync (debounced) for other state changes
       prevQueueIndexRef.current = queueIndex;
+      lastSyncedQueueRef.current = queueHash;
       syncState({
         status: isPlaying ? 'playing' : 'paused',
         isPlaying,
