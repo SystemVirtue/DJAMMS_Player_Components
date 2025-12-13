@@ -1850,7 +1850,7 @@ class SupabaseService {
         command_data: payload
       }, null, 2), 'broadcast');
       
-      await commandChannel.send({
+      await commandChannel.httpSend({
         type: 'broadcast',
         event: 'command',
         payload: { command, timestamp: new Date().toISOString() }

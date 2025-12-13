@@ -408,7 +408,7 @@ export async function sendCommandAndWait(
     
     const commandChannel = await getCommandChannel(playerId);
     
-    await commandChannel.send({
+    await commandChannel.httpSend({
       type: 'broadcast',
       event: 'command',
       payload: { command, timestamp: new Date().toISOString() }
@@ -587,7 +587,7 @@ export async function insertCommand(
     
     const commandChannel = await getCommandChannel(playerId);
     
-    await commandChannel.send({
+    await commandChannel.httpSend({
       type: 'broadcast',
       event: 'command',
       payload: { command, timestamp: new Date().toISOString() }
