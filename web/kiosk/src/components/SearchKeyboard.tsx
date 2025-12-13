@@ -22,11 +22,11 @@ export function SearchKeyboard({ onKeyPress, onBackspace, onClear, onSubmit }: S
     <div className="flex flex-col items-center gap-2 p-4">
       {KEYBOARD_ROWS.map((row, rowIndex) => (
         <div key={rowIndex} className="flex gap-2 justify-center">
-          {/* Clear button on the left of bottom row */}
+          {/* Clear button on the left of bottom row - Orange */}
           {rowIndex === 3 && (
             <button
               onClick={onClear}
-              className="keyboard-key keyboard-key-wide text-sm"
+              className="keyboard-key keyboard-key-wide text-sm bg-gradient-to-b from-orange-500 to-orange-600 border-orange-400 hover:from-orange-400 hover:to-orange-500"
               title="Clear"
             >
               CLEAR
@@ -43,11 +43,11 @@ export function SearchKeyboard({ onKeyPress, onBackspace, onClear, onSubmit }: S
             </button>
           ))}
           
-          {/* Backspace on the right of bottom row */}
+          {/* Backspace on the right of bottom row - Red */}
           {rowIndex === 3 && (
             <button
               onClick={onBackspace}
-              className="keyboard-key keyboard-key-wide flex items-center justify-center"
+              className="keyboard-key keyboard-key-wide flex items-center justify-center bg-gradient-to-b from-red-500 to-red-600 border-red-400 hover:from-red-400 hover:to-red-500"
               title="Backspace"
             >
               <Delete size={24} />
@@ -67,7 +67,7 @@ export function SearchKeyboard({ onKeyPress, onBackspace, onClear, onSubmit }: S
         {onSubmit && (
           <button
             onClick={onSubmit}
-            className="keyboard-key keyboard-key-wide bg-gradient-to-b from-amber-500 to-amber-600 border-amber-400 flex items-center justify-center gap-2"
+            className="keyboard-key keyboard-key-wide bg-gradient-to-b from-green-500 to-green-600 border-green-400 hover:from-green-400 hover:to-green-500 flex items-center justify-center gap-2"
           >
             <CornerDownLeft size={20} />
             SEARCH

@@ -1,10 +1,13 @@
 // VideoResultCard.tsx - Video search result card for Kiosk
 // Styled with obie-v5 aesthetic
 
+import { useState } from 'react';
 import { Music, Clock } from 'lucide-react';
 import type { SupabaseLocalVideo } from '@shared/types';
 import { getDisplayArtist, getPlaylistDisplayName } from '@shared/supabase-client';
 import { cleanVideoTitle } from '@shared/video-utils';
+import { getThumbnailUrl } from '../utils/thumbnailUtils';
+import { getThumbnailsPath } from '@shared/settings';
 
 interface VideoResultCardProps {
   video: SupabaseLocalVideo;
@@ -13,8 +16,12 @@ interface VideoResultCardProps {
 }
 
 export function VideoResultCard({ video, isSelected, onClick }: VideoResultCardProps) {
+  const [thumbnailError, setThumbnailError] = useState(false);
   const artist = getDisplayArtist(video.artist);
   const playlist = video.metadata ? getPlaylistDisplayName((video.metadata as any).playlist || '') : '';
+  const thumbnailsPath = getThumbnailsPath();
+  const thumbnailUrl = getThumbnailUrl(video, thumbnailsPath);
+  const hasThumbnail = thumbnailUrl && !thumbnailError;
   
   // Format duration from seconds to mm:ss
   const formatDuration = (seconds: number | null): string => {
@@ -29,9 +36,27 @@ export function VideoResultCard({ video, isSelected, onClick }: VideoResultCardP
       onClick={onClick}
       className={`video-card p-4 ${isSelected ? 'video-card-selected' : ''}`}
     >
-      {/* Thumbnail placeholder - gradient */}
-      <div className="aspect-video bg-gradient-to-br from-slate-700 to-slate-800 rounded mb-3 flex items-center justify-center">
-        <Music size={48} className="text-slate-500" />
+      {/* Thumbnail with fallback */}
+      <div 
+        className="aspect-video bg-black rounded mb-3 flex items-center justify-center overflow-hidden"
+        style={{
+          backgroundImage: hasThumbnail ? `url(${thumbnailUrl})` : 'none',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        }}
+      >
+        {thumbnailUrl && !thumbnailError && (
+          <img
+            src={thumbnailUrl}
+            alt=""
+            className="w-full h-full object-cover"
+            onError={() => setThumbnailError(true)}
+            loading="lazy"
+          />
+        )}
+        {(!hasThumbnail || thumbnailError) && (
+          <Music size={48} className="text-slate-500" />
+        )}
       </div>
       
       {/* Video info */}

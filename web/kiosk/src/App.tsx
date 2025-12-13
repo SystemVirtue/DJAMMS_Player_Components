@@ -11,6 +11,7 @@ import {
   JukeboxKiosk,
   ModernKiosk,
   SleekKiosk,
+  ObieKiosk,
   NowPlaying,
   ComingUpTicker,
   CreditsDisplay
@@ -453,13 +454,15 @@ function KioskApp() {
 
   return (
     <div className="min-h-screen bg-slate-900 relative">
-      {/* Sleek Kiosk Mode - Modern wireframe-inspired design */}
+      {/* Obie-v5 Kiosk Mode - Dark background with yellow accents */}
       {uiMode === 'jukebox' ? (
-        <SleekKiosk
+        <ObieKiosk
           nowPlaying={playerState?.now_playing_video || null}
           activeQueue={playerState?.active_queue || []}
+          priorityQueue={playerState?.priority_queue || []}
           playerId={playerId}
-          thumbnailsPath={getThumbnailsPath()}
+          credits={credits}
+          isFreePlay={true}
           onSongQueued={handleSongRequested}
         />
       ) : (
