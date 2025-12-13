@@ -857,11 +857,14 @@ export async function getAllLocalVideos(
   queryBuilder = queryBuilder.or(extensionFilters.join(','));
   
   // Only apply range if limit is specified
+  // IMPORTANT: PostgREST defaults to 1000 rows if no range is specified
+  // To fetch all videos, we must explicitly set a very large range
   if (limit !== null) {
     queryBuilder = queryBuilder.range(offset, offset + limit - 1);
-  } else if (offset > 0) {
-    // If no limit but offset specified, use a very large number for range end
-    queryBuilder = queryBuilder.range(offset, offset + 999999);
+  } else {
+    // No limit specified - fetch all videos by setting a very large range
+    // This overrides PostgREST's default 1000 row limit
+    queryBuilder = queryBuilder.range(offset, offset + 9999999); // 10 million should be more than enough
   }
   
   const { data, error } = await queryBuilder;

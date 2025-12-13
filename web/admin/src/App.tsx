@@ -658,8 +658,8 @@ function AdminApp() {
             setSearchResults(allVideos);
             setSearchTotalCount(allVideos.length);
           } else {
-            // Fetch all videos if not loaded yet
-            const videos = await getAllLocalVideos(playerId);
+            // Fetch all videos if not loaded yet (pass null to remove limit)
+            const videos = await getAllLocalVideos(playerId, null);
             setSearchResults(videos);
             setSearchTotalCount(videos.length);
           }
