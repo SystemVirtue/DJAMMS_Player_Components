@@ -339,8 +339,8 @@ function AdminApp() {
       } else if (state.active_queue === undefined) {
         // CRITICAL FIX: When active_queue is undefined, it means the update didn't include it
         // This is a BUG - active_queue should ALWAYS be included in updates
-        // Fetch fresh state to get the current queue instead of preserving stale data
-        console.warn('[WebAdmin] ⚠️ WARNING: active_queue is undefined in update - fetching fresh state');
+        // Don't modify the queue - just log a warning (preserve existing display state)
+        console.warn('[WebAdmin] ⚠️ WARNING: active_queue is undefined in update - this should not happen!');
         console.warn('[WebAdmin] Update data:', {
           hasNowPlaying: !!state.now_playing_video,
           nowPlayingTitle: state.now_playing_video?.title,
@@ -348,25 +348,8 @@ function AdminApp() {
           isPlaying: state.is_playing,
           hasPriorityQueue: !!state.priority_queue
         });
-        // Fetch fresh state to get current active_queue
-        if (playerId) {
-          getPlayerState(playerId).then(freshState => {
-            if (freshState && freshState.active_queue !== undefined) {
-              console.log('[WebAdmin] ✅ Fetched fresh state with active_queue:', freshState.active_queue.length, 'items');
-              // Apply the fresh state (this will update active_queue)
-              applyState(freshState);
-            } else {
-              console.warn('[WebAdmin] ⚠️ Fresh state also missing active_queue - using empty array');
-              setActiveQueue([]);
-            }
-          }).catch(err => {
-            console.error('[WebAdmin] ❌ Failed to fetch fresh state:', err);
-            // Fallback: preserve existing queue if fetch fails (better than clearing it)
-            console.warn('[WebAdmin] ⚠️ Preserving existing queue due to fetch error');
-          });
-        } else {
-          console.warn('[WebAdmin] ⚠️ No playerId available - cannot fetch fresh state');
-        }
+        // Preserve existing queue display - don't fetch or modify (WEBADMIN is display-only)
+        // The player will send a proper update with active_queue included
       } else {
         console.warn('[WebAdmin] active_queue is not an array:', state.active_queue, 'type:', typeof state.active_queue);
         setActiveQueue([]);
