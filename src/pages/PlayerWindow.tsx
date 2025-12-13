@@ -2057,9 +2057,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         
         // Update local state from authoritative main process state
         // CRITICAL: Store the queue data before updating state so we can use it for sync
+        // Must include FULL ID SEQUENCE (array) to detect order changes, not just content
         const prevQueueHash = JSON.stringify({
-          activeQueue: queueRef.current.map(v => v.id),
-          priorityQueue: priorityQueueRef.current.map(v => v.id),
+          activeQueue: queueRef.current.map(v => v.id), // Array preserves order
+          priorityQueue: priorityQueueRef.current.map(v => v.id), // Array preserves order
           queueIndex: queueIndexRef.current
         });
         
@@ -2080,14 +2081,17 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                                  (!queueRef.current || queueRef.current.length === 0) &&
                                  (!priorityQueueRef.current || priorityQueueRef.current.length === 0);
         
-        // Check if queue content changed (for shuffle detection) - only if queues have content
+        // Check if queue content OR ORDER changed (for shuffle/move detection) - only if queues have content
+        // CRITICAL: Must include FULL ID SEQUENCE (not just IDs) to detect order changes (shuffle, move)
+        // JSON.stringify of array preserves order, so this will detect both content AND order changes
         const newQueueHash = JSON.stringify({
-          activeQueue: (state.activeQueue || queueRef.current).map((v: Video) => v.id),
-          priorityQueue: (state.priorityQueue || priorityQueueRef.current).map((v: Video) => v.id),
+          activeQueue: (state.activeQueue || queueRef.current).map((v: Video) => v.id), // Array preserves order
+          priorityQueue: (state.priorityQueue || priorityQueueRef.current).map((v: Video) => v.id), // Array preserves order
           queueIndex: state.queueIndex
         });
         // CRITICAL: Only consider queueContentChanged if queues are NOT empty
         // When both queues are empty, queueContentChanged is meaningless and causes infinite loops
+        // This hash comparison detects BOTH content changes (add/remove) AND order changes (shuffle/move)
         const queueContentChanged = bothQueuesEmpty ? false : (prevQueueHash !== newQueueHash);
         
         // CRITICAL: Prevent infinite loops - check if we're already syncing or if this matches what we just synced
