@@ -701,6 +701,14 @@ class SupabaseService {
         }
       }
       
+      // CRITICAL FINAL CHECK: Ensure active_queue is NEVER undefined in updateData
+      // This is the last chance to prevent undefined from being sent to Supabase
+      // If active_queue is still undefined after all the above logic, use empty array
+      if (updateData.active_queue === undefined) {
+        logger.warn('[SupabaseService] ⚠️ CRITICAL: active_queue is still undefined after all preservation logic - using empty array');
+        updateData.active_queue = [];
+      }
+      
       // #region agent log
       if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
         (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:622',message:'updateData before DB write',data:{hasActiveQueue:updateData.active_queue!==undefined,activeQueueLength:updateData.active_queue?.length,hasPriorityQueue:updateData.priority_queue!==undefined,hasNowPlaying:updateData.now_playing_video!==undefined,nowPlayingId:updateData.now_playing_video?.id,lastSyncedHasQueue:this.lastSyncedState?.active_queue!==undefined,lastSyncedQueueLength:this.lastSyncedState?.active_queue?.length,updateDataKeys:Object.keys(updateData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
