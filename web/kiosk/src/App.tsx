@@ -407,6 +407,9 @@ function KioskApp() {
   }, [playerId]);
 
   // Subscribe to real-time player state updates
+  // Use ref to store previous active_queue to avoid dependency issues
+  const previousActiveQueueRef = useRef<QueueVideoItem[] | null>(null);
+  
   useEffect(() => {
     const channel = subscribeToPlayerState(playerId, (state) => {
       console.log('[Kiosk] Received player state update:', {
@@ -414,7 +417,30 @@ function KioskApp() {
         queue_length: state.active_queue?.length || 0,
         priority_length: state.priority_queue?.length || 0
       });
-      setPlayerState(state);
+      
+      // Error handling: If active_queue is null, don't update it (preserve existing state)
+      // This prevents the ComingUpTicker from being interrupted by null values
+      if (state.active_queue === null) {
+        console.warn('[Kiosk] ⚠️ Received update with active_queue=null, preserving existing state');
+        // Create a new state object using previous active_queue or empty array
+        const normalizedState = {
+          ...state,
+          active_queue: previousActiveQueueRef.current || []
+        };
+        setPlayerState(normalizedState);
+        // Don't update the ref since we're preserving the old value
+      } else {
+        // Normalize undefined to empty array (supabase-client should handle this, but double-check)
+        const normalizedState = {
+          ...state,
+          active_queue: state.active_queue || [],
+          priority_queue: state.priority_queue || []
+        };
+        // Update ref with the new queue value
+        previousActiveQueueRef.current = normalizedState.active_queue;
+        setPlayerState(normalizedState);
+      }
+      
       setIsOnline(isPlayerOnline(state));
     });
 

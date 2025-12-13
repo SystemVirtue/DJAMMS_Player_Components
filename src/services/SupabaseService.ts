@@ -613,12 +613,10 @@ class SupabaseService {
         }
       }
 
-      // CRITICAL: Include queue_index to track current position in active_queue
-      // This is essential for WEBADMIN to display the correct queue order
+      // ARCHITECTURE: Index 0 is always now-playing - always send queue_index: 0
       // The queue_index column exists in the database schema (added in migration 20241204_add_queue_index.sql)
-      if (state.queueIndex !== undefined) {
-        updateData.queue_index = state.queueIndex;
-      }
+      // Always set to 0 since index 0 of active_queue is always the now-playing video
+      updateData.queue_index = 0;
 
       // CRITICAL: ALWAYS include active_queue and priority_queue in updates if they exist in lastSyncedState
       // This ensures Web Admin receives queue data in EVERY Realtime update, even for partial updates
@@ -702,12 +700,33 @@ class SupabaseService {
         }
       }
       
-      // CRITICAL FINAL CHECK: Ensure active_queue is NEVER undefined in updateData
-      // This is the last chance to prevent undefined from being sent to Supabase
-      // If active_queue is still undefined after all the above logic, use empty array
-      if (updateData.active_queue === undefined) {
-        logger.warn('[SupabaseService] ⚠️ CRITICAL: active_queue is still undefined after all preservation logic - using empty array');
+      // CRITICAL FINAL CHECK: Ensure active_queue is NEVER undefined or null in updateData
+      // This is the last chance to prevent undefined/null from being sent to Supabase
+      // If active_queue is still undefined or null after all the above logic, use empty array
+      if (updateData.active_queue === undefined || updateData.active_queue === null) {
+        logger.warn('[SupabaseService] ⚠️ CRITICAL: active_queue is still undefined/null after all preservation logic - using empty array');
         updateData.active_queue = [];
+      }
+      
+      // ARCHITECTURE VALIDATION: Ensure activeQueue[0] always matches now_playing_video
+      // Index 0 is always now-playing - validate this invariant
+      if (updateData.active_queue && updateData.active_queue.length > 0 && updateData.now_playing_video) {
+        const index0Video = updateData.active_queue[0];
+        const nowPlayingId = updateData.now_playing_video.id || updateData.now_playing_video.src;
+        const index0Id = index0Video.id || index0Video.src;
+        
+        if (index0Id !== nowPlayingId) {
+          logger.warn('[SupabaseService] ⚠️ ARCHITECTURE VIOLATION: activeQueue[0] does not match now_playing_video');
+          logger.warn('[SupabaseService] activeQueue[0]:', index0Video.title, 'id:', index0Id);
+          logger.warn('[SupabaseService] now_playing_video:', updateData.now_playing_video.title, 'id:', nowPlayingId);
+          // Fix: Move now_playing_video to index 0
+          const queueWithoutNowPlaying = updateData.active_queue.filter((v: any) => {
+            const vid = v.id || v.src;
+            return vid !== nowPlayingId;
+          });
+          updateData.active_queue = [updateData.now_playing_video, ...queueWithoutNowPlaying];
+          logger.info('[SupabaseService] ✅ Fixed: Moved now_playing_video to index 0');
+        }
       }
       
       // #region agent log

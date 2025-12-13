@@ -243,7 +243,7 @@ export function subscribeToPlayerState(
           console.log(`[SupabaseClient] Received Realtime update for player ${playerId}:`, logData);
           
           // Log detailed info for debugging (throttle warnings to reduce spam)
-          if (newState.active_queue === undefined) {
+          if (newState.active_queue === undefined || newState.active_queue === null) {
             const warningKey = `missing-queue-warning-${playerId}`;
             const lastWarning = (window as any)[warningKey] || 0;
             const now = Date.now();
@@ -252,6 +252,9 @@ export function subscribeToPlayerState(
               console.warn(`[SupabaseClient] ⚠️ Realtime update missing active_queue for player ${playerId}`);
               (window as any)[warningKey] = now;
             }
+            // Normalize: set active_queue to empty array if null/undefined to prevent errors
+            // This ensures components always receive an array, not null/undefined
+            newState.active_queue = [];
           }
           if (!newState.now_playing_video) {
             const warningKey = `missing-nowplaying-warning-${playerId}`;
@@ -262,6 +265,11 @@ export function subscribeToPlayerState(
               console.warn(`[SupabaseClient] ⚠️ Realtime update missing now_playing_video for player ${playerId}`);
               (window as any)[warningKey] = now;
             }
+          }
+          
+          // Normalize priority_queue as well
+          if (newState.priority_queue === undefined || newState.priority_queue === null) {
+            newState.priority_queue = [];
           }
           
           lastPolledState = newState;
