@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Obie Player Setup Wizard</title>
+  <style>
+    body { font-family: Arial; max-width: 600px; margin: 50px auto; padding: 20px; }
+    .step { display: none; }
+    .step.active { display: block; }
+    input, button { padding: 10px; margin: 10px 0; width: 100%; box-sizing: border-box; }
+    button { background: #4dd0e1; color: white; border: none; cursor: pointer; }
+    .error { color: red; }
+    .success { color: green; }
+  </style>
+</head>
+<body>
+  <h1>🎵 DJAMMS Obie Player Setup</h1>
+  
+  <div id="step1" class="step active">
+    <h2>1. DJAMMS Library Path</h2>
+    <p>Point to your DJAMMS folder (must contain PLAYLISTS/ and COLLECTIONS/ folders).</p>
+    <input id="djammsPath" type="text" placeholder="/Users/mikeclarkin/Music/DJAMMS" value="/Users/mikeclarkin/Music/DJAMMS">
+    <button onclick="validateDjamms()">Validate & Next</button>
+    <div id="djammsStatus"></div>
+  </div>
+
+  <div id="step2" class="step">
+    <h2>2. Supabase Configuration</h2>
+    <p>Enter your Supabase project URL and Anon Key.</p>
+    <input id="supabaseUrl" type="text" placeholder="https://your-project.supabase.co">
+    <input id="supabaseKey" type="password" placeholder="your-anon-key">
+    <button onclick="testSupabase()">Test Connection & Next</button>
+    <div id="supabaseStatus"></div>
+  </div>
+
+  <div id="step3" class="step">
+    <h2>3. Display & Player Settings</h2>
+    <label><input type="checkbox" id="fullscreen" checked> Fullscreen</label><br>
+    <label><input type="checkbox" id="kiosk" checked> Kiosk Mode (hide cursor)</label><br>
+    <label>Default Display: <select id="display">
+      <option value="primary">Primary</option>
+    </select></label>
+    <button onclick="completeSetup()">Complete Setup</button>
+  </div>
+
+  <script>
+    const { electronAPI } = window;
+    
+    async function validateDjamms() {
+      const path = document.getElementById('djammsPath').value;
+      const status = document.getElementById('djammsStatus');
+      try {
+        const result = await electronAPI.invoke('fs:validate-djamms', path);
+        if (result.valid) {
+          status.innerHTML = '<span class="success">✓ Valid DJAMMS folder</span>';
+          showStep(2);
+        } else {
+          status.innerHTML = '<span class="error">✗ Invalid: ' + (result.error || 'Unknown error') + '</span>';
+        }
+      } catch (e) {
+        status.innerHTML = '<span class="error">✗ Error: ' + e.message + '</span>';
+      }
+    }
+
+    async function testSupabase() {
+      const url = document.getElementById('supabaseUrl').value;
+      const key = document.getElementById('supabaseKey').value;
+      const status = document.getElementById('supabaseStatus');
+      try {
+        const result = await electronAPI.invoke('supabase:test-connection', { url, key });
+        if (result.connected) {
+          status.innerHTML = '<span class="success">✓ Supabase connected</span>';
+          showStep(3);
+        } else {
+          status.innerHTML = '<span class="error">✗ Connection failed</span>';
+        }
+      } catch (e) {
+        status.innerHTML = '<span class="error">✗ Error: ' + e.message + '</span>';
+      }
+    }
+
+    async function completeSetup() {
+      const prefs = {
+        djammsPath: document.getElementById('djammsPath').value,
+        supabaseUrl: document.getElementById('supabaseUrl').value,
+        supabaseKey: document.getElementById('supabaseKey').value,
+        fullscreen: document.getElementById('fullscreen').checked,
+        kioskMode: document.getElementById('kiosk').checked,
+        defaultDisplay: document.getElementById('display').value,
+        setupComplete: true
+      };
+      await electronAPI.invoke('preferences:save', prefs);
+      electronAPI.send('wizard-complete', true);
+    }
+
+    function showStep(n) {
+      document.querySelectorAll('.step').forEach((step, i) => {
+        step.classList.toggle('active', i + 1 === n);
+      });
+    }
+  </script>
+</body>
+</html>

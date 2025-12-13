@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DJAMMS Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000000;
+            color: #ffffff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            background: #000000;
+            border-bottom: 1px solid #333;
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 60px;
+        }
+
+        .top-bar-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .djamm-logo {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #00d4aa;
+        }
+
+        .active-playlist-info {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 1rem;
+            background: #111;
+            border-radius: 4px;
+        }
+
+        .album-art-placeholder {
+            width: 40px;
+            height: 40px;
+            background: #6c5ce7;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            color: #fff;
+        }
+
+        .playlist-text {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .playlist-label {
+            font-size: 0.7rem;
+            color: #999;
+            text-transform: uppercase;
+        }
+
+        .playlist-name {
+            font-size: 0.9rem;
+            color: #fff;
+        }
+
+        .top-bar-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .playback-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .control-btn {
+            background: #222;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .control-btn:hover {
+            background: #333;
+            border-color: #555;
+        }
+
+        .play-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #00d4aa;
+            border: none;
+            color: #000;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .play-btn:hover {
+            background: #00b894;
+        }
+
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .volume-slider {
+            width: 100px;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #00d4aa;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        /* Main Layout */
+        .main-layout {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: #000000;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            padding: 1rem;
+            border-bottom: 1px solid #333;
+        }
+
+        .priority-queue {
+            padding: 1rem;
+            font-size: 0.85rem;
+            color: #999;
+            border-bottom: 1px solid #333;
+        }
+
+        .hide-sidebar-btn {
+            width: 100%;
+            padding: 0.5rem;
+            background: #111;
+            border: 1px solid #333;
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .hide-sidebar-btn:hover {
+            background: #222;
+        }
+
+        .nav-tabs {
+            padding: 0.5rem 0;
+        }
+
+        .nav-tab {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            color: #ccc;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.95rem;
+        }
+
+        .nav-tab:hover {
+            background: #111;
+        }
+
+        .nav-tab.active {
+            background: #1a1a1a;
+            color: #fff;
+            border-left: 3px solid #00d4aa;
+        }
+
+        .nav-tab-icon {
+            font-size: 1.1rem;
+            width: 20px;
+            text-align: center;
+        }
+
+        .playlists-section {
+            margin-top: 1rem;
+            padding: 0 1rem;
+        }
+
+        .playlists-header {
+            font-size: 0.75rem;
+            color: #999;
+            text-transform: uppercase;
+            margin-bottom: 0.75rem;
+            padding: 0 0.5rem;
+        }
+
+        .playlist-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            margin-bottom: 0.25rem;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .playlist-item:hover {
+            background: #111;
+        }
+
+        .playlist-item.active {
+            background: #1a1a1a;
+        }
+
+        .playlist-icon {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .playlist-name {
+            flex: 1;
+            font-size: 0.85rem;
+            color: #ccc;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .playlist-count {
+            background: #333;
+            color: #999;
+            padding: 0.15rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+        }
+
+        .playlist-item.active .playlist-count {
+            background: #00d4aa;
+            color: #000;
+        }
+
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            background: #000000;
+            overflow-y: auto;
+            padding: 2rem;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .tab-title {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: #fff;
+        }
+
+        /* Queue Tab */
+        .queue-filter {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            color: #999;
+            font-size: 0.9rem;
+        }
+
+        .queue-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .queue-table thead {
+            background: #111;
+            border-bottom: 1px solid #333;
+        }
+
+        .queue-table th {
+            text-align: left;
+            padding: 0.75rem;
+            font-size: 0.85rem;
+            color: #999;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        .queue-table td {
+            padding: 0.75rem;
+            border-bottom: 1px solid #222;
+            font-size: 0.9rem;
+        }
+
+        .queue-table tbody tr:hover {
+            background: #111;
+        }
+
+        .queue-table tbody tr.current {
+            background: #1a1a1a;
+        }
+
+        /* Search Tab */
+        .search-bar {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .search-bar:focus {
+            outline: none;
+            border-color: #00d4aa;
+        }
+
+        /* Settings Tab */
+        .settings-section {
+            margin-bottom: 2rem;
+        }
+
+        .settings-section-title {
+            font-size: 1.1rem;
+            color: #fff;
+            margin-bottom: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #ccc;
+            font-size: 0.9rem;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 0.75rem;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #00d4aa;
+        }
+
+        .form-description {
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #333;
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #ff6b9d;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid #333;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #ff6b9d;
+            color: #fff;
+            border-color: #ff6b9d;
+        }
+
+        .btn-primary:hover {
+            background: #ff5252;
+        }
+
+        .btn-secondary {
+            background: #111;
+            color: #fff;
+            border-color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #222;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .slider {
+            flex: 1;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #ff6b9d;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .slider-value {
+            min-width: 50px;
+            text-align: right;
+            color: #ccc;
+            font-size: 0.9rem;
+        }
+
+        /* Tools Tab */
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .tool-card {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 1.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tool-card:hover {
+            background: #1a1a1a;
+            border-color: #444;
+        }
+
+        .tool-icon {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .tool-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #fff;
+        }
+
+        .tool-description {
+            font-size: 0.85rem;
+            color: #999;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="top-bar-left">
+            <div class="djamm-logo">DJAMMS</div>
+            <div class="active-playlist-info">
+                <div class="album-art-placeholder">Unknown</div>
+                <div class="playlist-text">
+                    <div class="playlist-label">ACTIVE PLAYLIST</div>
+                    <div class="playlist-name" id="active-playlist-name">DJAMMS Karaoke Collection</div>
+                </div>
+            </div>
+        </div>
+        <div class="top-bar-right">
+            <div class="playback-controls">
+                <button class="control-btn" id="skip-btn">SKIP</button>
+                <button class="control-btn" id="shuffle-btn">SHUFFLE</button>
+                <button class="play-btn" id="play-pause-btn">▶</button>
+                <div class="volume-control">
+                    <span>🔊</span>
+                    <input type="range" class="volume-slider" id="volume-slider" min="0" max="100" value="50">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main-layout">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="djamm-logo">DJAMMS</div>
+            </div>
+            <div class="priority-queue">
+                PRIORITY QUEUE: Priority Queue is Empty...
+            </div>
+            <button class="hide-sidebar-btn" id="hide-sidebar-btn">Hide Sidebar</button>
+            
+            <div class="nav-tabs">
+                <div class="nav-tab active" data-tab="queue">
+                    <span class="nav-tab-icon">≡</span>
+                    <span>Queue</span>
+                </div>
+                <div class="nav-tab" data-tab="search">
+                    <span class="nav-tab-icon">🔍</span>
+                    <span>Search</span>
+                </div>
+                <div class="nav-tab" data-tab="settings">
+                    <span class="nav-tab-icon">⚙️</span>
+                    <span>Settings</span>
+                </div>
+                <div class="nav-tab" data-tab="tools">
+                    <span class="nav-tab-icon">🛠️</span>
+                    <span>Tools</span>
+                </div>
+            </div>
+
+            <div class="playlists-section">
+                <div class="playlists-header">PLAYLISTS</div>
+                <div id="playlist-list">
+                    <div style="padding: 1rem; color: #666; font-size: 0.85rem;">Loading playlists...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="content-area">
+            <!-- Queue Tab -->
+            <div class="tab-content active" id="queue-tab">
+                <h1 class="tab-title">Queue</h1>
+                <div class="queue-filter">
+                    <span>UP NEXT</span>
+                    <span style="cursor: pointer;">⚙️</span>
+                </div>
+                <table class="queue-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>TITLE</th>
+                            <th>ARTIST</th>
+                            <th>DURATION</th>
+                            <th>PLAYLIST</th>
+                        </tr>
+                    </thead>
+                    <tbody id="queue-table-body">
+                        <tr>
+                            <td colspan="5" style="text-align: center; padding: 2rem; color: #666;">Loading queue...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Search Tab -->
+            <div class="tab-content" id="search-tab">
+                <h1 class="tab-title">Search</h1>
+                <input type="text" class="search-bar" id="search-input" placeholder="Search for videos...">
+                <div id="search-results">
+                    <div style="text-align: center; padding: 2rem; color: #666;">Enter a search term to find videos</div>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div class="tab-content" id="settings-tab">
+                <h1 class="tab-title">Settings</h1>
+                
+                <div class="settings-section">
+                    <h2 class="settings-section-title">ID Player Identity</h2>
+                    <div class="form-group">
+                        <label class="form-label">Player ID</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="text" class="form-input" id="player-id-input" value="TEST_PLAYER" readonly style="flex: 1;">
+                            <button class="btn btn-secondary">Change</button>
+                        </div>
+                        <div class="form-description">Unique identifier for this player. Web Admin and Kiosk apps connect using this ID.</div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h2 class="settings-section-title">Library</h2>
+                    <div class="form-group">
+                        <label class="form-label">Playlists Folder</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="text" class="form-input" id="playlists-folder-input" value="/Users/mikeclarkin/Music/DJAMMS/DJAMMS/PLAYLISTS" readonly style="flex: 1;">
+                            <button class="btn btn-secondary">Select Folder</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h2 class="settings-section-title">Playback</h2>
+                    <div class="form-group">
+                        <label class="form-label">Crossfade mode</label>
+                        <div class="button-group">
+                            <button class="btn btn-primary" id="crossfade-manual">Manual</button>
+                            <button class="btn btn-secondary" id="crossfade-seamless">Seamless</button>
+                        </div>
+                    </div>
+                    <div class="form-group" style="display: flex; justify-content: space-between; align-items: center;">
+                        <label class="form-label" style="margin: 0;">Auto-shuffle playlists</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-shuffle-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Skip fade duration</label>
+                        <div class="slider-container">
+                            <input type="range" class="slider" id="skip-fade-slider" min="0" max="10" step="0.1" value="4.0">
+                            <span class="slider-value" id="skip-fade-value">4.0s</span>
+                        </div>
+                    </div>
+                    <div class="form-group" style="display: flex; justify-content: space-between; align-items: center;">
+                        <label class="form-label" style="margin: 0;">Normalize audio levels</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="normalize-audio-toggle" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h2 class="settings-section-title">Player Display Settings</h2>
+                    <div class="form-group" style="display: flex; justify-content: space-between; align-items: center;">
+                        <label class="form-label" style="margin: 0;">Show Player Window</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="show-player-toggle" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Player Location</label>
+                        <select class="form-input" id="player-location-select">
+                            <option>24MB37 (2)</option>
+                        </select>
+                        <div class="form-description">Current: 24MB37 (2) (1920x1080)</div>
+                    </div>
+                    <div class="form-group" style="display: flex; justify-content: space-between; align-items: center;">
+                        <label class="form-label" style="margin: 0;">Fullscreen Player</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="fullscreen-player-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Display Detection</label>
+                        <button class="btn btn-secondary">Refresh Displays</button>
+                    </div>
+                    <div class="form-group">
+                        <button class="btn btn-secondary">Refresh Player</button>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h2 class="settings-section-title">Player Overlay</h2>
+                    <div class="form-group">
+                        <label class="form-label">'Now Playing' Text</label>
+                        <input type="text" class="form-input" id="now-playing-text-input" placeholder="">
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-secondary">Hide</button>
+                        <button class="btn btn-secondary">Show</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tools Tab -->
+            <div class="tab-content" id="tools-tab">
+                <h1 class="tab-title">Tools</h1>
+                <div class="tools-grid">
+                    <div class="tool-card" id="reset-app-tool">
+                        <div class="tool-icon">🔄</div>
+                        <div class="tool-title">Reset Application</div>
+                        <div class="tool-description">Reset all settings to defaults and clear Player ID</div>
+                    </div>
+                    <div class="tool-card" id="clear-queue-tool">
+                        <div class="tool-icon">🗑️</div>
+                        <div class="tool-title">Clear Queue</div>
+                        <div class="tool-description">Remove all videos from the current playback queue</div>
+                    </div>
+                    <div class="tool-card" id="refresh-playlists-tool">
+                        <div class="tool-icon">🔄</div>
+                        <div class="tool-title">Refresh Playlists</div>
+                        <div class="tool-description">Rescan the playlists directory for changes</div>
+                    </div>
+                    <div class="tool-card" id="reindex-db-tool">
+                        <div class="tool-icon">💾</div>
+                        <div class="tool-title">Re-index Music Database</div>
+                        <div class="tool-description">Rebuild the local music database index</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Admin Console JavaScript
+        class AdminConsole {
+            constructor() {
+                this.queue = [];
+                this.currentVideo = null;
+                this.activeTab = 'queue';
+                this.playlists = [];
+                
+                this.initializeEventListeners();
+                this.refreshQueue();
+                this.refreshPlaylists();
+                this.startStatusUpdates();
+            }
+
+            initializeEventListeners() {
+                // Tab navigation
+                document.querySelectorAll('.nav-tab').forEach(tab => {
+                    tab.addEventListener('click', () => {
+                        const tabName = tab.dataset.tab;
+                        this.switchTab(tabName);
+                    });
+                });
+
+                // Playback controls
+                document.getElementById('skip-btn').addEventListener('click', () => this.sendCommand('skip'));
+                document.getElementById('shuffle-btn').addEventListener('click', () => this.sendCommand('shuffle-queue'));
+                document.getElementById('play-pause-btn').addEventListener('click', () => this.sendCommand('toggle-play'));
+                document.getElementById('volume-slider').addEventListener('input', (e) => {
+                    this.sendCommand('set-volume', { volume: e.target.value / 100 });
+                });
+
+                // Settings controls
+                document.getElementById('skip-fade-slider').addEventListener('input', (e) => {
+                    document.getElementById('skip-fade-value').textContent = e.target.value + 's';
+                });
+
+                // Tools
+                document.getElementById('reset-app-tool').addEventListener('click', () => {
+                    if (confirm('Reset all settings to defaults?')) {
+                        this.sendCommand('reset-application');
+                    }
+                });
+                document.getElementById('clear-queue-tool').addEventListener('click', () => {
+                    if (confirm('Clear the entire queue?')) {
+                        this.sendCommand('clear-queue');
+                        this.refreshQueue();
+                    }
+                });
+                document.getElementById('refresh-playlists-tool').addEventListener('click', () => {
+                    this.sendCommand('refresh-playlists');
+                    this.refreshPlaylists();
+                });
+                document.getElementById('reindex-db-tool').addEventListener('click', () => {
+                    if (confirm('Re-index the music database? This may take a while.')) {
+                        this.sendCommand('reindex-database');
+                    }
+                });
+
+                // Search
+                document.getElementById('search-input').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.performSearch(e.target.value);
+                    }
+                });
+            }
+
+            switchTab(tabName) {
+                this.activeTab = tabName;
+                
+                // Update tab UI
+                document.querySelectorAll('.nav-tab').forEach(tab => {
+                    tab.classList.remove('active');
+                });
+                document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+                
+                // Update content
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                document.getElementById(`${tabName}-tab`).classList.add('active');
+            }
+
+            async sendCommand(action, data = {}) {
+                try {
+                    if (window.electronAPI && window.electronAPI.sendOrchestratorCommand) {
+                        await window.electronAPI.sendOrchestratorCommand({ action, data });
+                        console.log(`Command sent: ${action}`, data);
+                    } else {
+                        console.error('Electron API not available');
+                    }
+                } catch (error) {
+                    console.error(`Failed to send command ${action}:`, error);
+                }
+            }
+
+            async refreshQueue() {
+                try {
+                    if (window.electronAPI && window.electronAPI.getQueueState) {
+                        const queueState = await window.electronAPI.getQueueState();
+                        this.updateQueueDisplay(queueState);
+                    }
+                } catch (error) {
+                    console.error('Failed to refresh queue:', error);
+                }
+            }
+
+            updateQueueDisplay(queueState) {
+                this.queue = queueState.videos || [];
+                this.currentVideo = queueState.currentVideo;
+                const currentIndex = queueState.currentIndex || -1;
+
+                const tbody = document.getElementById('queue-table-body');
+                if (this.queue.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: #666;">Queue is empty</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = this.queue.map((video, index) => {
+                    const isCurrent = index === currentIndex;
+                    return `
+                        <tr class="${isCurrent ? 'current' : ''}">
+                            <td>${index + 1}</td>
+                            <td>${video.title || 'Unknown Video'}</td>
+                            <td>${video.artist || '-'}</td>
+                            <td>${this.formatDuration(video.duration || 0)}</td>
+                            <td>${video.playlist || '-'}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                // Update active playlist name
+                if (this.currentVideo && this.currentVideo.playlist) {
+                    document.getElementById('active-playlist-name').textContent = this.currentVideo.playlist;
+                }
+            }
+
+            async refreshPlaylists() {
+                try {
+                    if (window.electronAPI && window.electronAPI.getPlaylists) {
+                        const data = await window.electronAPI.getPlaylists();
+                        this.updatePlaylistDisplay(data);
+                    }
+                } catch (error) {
+                    console.error('Failed to refresh playlists:', error);
+                    document.getElementById('playlist-list').innerHTML = '<div style="padding: 1rem; color: #666; font-size: 0.85rem;">Failed to load playlists</div>';
+                }
+            }
+
+            updatePlaylistDisplay(data) {
+                const playlistList = document.getElementById('playlist-list');
+                if (!playlistList) return;
+
+                const allPlaylists = [...(data.playlists || []), ...(data.collections || [])];
+                this.playlists = allPlaylists;
+                
+                if (allPlaylists.length === 0) {
+                    playlistList.innerHTML = '<div style="padding: 1rem; color: #666; font-size: 0.85rem;">No playlists found</div>';
+                    return;
+                }
+
+                playlistList.innerHTML = allPlaylists.map(playlist => `
+                    <div class="playlist-item" data-playlist-path="${playlist.path}">
+                        <span class="playlist-icon">≡</span>
+                        <span class="playlist-name">${playlist.name}</span>
+                        <span class="playlist-count">${playlist.videoCount || 0}</span>
+                    </div>
+                `).join('');
+
+                // Add click handlers
+                playlistList.querySelectorAll('.playlist-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        playlistList.querySelectorAll('.playlist-item').forEach(i => i.classList.remove('active'));
+                        item.classList.add('active');
+                        const playlistPath = item.dataset.playlistPath;
+                        const playlistName = item.querySelector('.playlist-name').textContent;
+                        document.getElementById('active-playlist-name').textContent = playlistName;
+                        // TODO: Load playlist into queue
+                    });
+                });
+            }
+
+            performSearch(query) {
+                // TODO: Implement search functionality
+                console.log('Searching for:', query);
+            }
+
+            formatDuration(seconds) {
+                if (!seconds || seconds === 0) return '-';
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            }
+
+            startStatusUpdates() {
+                setInterval(() => {
+                    this.refreshQueue();
+                    this.refreshPlaylists();
+                }, 30000);
+            }
+        }
+
+        // Initialize admin console when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            window.adminConsole = new AdminConsole();
+        });
+
+        // Handle IPC messages from main process
+        if (window.electronAPI) {
+            window.electronAPI.onQueueUpdated((state) => {
+                if (window.adminConsole) {
+                    window.adminConsole.updateQueueDisplay(state);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

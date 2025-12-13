@@ -1,0 +1,21 @@
+{
+  "djammsPath": "/Users/mikeclarkin/Music/DJAMMS",
+  "supabaseUrl": "https://lfvhgdbnecjeuciadimx.supabase.co",
+  "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdmhnZGJuZWNqZXVjaWFkaW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2OTc2MjIsImV4cCI6MjA3OTI3MzYyMn0.kSVtXnNVRofDol8L20oflgdo7A82BgAMco2FoFHRkG8",
+  "playerId": "electron-player-1",
+  "fullscreenPlayer": true,
+  "kioskMode": false,
+  "defaultDisplay": "primary",
+  "volume": 0.6000000000000001,
+  "muted": false,
+  "playerDisplayId": 458650111,
+  "adminDisplayId": 69949916,
+  "crossfadeEnabled": true,
+  "crossfadeDuration": 3,
+  "autoUpdate": true,
+  "metube": {
+    "enabled": false,
+    "port": 8081
+  },
+  "fullscreen": true
+}

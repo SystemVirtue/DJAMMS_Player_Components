@@ -1,0 +1,796 @@
+// Direct IPC logging function
+function logToMain(level, ...args) {
+  if (window.electronAPI && window.electronAPI.send) {
+    window.electronAPI.send('renderer-log', { level, args });
+  }
+}
+
+logToMain('log', '[renderer] player.js script loaded successfully!');
+
+class PlayerWindow {
+  constructor() {
+    logToMain('log', '[PlayerWindow] Constructor called');
+    this.currentVideo = null;
+    this.videoQueue = [];
+    this.isPlaying = false;
+    this.volume = 1.0;
+    
+    // Dual video elements for crossfade
+    this.videoA = document.getElementById('video-a');
+    this.videoB = document.getElementById('video-b');
+    this.activeVideo = this.videoA;
+    this.inactiveVideo = this.videoB;
+    
+    // Crossfade configuration
+    this.crossfadeDuration = 500; // 0.5 seconds
+    this.isCrossfading = false;
+    
+    // Now playing overlay
+    this.nowPlayingOverlay = document.getElementById('now-playing-overlay');
+    this.nowPlayingArtist = document.getElementById('now-playing-artist');
+    this.nowPlayingTitle = document.getElementById('now-playing-title');
+    this.progressFill = document.getElementById('progress-fill');
+    this.currentTimeEl = document.getElementById('current-time');
+    this.totalTimeEl = document.getElementById('total-time');
+    this.nowPlayingTimeout = null;
+    this.nowPlayingDuration = 5000; // Show for 5 seconds
+    
+    // Skip configuration
+    this.skipFadeDuration = 2000; // 2 seconds
+    this.isSkipping = false;
+    this.skipCalled = false; // Flag to debounce skip triggers
+    
+    // Error handling
+    this.maxRetries = 0; // Don't retry video errors
+    this.retryDelay = 1000; // 1 second delay between retries
+
+    this.initializeVideoElements();
+    this.initializeEventListeners();
+    this.setupIPCListeners();
+    this.setupKeyboardShortcuts();
+    
+    // Ensure overlays are hidden on startup
+    this.hideAllOverlays();
+    
+    // Set a timeout to hide loading screen if initialization takes too long
+    // This prevents the "Initializing..." screen from hanging indefinitely
+    this.initTimeout = setTimeout(() => {
+      if (!this.isPlaying) {
+        logToMain('warn', '[PlayerWindow] Initialization timeout - hiding loading screen');
+        this.hideLoadingScreen();
+        this.updateStatus('Ready - waiting for video');
+      }
+    }, 10000); // 10 second timeout
+    
+    logToMain('log', '[PlayerWindow] Constructor finished');
+  }
+
+  initializeVideoElements() {
+    // Style video elements for crossfade
+    [this.videoA, this.videoB].forEach(video => {
+      video.style.position = 'absolute';
+      video.style.top = '0';
+      video.style.left = '0';
+      video.style.width = '100%';
+      video.style.height = '100%';
+      video.style.objectFit = 'contain';
+      video.style.backgroundColor = 'black';
+      video.style.transition = `opacity ${this.crossfadeDuration}ms ease-in-out`;
+      video.volume = this.volume;
+    });
+    
+    // Initially hide video B
+    this.videoB.style.opacity = '0';
+    this.videoA.style.opacity = '1';
+  }
+
+  initializeEventListeners() {
+    logToMain('log', '[PlayerWindow] Setting up event listeners');
+
+    // Video ended events
+    [this.videoA, this.videoB].forEach(video => {
+      video.addEventListener('ended', () => {
+        logToMain('log', '[PlayerWindow] Video ended event fired for', video === this.activeVideo ? 'active' : 'inactive', 'video, calling onVideoEnded()');
+        this.onVideoEnded();
+      });
+
+      video.addEventListener('error', (e) => {
+        const errorCode = video.error ? video.error.code : 'unknown';
+        const errorMessage = video.error ? video.error.message : 'Unknown error';
+        logToMain('error', '[PlayerWindow] Video error:', errorCode, errorMessage);
+        this.handleVideoError(video, e);
+      });
+
+      video.addEventListener('loadedmetadata', () => {
+        logToMain('log', '[PlayerWindow] Video metadata loaded, duration:', video.duration);
+        this.updateTotalTime(video.duration);
+      });
+
+      video.addEventListener('timeupdate', () => {
+        if (video === this.activeVideo && this.isPlaying) {
+          this.updateProgress(video.currentTime, video.duration);
+        }
+      });
+
+      video.addEventListener('canplaythrough', () => {
+        logToMain('log', '[PlayerWindow] Video can play through');
+      });
+
+      video.addEventListener('playing', () => {
+        logToMain('log', '[PlayerWindow] Video playing');
+        this.isPlaying = true;
+        this.hideLoadingScreen();
+      });
+
+      video.addEventListener('waiting', () => {
+        logToMain('log', '[PlayerWindow] Video buffering...');
+      });
+    });
+  }
+
+  setupIPCListeners() {
+    logToMain('log', '[PlayerWindow] Setting up IPC listeners');
+
+    if (window.electronAPI) {
+      // Listen for play-video commands from main process
+      // CRITICAL: Only the player window should listen to play-video events
+      window.electronAPI.on('play-video', (video) => {
+        logToMain('log', '[PlayerWindow] PLAYER WINDOW received play-video:', video.title);
+        console.log('[PlayerWindow] This is the PLAYER window - playing video:', video.title);
+        this.playVideo(video);
+      });
+
+      // Listen for queue updates
+      window.electronAPI.on('queue:updated', (queueState) => {
+        logToMain('log', '[PlayerWindow] Queue updated:', queueState.activeQueueSize || 0, 'videos');
+        this.updateQueueDisplay(queueState);
+      });
+
+      // Listen for orchestrator ready
+      window.electronAPI.on('orchestrator-ready', () => {
+        logToMain('log', '[PlayerWindow] Orchestrator ready');
+        this.updateStatus('Ready to play');
+        // Clear the initialization timeout since orchestrator is ready
+        if (this.initTimeout) {
+          clearTimeout(this.initTimeout);
+          this.initTimeout = null;
+        }
+        // Hide loading screen when orchestrator is ready, even if no video is playing yet
+        // This prevents the "Initializing..." screen from hanging indefinitely
+        setTimeout(() => {
+          if (!this.isPlaying) {
+            logToMain('log', '[PlayerWindow] No video playing yet, hiding loading screen after orchestrator ready');
+            this.hideLoadingScreen();
+          }
+        }, 1000);
+      });
+
+      // Listen for volume changes
+      window.electronAPI.on('volume-changed', (volume) => {
+        this.setVolume(volume);
+      });
+
+      // Listen for pause/play commands
+      window.electronAPI.on('pause', () => this.pause());
+      window.electronAPI.on('play', () => this.resume());
+      window.electronAPI.on('toggle-play', () => this.togglePlayPause());
+      
+      // Listen for skip command
+      window.electronAPI.on('skip', () => {
+        logToMain('log', '[PlayerWindow] Received skip command from main process');
+        if (!this.skipCalled) {
+          this.skipCalled = true;
+          this.skip();
+        } else {
+          logToMain('log', '[PlayerWindow] Skip already called, ignoring skip command');
+        }
+      });
+    }
+  }
+
+  setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      // Only handle if not in an input field
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      switch (e.code) {
+        case 'Space':
+          // Disable SPACEBAR for play/pause - only allow from menu
+          e.preventDefault();
+          // Do not call togglePlayPause() here
+          break;
+        case 'KeyS':
+          e.preventDefault();
+          console.log('[DEBUG] KeyS pressed, skipCalled:', this.skipCalled);
+          logToMain('log', '[PlayerWindow] KeyS pressed, skipCalled:', this.skipCalled);
+          if (!this.skipCalled) {
+            console.log('[DEBUG] Setting skipCalled=true and calling skip()');
+            logToMain('log', '[PlayerWindow] Setting skipCalled=true and calling skip()');
+            this.skipCalled = true;
+            this.skip();
+          } else {
+            console.log('[DEBUG] Skip already called, ignoring KeyS');
+            logToMain('log', '[PlayerWindow] Skip already called, ignoring KeyS');
+          }
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          logToMain('log', '[PlayerWindow] ArrowRight pressed, skipCalled:', this.skipCalled);
+          if (!this.skipCalled) {
+            logToMain('log', '[PlayerWindow] Setting skipCalled=true and calling skip()');
+            this.skipCalled = true;
+            this.skip();
+          } else {
+            logToMain('log', '[PlayerWindow] Skip already called, ignoring ArrowRight');
+          }
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          this.adjustVolume(0.1);
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          this.adjustVolume(-0.1);
+          break;
+        case 'KeyM':
+          e.preventDefault();
+          this.toggleMute();
+          break;
+        case 'KeyF':
+          e.preventDefault();
+          this.toggleFullscreen();
+          break;
+        case 'Escape':
+          // In kiosk mode, this might be disabled
+          break;
+      }
+    });
+  }
+
+  playVideo(video) {
+    logToMain('log', '[PlayerWindow] Playing video:', video.title, 'by', video.artist);
+    
+    this.currentVideo = video;
+    this.retryCount = 0;
+    this.updateStatus(`Loading: ${video.title}`);
+    this.showNowPlaying(video);
+
+    // Reset skip state when starting new video
+    this.isSkipping = false;
+    logToMain('log', '[PlayerWindow] Starting new video, resetting skipCalled=false');
+    this.skipCalled = false;
+
+    // Get video path - support multiple property names
+    const videoPath = video.src || video.path || video.file_path;
+    if (!videoPath) {
+      logToMain('error', '[PlayerWindow] No video path found in video object:', JSON.stringify(video));
+      this.handleVideoError(null, new Error('No video path'));
+      return;
+    }
+
+    // Ensure file:// protocol for local files
+    const videoSrc = videoPath.startsWith('file://') ? videoPath : `file://${videoPath}`;
+    logToMain('log', '[PlayerWindow] Video source:', videoSrc);
+
+    // Use crossfade if already playing, otherwise direct play
+    if (this.isPlaying && !this.isCrossfading) {
+      this.crossfadeToVideo(videoSrc);
+    } else {
+      this.directPlay(videoSrc);
+    }
+  }
+
+  directPlay(videoSrc) {
+    logToMain('log', '[PlayerWindow] Direct play:', videoSrc);
+    
+    this.activeVideo.src = videoSrc;
+    this.activeVideo.style.opacity = '1';
+    this.activeVideo.volume = this.volume; // Ensure volume is set
+    this.activeVideo.style.display = 'block';
+    this.inactiveVideo.style.opacity = '0';
+    
+    const playPromise = this.activeVideo.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          logToMain('log', '[PlayerWindow] Playback started successfully');
+          this.isPlaying = true;
+          this.hideLoadingScreen();
+        })
+        .catch(error => {
+          logToMain('error', '[PlayerWindow] Play failed:', error.message);
+          // Try to play muted first (autoplay policy)
+          this.activeVideo.muted = true;
+          this.activeVideo.play()
+            .then(() => {
+              logToMain('log', '[PlayerWindow] Playing muted due to autoplay policy');
+              // Try to unmute after a short delay
+              setTimeout(() => {
+                this.activeVideo.muted = false;
+              }, 100);
+            })
+            .catch(e => this.handleVideoError(this.activeVideo, e));
+        });
+    }
+  }
+
+  crossfadeToVideo(videoSrc) {
+    if (this.isCrossfading) {
+      logToMain('warn', '[PlayerWindow] Already crossfading, queuing...');
+      return;
+    }
+
+    logToMain('log', '[PlayerWindow] Starting crossfade to:', videoSrc);
+    this.isCrossfading = true;
+
+    // Preload in inactive video
+    this.inactiveVideo.src = videoSrc;
+    this.inactiveVideo.volume = this.volume; // New video starts at full volume immediately
+    this.inactiveVideo.load();
+
+    this.inactiveVideo.addEventListener('canplaythrough', () => {
+      logToMain('log', '[PlayerWindow] Inactive video ready, executing crossfade');
+      
+      // Start playing inactive video at full volume
+      this.inactiveVideo.play().catch(e => {
+        logToMain('error', '[PlayerWindow] Crossfade play failed:', e.message);
+      });
+
+      // Get starting volume of active video for fade-out
+      const startActiveVolume = this.activeVideo.volume;
+      
+      // Start crossfade animation
+      const startTime = Date.now();
+      const fadeStep = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / this.crossfadeDuration, 1);
+        
+        // Fade in inactive video opacity (starts at 0, goes to 1)
+        this.inactiveVideo.style.opacity = progress;
+        
+        // Fade out active video opacity and volume (starts at 1, goes to 0)
+        const fadeOutProgress = 1 - progress;
+        this.activeVideo.style.opacity = fadeOutProgress;
+        this.activeVideo.volume = startActiveVolume * fadeOutProgress;
+        
+        // Log volume levels every 100ms
+        if (Math.floor(elapsed / 100) !== Math.floor((elapsed - 16.67) / 100)) {
+          logToMain('log', `[PlayerWindow] Crossfade progress: ${Math.round(progress * 100)}%, active volume: ${(this.activeVideo.volume).toFixed(2)}, inactive volume: ${(this.inactiveVideo.volume).toFixed(2)}`);
+        }
+        
+        if (progress < 1) {
+          requestAnimationFrame(fadeStep);
+        } else {
+          // After transition, swap references
+          // Store reference to old active video before swapping
+          const oldActiveVideo = this.activeVideo;
+          
+          // Swap references first
+          this.activeVideo = this.inactiveVideo;
+          this.inactiveVideo = oldActiveVideo;
+
+          // Now pause and reset the old active video (now inactiveVideo)
+          this.inactiveVideo.pause();
+          this.inactiveVideo.currentTime = 0; // Reset position
+          this.inactiveVideo.volume = this.volume; // Reset volume for next use
+          // Don't clear src here to avoid triggering error events
+
+          this.isCrossfading = false;
+          this.isPlaying = true;
+          this.hideLoadingScreen();
+          logToMain('log', '[PlayerWindow] Crossfade complete');
+        }
+      };
+      
+      requestAnimationFrame(fadeStep);
+    }, { once: true });
+
+    // Handle preload error
+    this.inactiveVideo.addEventListener('error', (e) => {
+      this.isCrossfading = false;
+      this.handleVideoError(this.inactiveVideo, e);
+    }, { once: true });
+  }
+
+  handleVideoError(video, error) {
+    logToMain('error', '[PlayerWindow] Handling video error, retry:', this.retryCount, 'src:', video.src, 'error:', error);
+    
+    // Don't retry if src is empty - this indicates a programming error
+    if (!video.src || video.src === '') {
+      logToMain('error', '[PlayerWindow] Video src is empty, not retrying');
+      this.onVideoEnded();
+      return;
+    }
+    
+    if (this.retryCount < this.maxRetries) {
+      this.retryCount++;
+      logToMain('log', `[PlayerWindow] Retrying (${this.retryCount}/${this.maxRetries})...`);
+      this.updateStatus(`Retry ${this.retryCount}/${this.maxRetries}...`);
+      
+      setTimeout(() => {
+        if (this.currentVideo) {
+          this.playVideo(this.currentVideo);
+        }
+      }, this.retryDelay * this.retryCount);
+    } else {
+      logToMain('error', '[PlayerWindow] Max retries reached, skipping to next');
+      this.updateStatus('Error - skipping to next');
+      this.showError(`Failed to play: ${this.currentVideo?.title || 'Unknown'}`);
+      
+      // Skip to next video
+      setTimeout(() => {
+        this.onVideoEnded();
+      }, 2000);
+    }
+  }
+
+  onVideoEnded() {
+    console.log('[DEBUG] onVideoEnded() called, isSkipping:', this.isSkipping, 'skipCalled:', this.skipCalled, 'currentVideo:', this.currentVideo?.title);
+    logToMain('log', '[PlayerWindow] onVideoEnded() called, isSkipping:', this.isSkipping, 'skipCalled:', this.skipCalled, 'currentVideo:', this.currentVideo?.title);
+    
+    // If we're in the middle of a skip operation, don't send playback-ended
+    // The skip operation will handle advancing the queue
+    if (this.isSkipping) {
+      console.log('[DEBUG] Skipping playback-ended because isSkipping is true');
+      logToMain('log', '[PlayerWindow] Skipping playback-ended because isSkipping is true');
+      return;
+    }
+    
+    if (window.electronAPI) {
+      window.electronAPI.send('playback-ended', { 
+        videoId: this.currentVideo?.id,
+        title: this.currentVideo?.title 
+      });
+    }
+  }
+
+  // Now Playing Overlay
+  showNowPlaying(video) {
+    if (!this.nowPlayingOverlay) return;
+
+    // Update content
+    if (this.nowPlayingArtist) {
+      this.nowPlayingArtist.textContent = video.artist || 'Unknown Artist';
+    }
+    if (this.nowPlayingTitle) {
+      this.nowPlayingTitle.textContent = video.title || 'Unknown Title';
+    }
+
+    // Show overlay
+    this.nowPlayingOverlay.style.opacity = '1';
+    this.nowPlayingOverlay.style.transform = 'translateY(0)';
+    this.nowPlayingOverlay.style.display = 'block';
+
+    // Clear existing timeout
+    if (this.nowPlayingTimeout) {
+      clearTimeout(this.nowPlayingTimeout);
+    }
+
+    // Hide after duration
+    this.nowPlayingTimeout = setTimeout(() => {
+      this.hideNowPlaying();
+    }, this.nowPlayingDuration);
+  }
+
+  hideNowPlaying() {
+    if (!this.nowPlayingOverlay) return;
+    this.nowPlayingOverlay.style.opacity = '0';
+    this.nowPlayingOverlay.style.transform = 'translateY(100%)';
+  }
+
+  updateProgress(currentTime, duration) {
+    if (!duration || duration === 0) return;
+    
+    const progress = (currentTime / duration) * 100;
+    if (this.progressFill) {
+      this.progressFill.style.width = `${progress}%`;
+    }
+    if (this.currentTimeEl) {
+      this.currentTimeEl.textContent = this.formatTime(currentTime);
+    }
+  }
+
+  updateTotalTime(duration) {
+    if (this.totalTimeEl && duration) {
+      this.totalTimeEl.textContent = this.formatTime(duration);
+    }
+  }
+
+  formatTime(seconds) {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  // Playback Controls
+  togglePlayPause() {
+    if (this.isPlaying) {
+      this.pause();
+    } else {
+      this.resume();
+    }
+  }
+
+  pause() {
+    if (this.activeVideo) {
+      this.activeVideo.pause();
+      this.isPlaying = false;
+      this.updateStatus('Paused');
+      logToMain('log', '[PlayerWindow] Paused');
+    }
+  }
+
+  resume() {
+    if (this.activeVideo) {
+      this.activeVideo.play()
+        .then(() => {
+          this.isPlaying = true;
+          this.updateStatus(`Playing: ${this.currentVideo?.title || 'Unknown'}`);
+          logToMain('log', '[PlayerWindow] Resumed');
+        })
+        .catch(e => logToMain('error', '[PlayerWindow] Resume failed:', e.message));
+    }
+  }
+
+  skip() {
+    console.log('[DEBUG] skip() called, skipCalled:', this.skipCalled, 'isSkipping:', this.isSkipping);
+    logToMain('log', '[PlayerWindow] skip() called, skipCalled:', this.skipCalled, 'isSkipping:', this.isSkipping);
+    
+    // Check if skip was actually triggered by user/admin
+    if (!this.skipCalled) {
+      console.log('[DEBUG] Skip not triggered by user, ignoring');
+      logToMain('log', '[PlayerWindow] Skip not triggered by user, ignoring');
+      return;
+    }
+    
+    // Don't reset the flag here - keep it true until skip completes
+    // This prevents multiple skip operations
+    
+    // Debounce: prevent multiple skips while one is in progress
+    if (this.isSkipping) {
+      console.log('[DEBUG] Skip already in progress, ignoring');
+      logToMain('log', '[PlayerWindow] Skip already in progress, ignoring');
+      return;
+    }
+    
+    this.isSkipping = true;
+    console.log('[DEBUG] Starting skip, setting isSkipping=true');
+    logToMain('log', '[PlayerWindow] Starting skip, setting isSkipping=true');
+    
+    // If video is paused, skip immediately without fade
+    if (!this.isPlaying) {
+      logToMain('log', '[PlayerWindow] Video is paused, skipping immediately without fade');
+      this.skipImmediately();
+    } else {
+      // Video is playing, do fade-out
+      this.fadeOutAndSkip();
+    }
+  }
+
+  skipImmediately() {
+    logToMain('log', '[PlayerWindow] Skipping immediately - pausing video and sending skip-completed');
+    
+    // Pause the video to prevent any further events
+    this.activeVideo.pause();
+    this.activeVideo.currentTime = 0; // Reset position
+    // Don't clear src to avoid triggering error events
+    
+    if (window.electronAPI) {
+      window.electronAPI.send('skip-completed', { videoId: this.currentVideo?.id });
+    }
+    this.isSkipping = false;
+    logToMain('log', '[PlayerWindow] Resetting skipCalled=false and isSkipping=false');
+    this.skipCalled = false; // Reset the flag now that skip is complete
+  }
+
+  fadeOutAndSkip() {
+    const startTime = Date.now();
+    const startVolume = this.activeVideo.volume;
+    const startOpacity = parseFloat(this.activeVideo.style.opacity) || 1;
+    
+    logToMain('log', '[PlayerWindow] Starting fade-out: volume', startVolume, 'opacity', startOpacity);
+    
+    // Prevent ended event from firing during skip
+    const preventEnded = (e) => {
+      logToMain('log', '[PlayerWindow] Preventing ended event during skip');
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    this.activeVideo.addEventListener('ended', preventEnded, { once: true, capture: true });
+    
+    const fadeStep = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / this.skipFadeDuration, 1);
+      
+      // Fade out volume and opacity
+      const currentVolume = startVolume * (1 - progress);
+      const currentOpacity = startOpacity * (1 - progress);
+      
+      this.activeVideo.volume = currentVolume;
+      this.activeVideo.style.opacity = currentOpacity;
+      
+      if (progress < 1) {
+        requestAnimationFrame(fadeStep);
+      } else {
+        // Fade complete, now skip
+        logToMain('log', '[PlayerWindow] Fade-out complete, pausing video and sending skip-completed');
+        
+        // Remove the ended event prevention
+        this.activeVideo.removeEventListener('ended', preventEnded, { capture: true });
+        
+        // Pause the video to prevent any further events
+        this.activeVideo.pause();
+        this.activeVideo.currentTime = 0; // Reset position
+        // Don't clear src to avoid triggering error events
+        
+        if (window.electronAPI) {
+          window.electronAPI.send('skip-completed', { videoId: this.currentVideo?.id });
+        }
+        this.isSkipping = false;
+        logToMain('log', '[PlayerWindow] Resetting skipCalled=false and isSkipping=false');
+        this.skipCalled = false; // Reset the flag now that skip is complete
+      }
+    };
+    
+    requestAnimationFrame(fadeStep);
+  }
+
+  // Volume Controls
+  setVolume(volume) {
+    this.volume = Math.max(0, Math.min(1, volume));
+    [this.videoA, this.videoB].forEach(v => {
+      v.volume = this.volume;
+    });
+    
+    // Save volume preference
+    if (window.electronAPI) {
+      window.electronAPI.send('save-volume', this.volume);
+    }
+    
+    logToMain('log', '[PlayerWindow] Volume set to:', this.volume);
+  }
+
+  adjustVolume(delta) {
+    this.setVolume(this.volume + delta);
+  }
+
+  toggleMute() {
+    const isMuted = this.activeVideo.muted;
+    [this.videoA, this.videoB].forEach(v => {
+      v.muted = !isMuted;
+    });
+    
+    // Save mute state
+    if (window.electronAPI) {
+      window.electronAPI.send('save-mute', !isMuted);
+    }
+    
+    logToMain('log', '[PlayerWindow] Mute toggled:', !isMuted);
+  }
+
+  toggleFullscreen() {
+    // Send message to main process to toggle window fullscreen
+    if (window.electronAPI) {
+      window.electronAPI.send('toggle-window-fullscreen');
+    }
+  }
+
+  // UI Updates
+  updateQueueDisplay(queueState) {
+    logToMain('log', '[PlayerWindow] Updating queue display');
+    this.videoQueue = queueState;
+    // Could update a queue sidebar here if implemented
+  }
+
+  updateStatus(message) {
+    logToMain('log', '[PlayerWindow] Status update:', message);
+    const statusElement = document.getElementById('debug-status');
+    if (statusElement) {
+      statusElement.textContent = `Status: ${message}`;
+    }
+  }
+
+  hideLoadingScreen() {
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) {
+      // Clear initialization timeout if it exists
+      if (this.initTimeout) {
+        clearTimeout(this.initTimeout);
+        this.initTimeout = null;
+      }
+      loadingScreen.style.opacity = '0';
+      setTimeout(() => {
+        loadingScreen.style.display = 'none';
+      }, 500);
+      logToMain('log', '[PlayerWindow] Loading screen hidden');
+    }
+  }
+
+  showError(message) {
+    logToMain('error', '[PlayerWindow] Showing error overlay:', message);
+    const errorOverlay = document.getElementById('error-overlay');
+    const errorMessage = document.getElementById('error-message');
+    const dismissButton = document.getElementById('dismiss-error');
+    
+    if (errorOverlay && errorMessage) {
+      errorMessage.textContent = message;
+      errorOverlay.classList.remove('hidden');
+      
+      // Add click handler to dismiss button
+      if (dismissButton) {
+        dismissButton.onclick = () => {
+          logToMain('log', '[PlayerWindow] Error overlay dismissed by user');
+          errorOverlay.classList.add('hidden');
+        };
+      }
+      
+      // Auto-hide after 5 seconds
+      setTimeout(() => {
+        logToMain('log', '[PlayerWindow] Auto-hiding error overlay');
+        errorOverlay.classList.add('hidden');
+      }, 5000);
+    }
+  }
+
+  hideAllOverlays() {
+    logToMain('log', '[PlayerWindow] Hiding all overlays on initialization');
+    // Hide error overlay
+    const errorOverlay = document.getElementById('error-overlay');
+    if (errorOverlay) {
+      errorOverlay.classList.add('hidden');
+    }
+    
+    // Hide setup overlay
+    const setupOverlay = document.getElementById('setup-overlay');
+    if (setupOverlay) {
+      setupOverlay.classList.add('hidden');
+    }
+    
+    // Hide update overlay
+    const updateOverlay = document.getElementById('update-overlay');
+    if (updateOverlay) {
+      updateOverlay.classList.add('hidden');
+    }
+    
+    // Hide admin panel
+    const adminPanel = document.getElementById('admin-panel');
+    if (adminPanel) {
+      adminPanel.classList.add('hidden');
+    }
+  }
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  logToMain('log', '[renderer] DOMContentLoaded - initializing PlayerWindow');
+  window.playerWindow = new PlayerWindow();
+  logToMain('log', '[renderer] PlayerWindow initialized');
+
+  // Set up IPC listeners for persistent settings
+  if (window.electronAPI && window.electronAPI.on) {
+    window.electronAPI.on('set-volume', (volume) => {
+      if (window.playerWindow) {
+        window.playerWindow.setVolume(volume);
+        logToMain('log', '[renderer] Applied saved volume:', volume);
+      }
+    });
+
+    window.electronAPI.on('set-mute', (isMuted) => {
+      if (window.playerWindow && window.playerWindow.activeVideo) {
+        [window.playerWindow.videoA, window.playerWindow.videoB].forEach(v => {
+          v.muted = isMuted;
+        });
+        logToMain('log', '[renderer] Applied saved mute state:', isMuted);
+      }
+    });
+  }
+
+  // Send renderer-ready to main process
+  if (window.electronAPI && window.electronAPI.send) {
+    window.electronAPI.send('renderer-ready');
+    logToMain('log', '[renderer] renderer-ready sent');
+  } else {
+    logToMain('error', '[renderer] electronAPI not available');
+  }
+});

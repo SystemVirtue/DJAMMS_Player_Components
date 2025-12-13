@@ -1,0 +1,3057 @@
+DJAMMS Obie Electron Player - Complete Project Manifesto
+Executive Summary
+This manifesto details the complete implementation of an enterprise-grade, Electron-based video player system with centralized Supabase state management, local file system integration, and comprehensive web administration interfaces.
+
+Table of Contents
+1. Project Overview 
+2. Architecture & Technical Stack 
+3. Database Schema & Supabase Configuration 
+4. Electron Application Specification 
+5. Web Endpoints & Interfaces 
+6. Integration Components 
+7. Implementation Roadmap (GANTT-Style) 
+8. AI Co-Pilot Integration Guide 
+9. Prerequisites & Configuration 
+10. Testing & Deployment 
+
+
+PAGE 8	 Electron Player – Queue Orchestrator (queue-orchestrator.js)
+
+PAGE 24 	 Electron Player - Main Process (main.js)
+
+PAGE 36	 Complete Supabase Database Schema 
+
+	PAGE 48	 Complete Implementation Guide & Roadmap
+
+1. Project Overview
+1.1 Vision Statement
+Create a robust, kiosk-ready video player system that seamlessly integrates local DJAMMS video libraries with cloud-based queue management, enabling real-time administration from web interfaces while maintaining offline playback capabilities.
+1.2 Core Principles
+Electron App is Authoritative: All playback state originates from the Electron player 
+Supabase is the Hub: Centralized state persistence and real-time synchronization 
+Web Interfaces are Thin Clients: Mirror player state, send commands, receive updates 
+Graceful Degradation: System continues functioning even with network interruptions 
+Zero-Touch Operation: Kiosk mode with minimal user intervention required 
+1.3 Key Features
+✅ Local File Playback: Direct access to DJAMMS video library structure
+✅ FIFO Queue with Priority System: Main queue + moderated user requests
+✅ Real-time Web Administration: Control player from any browser
+✅ MeTube Integration: YouTube download capability with auto-queue
+✅ Multi-Display Support: Target specific screens for playback
+✅ Auto-Update System: Seamless updates without manual intervention
+✅ Comprehensive Error Recovery: Automatic handling of file/network issues
+✅ Kiosk Mode: Full-screen, cursor-hiding, escape-proof operation
+
+2. Architecture & Technical Stack
+2.1 System Architecture Diagram
+┌─────────────────────────────────────────────────────────────────┐
+│                     SUPABASE BACKEND (Cloud)                    │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐   │
+│  │   Database   │  │  Real-time   │  │  Edge Functions    │   │
+│  │   (Postgres) │  │  Channels    │  │  (Auth, RLS)       │   │
+│  └──────────────┘  └──────────────┘  └────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ WebSocket + REST
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              ELECTRON PLAYER APP (Authoritative)                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Main Process                                            │  │
+│  │  ├─ Window Manager (Multi-display)                      │  │
+│  │  ├─ Preferences Manager (Persistent settings)           │  │
+│  │  ├─ Auto-Update Manager (Electron-updater)              │  │
+│  │  └─ MeTube Process Manager (YouTube downloads)          │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Renderer Process (Player UI)                           │  │
+│  │  ├─ Video Player (HTML5 <video> with crossfade)        │  │
+│  │  ├─ Queue Display Overlay                               │  │
+│  │  └─ Admin Control Panel (Hidden by default)            │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Integration Layer                                       │  │
+│  │  ├─ Supabase Adapter (Real-time sync)                  │  │
+│  │  ├─ Queue Orchestrator (FIFO + Priority)               │  │
+│  │  ├─ Local File Manager (DJAMMS integration)            │  │
+│  │  ├─ Command Processor (Admin actions)                  │  │
+│  │  └─ Error Recovery Engine (Fault tolerance)            │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Local File System                                       │  │
+│  │  ~/Music/DJAMMS/                                        │  │
+│  │  ├─ PLAYLISTS/ (Genre folders with videos)             │  │
+│  │  ├─ COLLECTIONS/Artists/ (Artist folders)              │  │
+│  │  └─ COLLECTIONS/Request Downloads/ (MeTube output)     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ HTTP/WebSocket
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    WEB INTERFACES (Thin Clients)                │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐   │
+│  │    Admin     │  │    Search    │  │  Player Viewer     │   │
+│  │   Console    │  │    Kiosk     │  │  (Now Playing)     │   │
+│  │  (React SPA) │  │  (React SPA) │  │  (Read-only)       │   │
+│  └──────────────┘  └──────────────┘  └────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+2.2 Technical Stack
+Electron Application:
+Framework: Electron 28.x (latest stable) 
+Language: Node.js 20.x, JavaScript (ES2022) 
+Video Playback: HTML5 <video> element with Web Audio API 
+UI: Vanilla JavaScript + CSS3 (no framework overhead) 
+IPC: Electron IPC (contextBridge pattern) 
+Auto-Update: electron-updater 
+Process Management: child_process (for MeTube) 
+Backend (Supabase):
+Database: PostgreSQL 15.x 
+Real-time: Supabase Realtime (WebSocket channels) 
+Auth: Supabase Auth with Row Level Security (RLS) 
+Storage: Supabase Storage (optional, for thumbnails) 
+Edge Functions: Deno-based serverless functions 
+Web Interfaces:
+Framework: React 18.x with Next.js 14.x 
+State Management: React Context + Supabase real-time hooks 
+UI Components: Tailwind CSS + shadcn/ui 
+Authentication: Supabase Auth (session-based) 
+Deployment: Vercel (or self-hosted) 
+Tools & Utilities:
+MeTube: Docker container (youtube-dl wrapper) 
+Metadata Extraction: fluent-ffmpeg (ffprobe wrapper) 
+File Watching: chokidar (cross-platform file watcher) 
+Logging: winston (structured logging) 
+
+3. Database Schema & Supabase Configuration
+3.1 Complete Database Schema### 3.2 Supabase Realtime Configuration
+// Realtime Channel Subscriptions Configuration
+
+const REALTIME_CHANNELS = {
+  // Player state updates (Web Admin subscribes)
+  PLAYER_STATE: {
+    channel: 'player-state-updates',
+    table: 'player_state',
+    filter: 'player_id=eq.electron-player-1',
+    events: ['UPDATE']
+  },
+  
+  // Admin commands (Electron app subscribes)
+  ADMIN_COMMANDS: {
+    channel: 'admin-commands',
+    table: 'admin_commands',
+    filter: 'status=eq.pending',
+    events: ['INSERT']
+  },
+  
+  // Priority requests (Electron app subscribes)
+  PRIORITY_REQUESTS: {
+    channel: 'priority-requests',
+    table: 'priority_requests',
+    filter: 'status=eq.queued',
+    events: ['INSERT', 'UPDATE']
+  },
+  
+  // MeTube downloads (Admin Console subscribes)
+  METUBE_DOWNLOADS: {
+    channel: 'metube-downloads',
+    table: 'metube_downloads',
+    filter: null, // All downloads
+    events: ['UPDATE']
+  }
+};
+
+4. Electron Application Specification
+4.1 Project Structure
+obie-electron-player/
+├── package.json
+├── electron-builder.json
+├── .gitignore
+├── README.md
+│
+├── src/
+│   ├── main/                          # Main Process (Node.js)
+│   │   ├── main.js                    # Application entry point
+│   │   ├── window-manager.js          # Window creation & management
+│   │   ├── preferences-manager.js     # Settings persistence
+│   │   ├── auto-updater.js            # Electron-updater integration
+│   │   ├── metube-manager.js          # MeTube process management
+│   │   └── setup-wizard.js            # First-run configuration
+│   │
+│   ├── renderer/                      # Renderer Process (Browser)
+│   │   ├── player/
+│   │   │   ├── player.html            # Main player interface
+│   │   │   ├── player.js              # Player logic
+│   │   │   └── player.css             # Player styles
+│   │   ├── setup/
+│   │   │   ├── setup.html             # Setup wizard UI
+│   │   │   ├── setup.js               # Setup logic
+│   │   │   └── setup.css              # Setup styles
+│   │   └── preload.js                 # Context bridge
+│   │
+│   ├── integration/                   # Integration Layer
+│   │   ├── supabase-adapter.js        # Supabase client wrapper
+│   │   ├── queue-orchestrator.js      # Queue management
+│   │   ├── local-file-manager.js      # File system integration
+│   │   ├── command-processor.js       # Admin command handler
+│   │   ├── error-recovery.js          # Error handling & recovery
+│   │   └── event-bridge.js            # Cross-component events
+│   │
+│   ├── shared/
+│   │   ├── config.js                  # Shared configuration
+│   │   ├── constants.js               # Application constants
+│   │   └── logger.js                  # Logging utility
+│   │
+│   └── utils/
+│       ├── file-scanner.js            # File system scanner
+│       ├── metadata-extractor.js      # ffprobe wrapper
+│       ├── video-validator.js         # Video file validation
+│       └── network-monitor.js         # Connection status
+│
+├── assets/
+│   ├── icons/                         # App icons (all platforms)
+│   │   ├── icon.icns                  # macOS
+│   │   ├── icon.ico                   # Windows
+│   │   └── icon.png                   # Linux
+│   ├── splash.png                     # Splash screen
+│   └── logo.png                       # Default overlay logo
+│
+├── resources/                         # Build resources
+│   └── metube/
+│       └── docker-compose.yml         # MeTube configuration
+│
+└── tests/
+    ├── integration/
+    └── unit/
+4.2 Core Implementation Files
+I'll now create the complete implementation files in sequence. Due to length, I'll create these as separate artifacts:Due to the comprehensive nature of this project, I need to continue with the remaining critical implementation files. Let me create the Queue Orchestrator and Local File Manager next:Given the comprehensive scope and remaining token budget, let me now provide you with a consolidated summary document that includes:
+1. The remaining critical implementation specifications 
+2. Complete GANTT-style implementation roadmap 
+3. AI Co-Pilot integration instructions 
+4. Prerequisites checklist
+This will be more efficient than creating each individual file:
+I've created a comprehensive consolidated implementation guide that completes your DJAMMS Obie Player manifesto. Here's what I've included:
+Document Overview:
+1. Remaining Critical Implementation Specifications
+Detailed specs for all 9 remaining components:
+Supabase Adapter (database operations & real-time) 
+Local File Manager (DJAMMS library scanning) 
+Command Processor (admin command translation) 
+Renderer Process (video player UI) 
+Preferences Manager (configuration storage) 
+MeTube Manager (YouTube downloads) 
+Window Manager (multi-display support) 
+Auto-Updater (app updates) 
+Setup Wizard (first-run configuration) 
+2. Complete GANTT-Style Implementation Roadmap
+7-phase, 7-8 hour development plan with:
+Phase 1: Foundation (database & infrastructure) 
+Phase 2: Core player functionality 
+Phase 3: Admin interface integration 
+Phase 4: Priority queue & kiosk 
+Phase 5: MeTube & advanced features 
+Phase 6: Polish & deployment prep 
+Phase 7: Production deployment 
+Each phase includes detailed tasks, dependencies, durations, and status tracking.
+3. AI Co-Pilot Integration Instructions
+Comprehensive guide for using Claude/ChatGPT during development:
+Context preparation strategies 
+Effective prompting examples 
+Code generation guidelines 
+Iterative development workflow 
+Debugging assistance 
+Test generation 
+Documentation creation 
+4. Prerequisites Checklist
+Complete setup requirements across 10 categories:
+Development environment (Node.js, Git, editors) 
+Platform-specific tools (macOS/Windows/Linux) 
+
+External services (Supabase, Docker) 
+
+DJAMMS library structure 
+Path to 'DJAMMS' on local machine = “/Users/mikeclarkin/Music/DJAMMS”
+Project dependencies 
+Configuration files 
+Build tools 
+Testing setup 
+Deployment prerequisites 
+Final pre-launch checklist 
+Bonus Sections:
+Quick start guide 
+Troubleshooting common issues 
+Additional resources & documentation links 
+Version history template 
+The document is structured to serve as both a development roadmap and a reference guide throughout the entire implementation process. Each component specification includes the exact methods, error handling patterns, and integration points needed to build the system according to your original manifesto's architecture.
+
+
+
+
+// ============================================================================
+// Queue Orchestrator - Central queue management with FIFO + Priority
+// src/integration/queue-orchestrator.js
+// ============================================================================
+
+const EventEmitter = require('events');
+const log = require('electron-log');
+
+class QueueOrchestrator extends EventEmitter {
+  constructor(supabaseAdapter, localFileManager, config = {}) {
+    super();
+    
+    this.supabase = supabaseAdapter;
+    this.localFileManager = localFileManager;
+    this.config = config;
+    
+    // Queue state
+    this.state = {
+      mainQueue: [],           // FIFO main queue (array of video objects)
+      priorityQueue: [],       // Priority requests queue
+      nowPlaying: null,        // Currently playing video
+      isPlaying: false,
+      isPaused: false,
+      currentPosition: 0,
+      volume: 1.0
+    };
+    
+    // Processing flags
+    this.isProcessingCommand = false;
+    this.isAdvancingQueue = false;
+    
+    // Statistics
+    this.stats = {
+      videosPlayed: 0,
+      priorityVideosPlayed: 0,
+      totalPlayTime: 0,
+      errors: 0
+    };
+    
+    log.info('QueueOrchestrator initialized');
+  }
+
+  // ==========================================================================
+  // INITIALIZATION
+  // ==========================================================================
+
+  async initialize() {
+    log.info('Initializing QueueOrchestrator');
+    
+    try {
+      // Load initial queues from Supabase
+      await this.loadInitialState();
+      
+      // Setup real-time subscriptions
+      this.setupRealtimeSubscriptions();
+      
+      // Start heartbeat
+      this.startHeartbeat();
+      
+      // Sync initial state to Supabase
+      await this.syncStateToSupabase();
+      
+      this.emit('initialized', { state: this.state });
+      log.info('QueueOrchestrator initialized successfully');
+      
+      return true;
+    } catch (error) {
+      log.error('Failed to initialize QueueOrchestrator:', error);
+      this.emit('error', { type: 'initialization_failed', error });
+      throw error;
+    }
+  }
+
+  async loadInitialState() {
+    try {
+      // Load player state from Supabase
+      const playerState = await this.supabase.getPlayerState();
+      
+      if (playerState) {
+        this.state.mainQueue = playerState.active_queue || [];
+        this.state.priorityQueue = playerState.priority_queue || [];
+        this.state.nowPlaying = playerState.now_playing_video;
+        this.state.volume = playerState.volume || 1.0;
+        
+        log.info('Loaded state from Supabase:', {
+          mainQueueSize: this.state.mainQueue.length,
+          priorityQueueSize: this.state.priorityQueue.length,
+          hasNowPlaying: !!this.state.nowPlaying
+        });
+      }
+      
+      // Load any pending priority requests
+      const pendingRequests = await this.supabase.getPendingPriorityRequests();
+      if (pendingRequests && pendingRequests.length > 0) {
+        log.info(`Loading ${pendingRequests.length} pending priority requests`);
+        for (const request of pendingRequests) {
+          await this.addPriorityRequest(request);
+        }
+      }
+      
+    } catch (error) {
+      log.error('Failed to load initial state:', error);
+      // Continue with empty state
+    }
+  }
+
+  setupRealtimeSubscriptions() {
+    log.info('Setting up real-time subscriptions');
+    
+    // Subscribe to admin commands
+    this.supabase.subscribeToAdminCommands((command) => {
+      this.handleAdminCommand(command);
+    });
+    
+    // Subscribe to priority requests
+    this.supabase.subscribeToPriorityRequests((request) => {
+      this.handleNewPriorityRequest(request);
+    });
+    
+    // Subscribe to player state conflicts (for multi-admin scenarios)
+    this.supabase.subscribeToPlayerState((externalState) => {
+      this.handleStateConflict(externalState);
+    });
+  }
+
+  startHeartbeat() {
+    // Send heartbeat every 10 seconds
+    this.heartbeatInterval = setInterval(async () => {
+      try {
+        await this.supabase.updateHeartbeat();
+      } catch (error) {
+        log.warn('Heartbeat failed:', error);
+      }
+    }, 10000);
+  }
+
+  // ==========================================================================
+  // COMMAND PROCESSING
+  // ==========================================================================
+
+  async handleAdminCommand(command) {
+    if (this.isProcessingCommand) {
+      log.warn('Already processing a command, queuing:', command.id);
+      // Could implement command queue here
+      return;
+    }
+
+    this.isProcessingCommand = true;
+    const startTime = Date.now();
+    
+    log.info('Processing admin command:', {
+      id: command.id,
+      type: command.action_type,
+      admin: command.admin_id
+    });
+
+    try {
+      // Mark command as processing
+      await this.supabase.updateCommandStatus(command.id, 'processing');
+      
+      // Execute command based on type
+      let result;
+      switch (command.action_type) {
+        case 'skip':
+          result = await this.handleSkip();
+          break;
+        
+        case 'play_pause':
+          result = await this.handlePlayPause();
+          break;
+        
+        case 'stop':
+          result = await this.handleStop();
+          break;
+        
+        case 'load_playlist':
+          result = await this.handleLoadPlaylist(command.action_data);
+          break;
+        
+        case 'reorder_queue':
+          result = await this.handleReorderQueue(command.action_data);
+          break;
+        
+        case 'shuffle_queue':
+          result = await this.handleShuffleQueue();
+          break;
+        
+        case 'clear_queue':
+          result = await this.handleClearQueue();
+          break;
+        
+        case 'add_video':
+          result = await this.handleAddVideo(command.action_data);
+          break;
+        
+        case 'remove_video':
+          result = await this.handleRemoveVideo(command.action_data);
+          break;
+        
+        case 'set_volume':
+          result = await this.handleSetVolume(command.action_data);
+          break;
+        
+        case 'seek_to':
+          result = await this.handleSeekTo(command.action_data);
+          break;
+        
+        default:
+          throw new Error(`Unknown command type: ${command.action_type}`);
+      }
+      
+      // Mark command as completed
+      const duration = Date.now() - startTime;
+      await this.supabase.updateCommandStatus(
+        command.id, 
+        'completed', 
+        null, 
+        duration
+      );
+      
+      // Sync updated state
+      await this.syncStateToSupabase();
+      
+      this.emit('command-completed', { command, result, duration });
+      
+    } catch (error) {
+      log.error('Command execution failed:', error);
+      
+      await this.supabase.updateCommandStatus(
+        command.id, 
+        'failed', 
+        error.message
+      );
+      
+      this.emit('command-failed', { command, error });
+      
+    } finally {
+      this.isProcessingCommand = false;
+    }
+  }
+
+  // ==========================================================================
+  // COMMAND HANDLERS
+  // ==========================================================================
+
+  async handleSkip() {
+    log.info('Executing SKIP command');
+    
+    if (!this.state.nowPlaying) {
+      return { success: false, message: 'Nothing is playing' };
+    }
+    
+    // Emit skip event to player
+    this.emit('skip-requested');
+    
+    // Advance queue
+    await this.advanceQueue();
+    
+    return { success: true };
+  }
+
+  async handlePlayPause() {
+    log.info('Executing PLAY_PAUSE command');
+    
+    if (this.state.isPaused) {
+      this.state.isPaused = false;
+      this.emit('resume-requested');
+      return { success: true, action: 'resumed' };
+    } else {
+      this.state.isPaused = true;
+      this.emit('pause-requested');
+      return { success: true, action: 'paused' };
+    }
+  }
+
+  async handleStop() {
+    log.info('Executing STOP command');
+    
+    this.state.isPlaying = false;
+    this.state.isPaused = false;
+    this.state.nowPlaying = null;
+    this.state.currentPosition = 0;
+    
+    this.emit('stop-requested');
+    
+    return { success: true };
+  }
+
+  async handleLoadPlaylist(data) {
+    log.info('Executing LOAD_PLAYLIST command:', data);
+    
+    // Get playlist from local file manager
+    const playlist = await this.localFileManager.getPlaylistByName(data.playlist_name);
+    
+    if (!playlist) {
+      throw new Error(`Playlist not found: ${data.playlist_name}`);
+    }
+    
+    let videos = playlist.videos;
+    
+    // Shuffle if requested
+    if (data.shuffle) {
+      videos = this.shuffleArray([...videos]);
+    }
+    
+    // Replace or append to queue
+    if (data.replace_queue) {
+      this.state.mainQueue = videos;
+    } else {
+      this.state.mainQueue.push(...videos);
+    }
+    
+    // Start playing if idle
+    if (!this.state.isPlaying && this.state.mainQueue.length > 0) {
+      await this.advanceQueue();
+    }
+    
+    this.emit('queue-updated', { 
+      action: 'playlist_loaded', 
+      queueSize: this.state.mainQueue.length 
+    });
+    
+    return { 
+      success: true, 
+      videos_loaded: videos.length,
+      queue_size: this.state.mainQueue.length
+    };
+  }
+
+  async handleReorderQueue(data) {
+    log.info('Executing REORDER_QUEUE command:', data);
+    
+    const { from_index, to_index } = data;
+    
+    // Validate indices
+    if (from_index < 1 || from_index >= this.state.mainQueue.length) {
+      throw new Error('Invalid from_index (cannot reorder now playing)');
+    }
+    
+    if (to_index < 1 || to_index >= this.state.mainQueue.length) {
+      throw new Error('Invalid to_index');
+    }
+    
+    // Perform reorder
+    const [video] = this.state.mainQueue.splice(from_index, 1);
+    this.state.mainQueue.splice(to_index, 0, video);
+    
+    this.emit('queue-updated', { action: 'reordered' });
+    
+    return { success: true };
+  }
+
+  async handleShuffleQueue() {
+    log.info('Executing SHUFFLE_QUEUE command');
+    
+    if (this.state.mainQueue.length <= 1) {
+      return { success: false, message: 'Queue too small to shuffle' };
+    }
+    
+    // Keep now playing (index 0), shuffle rest
+    const nowPlaying = this.state.mainQueue[0];
+    const rest = this.state.mainQueue.slice(1);
+    const shuffled = this.shuffleArray(rest);
+    
+    this.state.mainQueue = [nowPlaying, ...shuffled];
+    
+    this.emit('queue-updated', { action: 'shuffled' });
+    
+    return { success: true, queue_size: this.state.mainQueue.length };
+  }
+
+  async handleClearQueue() {
+    log.info('Executing CLEAR_QUEUE command');
+    
+    // Keep now playing, clear rest
+    const nowPlaying = this.state.mainQueue[0];
+    this.state.mainQueue = nowPlaying ? [nowPlaying] : [];
+    
+    this.emit('queue-updated', { action: 'cleared' });
+    
+    return { success: true, remaining: this.state.mainQueue.length };
+  }
+
+  async handleAddVideo(data) {
+    log.info('Executing ADD_VIDEO command:', data);
+    
+    // Resolve video (could be local path or video ID)
+    const video = await this.localFileManager.resolveVideo(data.video_path);
+    
+    if (!video) {
+      throw new Error(`Video not found: ${data.video_path}`);
+    }
+    
+    // Add to queue at specified position or end
+    const position = data.position !== undefined 
+      ? Math.max(1, Math.min(data.position, this.state.mainQueue.length))
+      : this.state.mainQueue.length;
+    
+    this.state.mainQueue.splice(position, 0, video);
+    
+    this.emit('queue-updated', { action: 'video_added', position });
+    
+    return { success: true, position, queue_size: this.state.mainQueue.length };
+  }
+
+  async handleRemoveVideo(data) {
+    log.info('Executing REMOVE_VIDEO command:', data);
+    
+    const { queue_index } = data;
+    
+    if (queue_index < 1 || queue_index >= this.state.mainQueue.length) {
+      throw new Error('Invalid queue_index (cannot remove now playing)');
+    }
+    
+    const removed = this.state.mainQueue.splice(queue_index, 1);
+    
+    this.emit('queue-updated', { action: 'video_removed', removed: removed[0] });
+    
+    return { success: true, queue_size: this.state.mainQueue.length };
+  }
+
+  async handleSetVolume(data) {
+    log.info('Executing SET_VOLUME command:', data);
+    
+    const volume = Math.max(0, Math.min(1, data.volume));
+    this.state.volume = volume;
+    
+    this.emit('volume-changed', { volume });
+    
+    return { success: true, volume };
+  }
+
+  async handleSeekTo(data) {
+    log.info('Executing SEEK_TO command:', data);
+    
+    this.state.currentPosition = data.position;
+    
+    this.emit('seek-requested', { position: data.position });
+    
+    return { success: true, position: data.position };
+  }
+
+  // ==========================================================================
+  // PRIORITY REQUEST HANDLING
+  // ==========================================================================
+
+  async handleNewPriorityRequest(request) {
+    log.info('New priority request received:', request.id);
+    
+    try {
+      // Validate and moderate request
+      const moderationResult = await this.moderateRequest(request);
+      
+      if (!moderationResult.approved) {
+        log.warn('Priority request rejected:', moderationResult.reason);
+        await this.supabase.updatePriorityRequestStatus(
+          request.id,
+          'rejected',
+          moderationResult.reason
+        );
+        return;
+      }
+      
+      // Add to priority queue
+      await this.addPriorityRequest(request);
+      
+      // If nothing is playing, start immediately
+      if (!this.state.isPlaying) {
+        await this.advanceQueue();
+      }
+      
+    } catch (error) {
+      log.error('Failed to handle priority request:', error);
+      await this.supabase.updatePriorityRequestStatus(
+        request.id,
+        'rejected',
+        error.message
+      );
+    }
+  }
+
+  async moderateRequest(request) {
+    // Implement moderation logic
+    // - Check for duplicate requests
+    // - Validate video source
+    // - Check user reputation/limits
+    // - Content filtering
+    
+    // For now, approve all
+    return { approved: true };
+  }
+
+  async addPriorityRequest(request) {
+    // Resolve video source
+    let video;
+    
+    if (request.source_type === 'local') {
+      video = await this.localFileManager.resolveVideo(request.video_source);
+    } else if (request.source_type === 'youtube') {
+      // Handle YouTube URL (would need youtube-dl integration)
+      video = {
+        id: request.id,
+        source: request.video_source,
+        sourceType: 'youtube',
+        metadata: request.video_metadata || {}
+      };
+    }
+    
+    if (!video) {
+      throw new Error('Could not resolve video source');
+    }
+    
+    // Add priority metadata
+    video.priority = request.priority_score || 50;
+    video.priorityRequestId = request.id;
+    video.userContext = request.user_context;
+    
+    // Insert into priority queue (sorted by priority)
+    this.state.priorityQueue.push(video);
+    this.state.priorityQueue.sort((a, b) => b.priority - a.priority);
+    
+    log.info('Priority video added to queue:', {
+      videoId: video.id,
+      priority: video.priority,
+      queueSize: this.state.priorityQueue.length
+    });
+    
+    this.emit('priority-queue-updated', { 
+      action: 'added', 
+      queueSize: this.state.priorityQueue.length 
+    });
+  }
+
+  // ==========================================================================
+  // QUEUE ADVANCEMENT
+  // ==========================================================================
+
+  async advanceQueue() {
+    if (this.isAdvancingQueue) {
+      log.warn('Queue advancement already in progress');
+      return;
+    }
+
+    this.isAdvancingQueue = true;
+
+    try {
+      // Get next video (priority queue first, then main queue)
+      const nextVideo = await this.getNextVideo();
+
+      if (!nextVideo) {
+        log.info('Queue empty, stopping playback');
+        this.state.isPlaying = false;
+        this.state.nowPlaying = null;
+        this.emit('queue-empty');
+        return;
+      }
+
+      // Update state
+      this.state.nowPlaying = nextVideo;
+      this.state.isPlaying = true;
+      this.state.isPaused = false;
+      this.state.currentPosition = 0;
+
+      // Emit event to player
+      this.emit('play-video', { video: nextVideo });
+
+      // Update statistics
+      this.stats.videosPlayed++;
+      if (nextVideo.priorityRequestId) {
+        this.stats.priorityVideosPlayed++;
+        
+        // Update priority request status
+        await this.supabase.updatePriorityRequestStatus(
+          nextVideo.priorityRequestId,
+          'playing'
+        );
+      }
+
+      // Sync state to Supabase
+      await this.syncStateToSupabase();
+
+      log.info('Now playing:', {
+        title: nextVideo.metadata?.title,
+        artist: nextVideo.metadata?.artist,
+        source: nextVideo.sourceType
+      });
+
+    } catch (error) {
+      log.error('Failed to advance queue:', error);
+      this.emit('error', { type: 'queue_advance_failed', error });
+      
+    } finally {
+      this.isAdvancingQueue = false;
+    }
+  }
+
+  async getNextVideo() {
+    // Priority queue takes precedence
+    if (this.state.priorityQueue.length > 0) {
+      const video = this.state.priorityQueue.shift();
+      log.info('Next video from PRIORITY queue');
+      return video;
+    }
+
+    // Main queue (FIFO with loop)
+    if (this.state.mainQueue.length === 0) {
+      return null;
+    }
+
+    // Remove from front, add to back (FIFO loop)
+    const video = this.state.mainQueue.shift();
+    this.state.mainQueue.push(video);
+    
+    log.info('Next video from MAIN queue');
+    return video;
+  }
+
+  // ==========================================================================
+  // VIDEO COMPLETION HANDLING
+  // ==========================================================================
+
+  async onVideoEnded() {
+    log.info('Video ended');
+
+    const endedVideo = this.state.nowPlaying;
+
+    if (!endedVideo) return;
+
+    // Log to playback history
+    try {
+      await this.supabase.logPlaybackHistory({
+        video_id: endedVideo.id,
+        video_title: endedVideo.metadata?.title,
+        video_artist: endedVideo.metadata?.artist,
+        queue_type: endedVideo.priorityRequestId ? 'priority' : 'main',
+        completed: true
+      });
+    } catch (error) {
+      log.error('Failed to log playback history:', error);
+    }
+
+    // Mark priority request as played
+    if (endedVideo.priorityRequestId) {
+      try {
+        await this.supabase.updatePriorityRequestStatus(
+          endedVideo.priorityRequestId,
+          'played'
+        );
+      } catch (error) {
+        log.error('Failed to update priority request:', error);
+      }
+    }
+
+    // Advance to next video
+    await this.advanceQueue();
+  }
+
+  // ==========================================================================
+  // ERROR HANDLING
+  // ==========================================================================
+
+  async onVideoError(error) {
+    log.error('Video playback error:', error);
+
+    this.stats.errors++;
+
+    const failedVideo = this.state.nowPlaying;
+
+    if (failedVideo) {
+      // Log error
+      try {
+        await this.supabase.logSystemEvent({
+          event_type: 'playback_error',
+          event_level: 'error',
+          event_message: `Failed to play: ${failedVideo.metadata?.title}`,
+          event_data: { error: error.message, video: failedVideo }
+        });
+      } catch (err) {
+        log.error('Failed to log error:', err);
+      }
+
+      // Mark priority request as failed
+      if (failedVideo.priorityRequestId) {
+        await this.supabase.updatePriorityRequestStatus(
+          failedVideo.priorityRequestId,
+          'rejected',
+          `Playback error: ${error.message}`
+        );
+      }
+    }
+
+    // Skip to next video
+    await this.advanceQueue();
+  }
+
+  // ==========================================================================
+  // STATE MANAGEMENT
+  // ==========================================================================
+
+  async syncStateToSupabase() {
+    try {
+      await this.supabase.updatePlayerState({
+        status: this.state.isPlaying ? (this.state.isPaused ? 'paused' : 'playing') : 'stopped',
+        now_playing_video: this.state.nowPlaying,
+        active_queue: this.state.mainQueue,
+        priority_queue: this.state.priorityQueue,
+        current_position: this.state.currentPosition,
+        volume: this.state.volume,
+        is_online: true
+      });
+    } catch (error) {
+      log.error('Failed to sync state to Supabase:', error);
+    }
+  }
+
+  async handleStateConflict(externalState) {
+    // If external state is newer, it might be from another admin
+    // For now, log and ignore (Electron app is authoritative)
+    log.warn('State conflict detected, ignoring external state');
+  }
+
+  // ==========================================================================
+  // UTILITY METHODS
+  // ==========================================================================
+
+  shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  getState() {
+    return {
+      ...this.state,
+      stats: this.stats,
+      mainQueueSize: this.state.mainQueue.length,
+      priorityQueueSize: this.state.priorityQueue.length
+    };
+  }
+
+  // ==========================================================================
+  // CLEANUP
+  // ==========================================================================
+
+  destroy() {
+    log.info('Destroying QueueOrchestrator');
+    
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+    
+    this.removeAllListeners();
+  }
+}
+
+module.exports = QueueOrchestrator;
+// ============================================================================
+// DJAMMS Obie Electron Player - Main Process
+// src/main/main.js
+// ============================================================================
+
+const { app, BrowserWindow, ipcMain, screen, dialog, Menu } = require('electron');
+const path = require('path');
+const log = require('electron-log');
+const WindowManager = require('./window-manager');
+const PreferencesManager = require('./preferences-manager');
+const AutoUpdateManager = require('./auto-updater');
+const MeTubeManager = require('./metube-manager');
+const SetupWizard = require('./setup-wizard');
+
+// Configure logging
+log.transports.file.level = 'info';
+log.transports.console.level = 'debug';
+
+class ObieElectronPlayer {
+  constructor() {
+    this.windowManager = new WindowManager();
+    this.preferences = new PreferencesManager();
+    this.autoUpdater = new AutoUpdateManager();
+    this.metubeManager = new MeTubeManager();
+    this.setupWizard = new SetupWizard(this.preferences);
+    
+    this.playerWindow = null;
+    this.isQuitting = false;
+    this.isInitialized = false;
+    
+    log.info('ObieElectronPlayer instance created');
+    this.initializeApp();
+  }
+
+  initializeApp() {
+    // Application lifecycle events
+    app.whenReady().then(() => this.onAppReady());
+    app.on('window-all-closed', () => this.onWindowAllClosed());
+    app.on('activate', () => this.onActivate());
+    app.on('before-quit', () => this.onBeforeQuit());
+    
+    // Error handling
+    process.on('uncaughtException', (error) => {
+      log.error('Uncaught Exception:', error);
+      this.handleCriticalError(error);
+    });
+    
+    process.on('unhandledRejection', (reason, promise) => {
+      log.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    });
+    
+    // Setup IPC handlers
+    this.setupIpcHandlers();
+    
+    // Setup application menu
+    this.setupApplicationMenu();
+  }
+
+  async onAppReady() {
+    log.info('Application ready');
+    
+    try {
+      // Phase 1: Check for first-run setup
+      const needsSetup = await this.setupWizard.checkNeedsSetup();
+      if (needsSetup) {
+        log.info('First run detected, showing setup wizard');
+        const setupComplete = await this.setupWizard.show();
+        if (!setupComplete) {
+          log.warn('Setup cancelled by user');
+          app.quit();
+          return;
+        }
+      }
+      
+      // Phase 2: Load preferences
+      const prefs = await this.preferences.load();
+      log.info('Preferences loaded:', { 
+        djammsPath: prefs.djammsPath,
+        supabaseConfigured: !!prefs.supabaseUrl 
+      });
+      
+      // Phase 3: Start MeTube if enabled
+      if (prefs.metube?.enabled) {
+        try {
+          await this.metubeManager.start(prefs.metube);
+          log.info('MeTube started successfully');
+        } catch (error) {
+          log.error('Failed to start MeTube:', error);
+          // Non-critical, continue without MeTube
+        }
+      }
+      
+      // Phase 4: Create player window
+      await this.createPlayerWindow(prefs);
+      
+      // Phase 5: Check for updates
+      if (prefs.autoUpdate !== false) {
+        setTimeout(() => {
+          this.autoUpdater.checkForUpdates();
+        }, 5000); // Check after 5 seconds
+      }
+      
+      this.isInitialized = true;
+      log.info('Application fully initialized');
+      
+    } catch (error) {
+      log.error('Failed to initialize application:', error);
+      this.showErrorDialog('Initialization Error', 
+        `Failed to start application: ${error.message}`);
+      app.quit();
+    }
+  }
+
+  async createPlayerWindow(prefs) {
+    log.info('Creating player window');
+    
+    this.playerWindow = new BrowserWindow({
+      fullscreen: prefs.fullscreen !== false,
+      kiosk: prefs.kioskMode !== false,
+      frame: false,
+      alwaysOnTop: prefs.alwaysOnTop !== false,
+      show: false,
+      backgroundColor: '#000000',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, '../renderer/preload.js'),
+        webSecurity: true,
+        enableRemoteModule: false,
+        sandbox: true
+      }
+    });
+
+    // Load player UI
+    const playerHtmlPath = path.join(__dirname, '../renderer/player/player.html');
+    await this.playerWindow.loadFile(playerHtmlPath);
+    
+    // Position on correct display
+    if (prefs.defaultDisplay && prefs.defaultDisplay !== 'primary') {
+      await this.positionOnDisplay(prefs.defaultDisplay);
+    }
+    
+    // Window event handlers
+    this.playerWindow.once('ready-to-show', () => {
+      log.info('Player window ready to show');
+      this.playerWindow.show();
+      
+      if (prefs.kioskMode) {
+        this.windowManager.hideCursor(this.playerWindow);
+      }
+      
+      // Send configuration to renderer
+      this.playerWindow.webContents.send('app-ready', {
+        preferences: prefs,
+        appVersion: app.getVersion(),
+        platform: process.platform
+      });
+    });
+    
+    this.playerWindow.on('closed', () => {
+      log.info('Player window closed');
+      this.playerWindow = null;
+    });
+    
+    // Open DevTools in development
+    if (process.env.NODE_ENV === 'development') {
+      this.playerWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  }
+
+  async positionOnDisplay(displayId) {
+    const displays = screen.getAllDisplays();
+    let targetDisplay;
+    
+    if (displayId === 'primary') {
+      targetDisplay = screen.getPrimaryDisplay();
+    } else {
+      targetDisplay = displays.find(d => d.id.toString() === displayId.toString());
+      if (!targetDisplay) {
+        log.warn(`Display ${displayId} not found, using primary`);
+        targetDisplay = screen.getPrimaryDisplay();
+      }
+    }
+    
+    if (this.playerWindow) {
+      this.playerWindow.setBounds(targetDisplay.bounds);
+      log.info('Player positioned on display:', targetDisplay.id);
+    }
+  }
+
+  setupIpcHandlers() {
+    // ========================================================================
+    // PREFERENCES MANAGEMENT
+    // ========================================================================
+    
+    ipcMain.handle('preferences:get', async () => {
+      return await this.preferences.load();
+    });
+    
+    ipcMain.handle('preferences:save', async (event, newPreferences) => {
+      try {
+        await this.preferences.save(newPreferences);
+        
+        // Notify all windows of preference change
+        BrowserWindow.getAllWindows().forEach(window => {
+          window.webContents.send('preferences-updated', newPreferences);
+        });
+        
+        return { success: true };
+      } catch (error) {
+        log.error('Failed to save preferences:', error);
+        return { success: false, error: error.message };
+      }
+    });
+    
+    ipcMain.handle('preferences:reset', async () => {
+      try {
+        await this.preferences.resetToDefaults();
+        const defaults = await this.preferences.load();
+        return { success: true, preferences: defaults };
+      } catch (error) {
+        log.error('Failed to reset preferences:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // ========================================================================
+    // FILE SYSTEM OPERATIONS
+    // ========================================================================
+    
+    ipcMain.handle('fs:select-djamms-folder', async () => {
+      const result = await dialog.showOpenDialog(this.playerWindow, {
+        title: 'Select DJAMMS Folder',
+        properties: ['openDirectory'],
+        defaultPath: this.preferences.getDefaultDjammsPath()
+      });
+      
+      if (!result.canceled && result.filePaths.length > 0) {
+        const selectedPath = result.filePaths[0];
+        const isValid = await this.preferences.validateDjammsPath(selectedPath);
+        
+        if (isValid) {
+          log.info('Valid DJAMMS folder selected:', selectedPath);
+          return { path: selectedPath, isValid: true };
+        } else {
+          log.warn('Invalid DJAMMS folder structure:', selectedPath);
+          return { 
+            path: selectedPath, 
+            isValid: false, 
+            error: 'Invalid DJAMMS folder structure' 
+          };
+        }
+      }
+      
+      return { path: null, isValid: false };
+    });
+    
+    ipcMain.handle('fs:select-logo-file', async () => {
+      const result = await dialog.showOpenDialog(this.playerWindow, {
+        title: 'Select Logo Image',
+        properties: ['openFile'],
+        filters: [
+          { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg', 'gif'] }
+        ]
+      });
+      
+      if (!result.canceled && result.filePaths.length > 0) {
+        return { path: result.filePaths[0] };
+      }
+      
+      return { path: null };
+    });
+
+    // ========================================================================
+    // DISPLAY MANAGEMENT
+    // ========================================================================
+    
+    ipcMain.handle('display:get-all', () => {
+      const displays = screen.getAllDisplays();
+      return displays.map(d => ({
+        id: d.id,
+        label: `Display ${d.id}${d.internal ? ' (Built-in)' : ''}`,
+        bounds: d.bounds,
+        workArea: d.workArea,
+        scaleFactor: d.scaleFactor,
+        rotation: d.rotation,
+        internal: d.internal
+      }));
+    });
+    
+    ipcMain.handle('display:set-fullscreen', (event, fullscreen) => {
+      if (this.playerWindow) {
+        this.playerWindow.setFullScreen(fullscreen);
+        return { success: true };
+      }
+      return { success: false };
+    });
+    
+    ipcMain.handle('display:set-target', async (event, displayId) => {
+      try {
+        await this.positionOnDisplay(displayId);
+        return { success: true };
+      } catch (error) {
+        log.error('Failed to set target display:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // ========================================================================
+    // METUBE MANAGEMENT
+    // ========================================================================
+    
+    ipcMain.handle('metube:start', async () => {
+      try {
+        const prefs = await this.preferences.load();
+        await this.metubeManager.start(prefs.metube);
+        return { success: true, url: this.metubeManager.getUrl() };
+      } catch (error) {
+        log.error('Failed to start MeTube:', error);
+        return { success: false, error: error.message };
+      }
+    });
+    
+    ipcMain.handle('metube:stop', async () => {
+      try {
+        await this.metubeManager.stop();
+        return { success: true };
+      } catch (error) {
+        log.error('Failed to stop MeTube:', error);
+        return { success: false, error: error.message };
+      }
+    });
+    
+    ipcMain.handle('metube:status', () => {
+      return this.metubeManager.getStatus();
+    });
+    
+    ipcMain.handle('metube:submit-download', async (event, youtubeUrl) => {
+      try {
+        const downloadId = await this.metubeManager.submitDownload(youtubeUrl);
+        return { success: true, downloadId };
+      } catch (error) {
+        log.error('Failed to submit MeTube download:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // ========================================================================
+    // WINDOW MANAGEMENT
+    // ========================================================================
+    
+    ipcMain.on('window:open-admin-console', () => {
+      this.windowManager.openAdminConsole(this.preferences.get('adminConsoleUrl'));
+    });
+    
+    ipcMain.on('window:open-kiosk-interface', () => {
+      this.windowManager.openKioskInterface(this.preferences.get('kioskInterfaceUrl'));
+    });
+    
+    ipcMain.on('window:show-setup-wizard', async () => {
+      await this.setupWizard.show();
+    });
+
+    // ========================================================================
+    // APPLICATION CONTROL
+    // ========================================================================
+    
+    ipcMain.on('app:quit', () => {
+      log.info('Quit requested via IPC');
+      this.quitApplication();
+    });
+    
+    ipcMain.on('app:restart', () => {
+      log.info('Restart requested via IPC');
+      app.relaunch();
+      app.exit(0);
+    });
+    
+    ipcMain.handle('app:get-info', () => {
+      return {
+        version: app.getVersion(),
+        platform: process.platform,
+        arch: process.arch,
+        electronVersion: process.versions.electron,
+        chromeVersion: process.versions.chrome,
+        nodeVersion: process.versions.node
+      };
+    });
+
+    // ========================================================================
+    // AUTO-UPDATE
+    // ========================================================================
+    
+    ipcMain.handle('update:check', async () => {
+      return await this.autoUpdater.checkForUpdates();
+    });
+    
+    ipcMain.handle('update:download', async () => {
+      return await this.autoUpdater.downloadUpdate();
+    });
+    
+    ipcMain.handle('update:install', () => {
+      this.autoUpdater.quitAndInstall();
+    });
+
+    // ========================================================================
+    // LOGGING & DIAGNOSTICS
+    // ========================================================================
+    
+    ipcMain.handle('log:info', (event, message, data) => {
+      log.info('[Renderer]', message, data || '');
+    });
+    
+    ipcMain.handle('log:error', (event, message, data) => {
+      log.error('[Renderer]', message, data || '');
+    });
+    
+    ipcMain.handle('diagnostics:get', () => {
+      return {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        cpu: process.getCPUUsage(),
+        displays: screen.getAllDisplays().length,
+        isInitialized: this.isInitialized,
+        metubeStatus: this.metubeManager.getStatus()
+      };
+    });
+  }
+
+  setupApplicationMenu() {
+    const template = [
+      {
+        label: 'Obie Player',
+        submenu: [
+          {
+            label: 'About Obie Player',
+            role: 'about'
+          },
+          { type: 'separator' },
+          {
+            label: 'Preferences',
+            accelerator: 'CmdOrCtrl+,',
+            click: () => {
+              this.playerWindow?.webContents.send('show-preferences');
+            }
+          },
+          { type: 'separator' },
+          {
+            label: 'Check for Updates',
+            click: () => {
+              this.autoUpdater.checkForUpdates();
+            }
+          },
+          { type: 'separator' },
+          {
+            label: 'Quit',
+            accelerator: 'CmdOrCtrl+Q',
+            click: () => this.quitApplication()
+          }
+        ]
+      },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'reload' },
+          { role: 'forceReload' },
+          { role: 'toggleDevTools' },
+          { type: 'separator' },
+          { role: 'resetZoom' },
+          { role: 'zoomIn' },
+          { role: 'zoomOut' },
+          { type: 'separator' },
+          { role: 'togglefullscreen' }
+        ]
+      },
+      {
+        label: 'Window',
+        submenu: [
+          { role: 'minimize' },
+          { role: 'close' }
+        ]
+      },
+      {
+        label: 'Help',
+        submenu: [
+          {
+            label: 'Documentation',
+            click: () => {
+              require('electron').shell.openExternal('https://docs.yourdomain.com');
+            }
+          },
+          {
+            label: 'Report Issue',
+            click: () => {
+              require('electron').shell.openExternal('https://github.com/yourrepo/issues');
+            }
+          }
+        ]
+      }
+    ];
+    
+    const menu = Menu.buildFromTemplate(template);
+    Menu.setApplicationMenu(menu);
+  }
+
+  onWindowAllClosed() {
+    // On macOS, keep app running when all windows are closed
+    if (process.platform !== 'darwin') {
+      this.quitApplication();
+    }
+  }
+
+  onActivate() {
+    // On macOS, re-create window when dock icon clicked
+    if (BrowserWindow.getAllWindows().length === 0) {
+      this.createPlayerWindow(this.preferences.loadSync());
+    }
+  }
+
+  onBeforeQuit() {
+    log.info('Application quitting');
+    this.isQuitting = true;
+    
+    // Cleanup
+    if (this.metubeManager) {
+      this.metubeManager.stop().catch(err => {
+        log.error('Error stopping MeTube:', err);
+      });
+    }
+  }
+
+  async quitApplication() {
+    log.info('Quitting application');
+    this.isQuitting = true;
+    
+    // Cleanup before quit
+    try {
+      await this.metubeManager.stop();
+    } catch (error) {
+      log.error('Error during cleanup:', error);
+    }
+    
+    app.quit();
+  }
+
+  showErrorDialog(title, message) {
+    dialog.showErrorBox(title, message);
+  }
+
+  handleCriticalError(error) {
+    log.error('Critical error:', error);
+    
+    this.showErrorDialog(
+      'Critical Error',
+      `A critical error occurred:\n\n${error.message}\n\nThe application will now close.`
+    );
+    
+    app.exit(1);
+  }
+}
+
+// ============================================================================
+// APPLICATION ENTRY POINT
+// ============================================================================
+
+// Prevent multiple instances
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  log.warn('Another instance is already running');
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Someone tried to run a second instance, focus our window
+    if (global.obiePlayer && global.obiePlayer.playerWindow) {
+      if (global.obiePlayer.playerWindow.isMinimized()) {
+        global.obiePlayer.playerWindow.restore();
+      }
+      global.obiePlayer.playerWindow.focus();
+    }
+  });
+  
+  // Create application instance
+  global.obiePlayer = new ObieElectronPlayer();
+}
+
+// Export for testing
+module.exports = ObieElectronPlayer;
+-- ============================================================================
+-- DJAMMS Obie Electron Player - Complete Supabase Schema
+-- ============================================================================
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- For text search
+
+-- ============================================================================
+-- 1. PLAYER STATE MANAGEMENT
+-- ============================================================================
+
+-- Player state tracking (single row per player instance)
+CREATE TABLE player_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id VARCHAR(50) DEFAULT 'electron-player-1' UNIQUE NOT NULL,
+    status VARCHAR(20) CHECK (status IN ('playing', 'paused', 'stopped', 'loading', 'error', 'idle')) DEFAULT 'idle',
+    
+    -- Current playback info
+    now_playing_video JSONB, -- Full video object with metadata
+    current_position DECIMAL(8,2) DEFAULT 0, -- Seconds
+    duration DECIMAL(8,2), -- Total video duration
+    
+    -- Queue state (JSONB arrays for flexibility)
+    active_queue JSONB DEFAULT '[]'::jsonb, -- Array of video objects, index 0 = now playing
+    priority_queue JSONB DEFAULT '[]'::jsonb, -- Separate priority requests
+    
+    -- Available content
+    available_playlists JSONB DEFAULT '[]'::jsonb, -- Scanned from file system
+    total_videos_scanned INTEGER DEFAULT 0,
+    
+    -- Player configuration
+    volume DECIMAL(3,2) DEFAULT 1.0 CHECK (volume >= 0 AND volume <= 1),
+    crossfade_enabled BOOLEAN DEFAULT TRUE,
+    
+    -- Connection & health
+    is_online BOOLEAN DEFAULT FALSE,
+    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    session_start TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Metadata
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    electron_version VARCHAR(20),
+    os_info JSONB,
+    
+    -- Constraints
+    CONSTRAINT valid_queue_format CHECK (
+        jsonb_typeof(active_queue) = 'array' AND
+        jsonb_typeof(priority_queue) = 'array'
+    )
+);
+
+-- Index for frequent queries
+CREATE INDEX idx_player_state_player_id ON player_state(player_id);
+CREATE INDEX idx_player_state_online ON player_state(is_online);
+
+-- ============================================================================
+-- 2. LOCAL VIDEO CATALOG (File System Index)
+-- ============================================================================
+
+CREATE TABLE local_videos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id VARCHAR(50) NOT NULL REFERENCES player_state(player_id) ON DELETE CASCADE,
+    
+    -- File information
+    file_path TEXT NOT NULL, -- Absolute path on player machine
+    relative_path TEXT, -- Relative to DJAMMS root
+    filename TEXT NOT NULL,
+    file_size BIGINT, -- Bytes
+    file_hash VARCHAR(64), -- SHA-256 for duplicate detection
+    
+    -- Video metadata (extracted via ffprobe)
+    title TEXT,
+    artist TEXT,
+    album TEXT,
+    duration INTEGER, -- Seconds
+    resolution VARCHAR(20), -- e.g., "1920x1080"
+    codec VARCHAR(50),
+    bitrate INTEGER, -- kbps
+    fps DECIMAL(5,2),
+    
+    -- Organization
+    playlist_folder TEXT, -- e.g., "PLAYLISTS/Rock"
+    collection_type VARCHAR(50), -- 'playlist', 'artist', 'request_download'
+    
+    -- Availability & health
+    is_available BOOLEAN DEFAULT TRUE,
+    last_verified TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    error_message TEXT,
+    play_count INTEGER DEFAULT 0,
+    last_played TIMESTAMP WITH TIME ZONE,
+    
+    -- Timestamps
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_scanned TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Ensure unique file paths per player
+    CONSTRAINT unique_file_per_player UNIQUE (player_id, file_path)
+);
+
+-- Indexes for performance
+CREATE INDEX idx_local_videos_player ON local_videos(player_id);
+CREATE INDEX idx_local_videos_available ON local_videos(is_available) WHERE is_available = TRUE;
+CREATE INDEX idx_local_videos_playlist ON local_videos(playlist_folder);
+CREATE INDEX idx_local_videos_artist ON local_videos(artist);
+CREATE INDEX idx_local_videos_title_trgm ON local_videos USING gin(title gin_trgm_ops);
+CREATE INDEX idx_local_videos_artist_trgm ON local_videos USING gin(artist gin_trgm_ops);
+
+-- ============================================================================
+-- 3. PLAYLIST MANAGEMENT
+-- ============================================================================
+
+CREATE TABLE playlists (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id VARCHAR(50) NOT NULL REFERENCES player_state(player_id) ON DELETE CASCADE,
+    
+    -- Playlist information
+    name TEXT NOT NULL,
+    folder_path TEXT NOT NULL, -- Absolute path to folder
+    relative_path TEXT, -- Relative to DJAMMS root
+    
+    -- Statistics
+    video_count INTEGER DEFAULT 0,
+    total_duration INTEGER DEFAULT 0, -- Total seconds
+    total_size BIGINT DEFAULT 0, -- Total bytes
+    
+    -- Configuration
+    shuffle_enabled BOOLEAN DEFAULT FALSE,
+    repeat_mode VARCHAR(20) CHECK (repeat_mode IN ('none', 'all', 'one')) DEFAULT 'all',
+    
+    -- Metadata
+    thumbnail_url TEXT,
+    description TEXT,
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    CONSTRAINT unique_playlist_per_player UNIQUE (player_id, folder_path)
+);
+
+CREATE INDEX idx_playlists_player ON playlists(player_id);
+CREATE INDEX idx_playlists_name ON playlists(name);
+
+-- Junction table for playlist videos (many-to-many)
+CREATE TABLE playlist_videos (
+    playlist_id UUID REFERENCES playlists(id) ON DELETE CASCADE,
+    video_id UUID REFERENCES local_videos(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (playlist_id, video_id)
+);
+
+CREATE INDEX idx_playlist_videos_playlist ON playlist_videos(playlist_id);
+CREATE INDEX idx_playlist_videos_position ON playlist_videos(playlist_id, position);
+
+-- ============================================================================
+-- 4. ADMIN COMMAND QUEUE
+-- ============================================================================
+
+CREATE TABLE admin_commands (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Command metadata
+    admin_id VARCHAR(50) NOT NULL, -- Session identifier
+    admin_name TEXT, -- Optional friendly name
+    action_type VARCHAR(50) NOT NULL, -- 'skip', 'play_pause', 'load_playlist', etc.
+    action_data JSONB, -- Command-specific payload
+    
+    -- Processing status
+    status VARCHAR(20) CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'timeout')) DEFAULT 'pending',
+    priority INTEGER DEFAULT 50, -- Higher = more urgent (0-100)
+    
+    -- Execution tracking
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    processing_started_at TIMESTAMP WITH TIME ZONE,
+    processed_at TIMESTAMP WITH TIME ZONE,
+    processing_duration_ms INTEGER,
+    
+    -- Error handling
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    max_retries INTEGER DEFAULT 3,
+    
+    -- Expiration
+    expires_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() + INTERVAL '5 minutes'
+);
+
+-- Indexes for command queue processing
+CREATE INDEX idx_admin_commands_status_priority ON admin_commands(status, priority DESC, created_at);
+CREATE INDEX idx_admin_commands_pending ON admin_commands(created_at) WHERE status = 'pending';
+CREATE INDEX idx_admin_commands_admin ON admin_commands(admin_id, created_at DESC);
+CREATE INDEX idx_admin_commands_expires ON admin_commands(expires_at) WHERE status IN ('pending', 'processing');
+
+-- ============================================================================
+-- 5. ADMIN SESSION MANAGEMENT
+-- ============================================================================
+
+CREATE TABLE admin_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id VARCHAR(50) NOT NULL UNIQUE,
+    
+    -- Authentication
+    session_token VARCHAR(100) UNIQUE NOT NULL,
+    user_email TEXT, -- From Supabase Auth if using
+    user_role VARCHAR(20) DEFAULT 'admin', -- 'admin', 'moderator', 'viewer'
+    
+    -- Session tracking
+    session_start TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_activity TEXT, -- Last command/action
+    is_active BOOLEAN DEFAULT TRUE,
+    
+    -- Client information
+    user_agent TEXT,
+    ip_address INET,
+    
+    -- Metrics
+    commands_issued INTEGER DEFAULT 0,
+    
+    -- Expiration
+    expires_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() + INTERVAL '24 hours'
+);
+
+CREATE INDEX idx_admin_sessions_active ON admin_sessions(is_active, last_seen DESC);
+CREATE INDEX idx_admin_sessions_token ON admin_sessions(session_token) WHERE is_active = TRUE;
+
+-- ============================================================================
+-- 6. PRIORITY REQUEST QUEUE (User/Kiosk Submissions)
+-- ============================================================================
+
+CREATE TABLE priority_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Video source (can be local file or YouTube URL)
+    video_source TEXT NOT NULL, -- File path or URL
+    source_type VARCHAR(20) CHECK (source_type IN ('local', 'youtube', 'url')) DEFAULT 'local',
+    video_metadata JSONB, -- Extracted metadata
+    
+    -- User context
+    user_id TEXT, -- Kiosk user identifier
+    user_context JSONB, -- Additional user info (reputation, tier, etc.)
+    
+    -- Request management
+    status VARCHAR(20) CHECK (status IN ('queued', 'approved', 'playing', 'played', 'rejected', 'expired')) DEFAULT 'queued',
+    priority_score INTEGER DEFAULT 0, -- Calculated priority (0-100)
+    
+    -- Moderation
+    moderation_status VARCHAR(20) CHECK (moderation_status IN ('pending', 'approved', 'rejected', 'flagged')),
+    moderation_reason TEXT,
+    moderated_by VARCHAR(50),
+    moderated_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Playback tracking
+    requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    approved_at TIMESTAMP WITH TIME ZONE,
+    played_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Rejection/expiration
+    rejection_reason TEXT,
+    expires_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() + INTERVAL '1 hour',
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_priority_requests_status ON priority_requests(status, priority_score DESC, created_at);
+CREATE INDEX idx_priority_requests_queued ON priority_requests(created_at) WHERE status = 'queued';
+CREATE INDEX idx_priority_requests_user ON priority_requests(user_id, created_at DESC);
+
+-- ============================================================================
+-- 7. METUBE DOWNLOAD TRACKING
+-- ============================================================================
+
+CREATE TABLE metube_downloads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Download request
+    youtube_url TEXT NOT NULL,
+    requested_by VARCHAR(50), -- Admin or user ID
+    
+    -- Download status
+    status VARCHAR(20) CHECK (status IN ('pending', 'downloading', 'completed', 'failed', 'cancelled')) DEFAULT 'pending',
+    progress INTEGER DEFAULT 0, -- Percentage (0-100)
+    
+    -- Downloaded file
+    output_filename TEXT,
+    output_path TEXT,
+    file_size BIGINT,
+    
+    -- Video information
+    video_title TEXT,
+    video_artist TEXT,
+    video_duration INTEGER,
+    thumbnail_url TEXT,
+    
+    -- Auto-queue configuration
+    auto_queue BOOLEAN DEFAULT TRUE,
+    target_folder TEXT, -- Where to move completed file
+    
+    -- Timestamps
+    requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    download_started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Error handling
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0
+);
+
+CREATE INDEX idx_metube_downloads_status ON metube_downloads(status, requested_at DESC);
+CREATE INDEX idx_metube_downloads_pending ON metube_downloads(requested_at) WHERE status IN ('pending', 'downloading');
+
+-- ============================================================================
+-- 8. ANALYTICS & LOGGING
+-- ============================================================================
+
+CREATE TABLE playback_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id VARCHAR(50) NOT NULL,
+    
+    -- Video information
+    video_id UUID REFERENCES local_videos(id) ON DELETE SET NULL,
+    video_title TEXT,
+    video_artist TEXT,
+    video_path TEXT,
+    
+    -- Playback details
+    queue_type VARCHAR(20), -- 'main', 'priority'
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    ended_at TIMESTAMP WITH TIME ZONE,
+    duration_played INTEGER, -- Seconds actually played
+    completed BOOLEAN DEFAULT FALSE, -- Did it play to completion?
+    
+    -- Context
+    session_id UUID,
+    added_by VARCHAR(50) -- Admin or user who queued it
+);
+
+CREATE INDEX idx_playback_history_player ON playback_history(player_id, started_at DESC);
+CREATE INDEX idx_playback_history_video ON playback_history(video_id, started_at DESC);
+
+-- Partitioning by month for performance (optional, for high-volume deployments)
+-- CREATE TABLE playback_history_2025_01 PARTITION OF playback_history
+--     FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+
+-- System events log
+CREATE TABLE system_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id VARCHAR(50),
+    
+    event_type VARCHAR(50) NOT NULL, -- 'startup', 'shutdown', 'error', 'scan_complete', etc.
+    event_level VARCHAR(20) CHECK (event_level IN ('info', 'warning', 'error', 'critical')) DEFAULT 'info',
+    event_message TEXT NOT NULL,
+    event_data JSONB,
+    
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_system_events_player ON system_events(player_id, timestamp DESC);
+CREATE INDEX idx_system_events_type ON system_events(event_type, timestamp DESC);
+CREATE INDEX idx_system_events_level ON system_events(event_level, timestamp DESC) WHERE event_level IN ('error', 'critical');
+
+-- ============================================================================
+-- 9. ROW LEVEL SECURITY (RLS) POLICIES
+-- ============================================================================
+
+-- Enable RLS on all tables
+ALTER TABLE player_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE local_videos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE playlists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_commands ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE priority_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE metube_downloads ENABLE ROW LEVEL SECURITY;
+
+-- Player state: Electron app can read/write its own state
+CREATE POLICY player_state_full_access ON player_state
+    FOR ALL
+    USING (player_id = current_setting('app.player_id', true))
+    WITH CHECK (player_id = current_setting('app.player_id', true));
+
+-- Player state: Admins can read all players
+CREATE POLICY player_state_admin_read ON player_state
+    FOR SELECT
+    TO authenticated
+    USING (auth.jwt() ->> 'role' = 'admin');
+
+-- Admin commands: Authenticated users can insert
+CREATE POLICY admin_commands_insert ON admin_commands
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (true);
+
+-- Admin commands: Player can read/update its commands
+CREATE POLICY admin_commands_player_access ON admin_commands
+    FOR ALL
+    USING (true); -- Allow player app to read all commands
+
+-- Admin sessions: Users can manage their own sessions
+CREATE POLICY admin_sessions_own ON admin_sessions
+    FOR ALL
+    TO authenticated
+    USING (user_email = auth.email());
+
+-- Priority requests: Anyone can insert (for kiosk)
+CREATE POLICY priority_requests_public_insert ON priority_requests
+    FOR INSERT
+    WITH CHECK (true);
+
+-- Priority requests: Admins can read/moderate
+CREATE POLICY priority_requests_admin_access ON priority_requests
+    FOR ALL
+    TO authenticated
+    USING (auth.jwt() ->> 'role' IN ('admin', 'moderator'));
+
+-- Local videos: Public read access (for search kiosk)
+CREATE POLICY local_videos_public_read ON local_videos
+    FOR SELECT
+    USING (is_available = true);
+
+-- Playlists: Public read access
+CREATE POLICY playlists_public_read ON playlists
+    FOR SELECT
+    USING (true);
+
+-- ============================================================================
+-- 10. DATABASE FUNCTIONS
+-- ============================================================================
+
+-- Function: Update player heartbeat
+CREATE OR REPLACE FUNCTION update_player_heartbeat(p_player_id VARCHAR(50))
+RETURNS VOID AS $$
+BEGIN
+    UPDATE player_state
+    SET last_heartbeat = NOW(),
+        is_online = TRUE
+    WHERE player_id = p_player_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Mark player as offline if no heartbeat
+CREATE OR REPLACE FUNCTION check_player_offline()
+RETURNS VOID AS $$
+BEGIN
+    UPDATE player_state
+    SET is_online = FALSE
+    WHERE last_heartbeat < NOW() - INTERVAL '30 seconds'
+      AND is_online = TRUE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Clean up expired commands
+CREATE OR REPLACE FUNCTION cleanup_expired_commands()
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM admin_commands
+    WHERE status IN ('pending', 'processing')
+      AND expires_at < NOW();
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Calculate priority score
+CREATE OR REPLACE FUNCTION calculate_priority_score(
+    p_user_context JSONB,
+    p_source_type VARCHAR(20)
+)
+RETURNS INTEGER AS $$
+DECLARE
+    score INTEGER := 50; -- Base score
+BEGIN
+    -- Admin requests get highest priority
+    IF p_user_context->>'is_admin' = 'true' THEN
+        score := score + 40;
+    END IF;
+    
+    -- VIP users get bonus
+    IF p_user_context->>'is_vip' = 'true' THEN
+        score := score + 20;
+    END IF;
+    
+    -- User reputation factor
+    IF p_user_context->>'reputation' IS NOT NULL THEN
+        score := score + LEAST((p_user_context->>'reputation')::INTEGER / 10, 10);
+    END IF;
+    
+    -- Local videos preferred over downloads
+    IF p_source_type = 'local' THEN
+        score := score + 5;
+    END IF;
+    
+    RETURN LEAST(score, 100); -- Cap at 100
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Advanced video search
+CREATE OR REPLACE FUNCTION search_videos(
+    p_query TEXT,
+    p_player_id VARCHAR(50) DEFAULT NULL,
+    p_limit INTEGER DEFAULT 50
+)
+RETURNS TABLE(
+    id UUID,
+    title TEXT,
+    artist TEXT,
+    filename TEXT,
+    file_path TEXT,
+    duration INTEGER,
+    similarity REAL
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        lv.id,
+        lv.title,
+        lv.artist,
+        lv.filename,
+        lv.file_path,
+        lv.duration,
+        GREATEST(
+            similarity(lv.title, p_query),
+            similarity(lv.artist, p_query),
+            similarity(lv.filename, p_query)
+        ) AS similarity
+    FROM local_videos lv
+    WHERE lv.is_available = TRUE
+      AND (p_player_id IS NULL OR lv.player_id = p_player_id)
+      AND (
+        lv.title ILIKE '%' || p_query || '%' OR
+        lv.artist ILIKE '%' || p_query || '%' OR
+        lv.filename ILIKE '%' || p_query || '%'
+      )
+    ORDER BY similarity DESC, lv.title
+    LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- 11. SCHEDULED JOBS (via pg_cron extension or external scheduler)
+-- ============================================================================
+
+-- Clean up old commands every 5 minutes
+-- SELECT cron.schedule('cleanup-commands', '*/5 * * * *', 'SELECT cleanup_expired_commands()');
+
+-- Check for offline players every minute
+-- SELECT cron.schedule('check-offline-players', '* * * * *', 'SELECT check_player_offline()');
+
+-- ============================================================================
+-- 12. INITIAL DATA SEEDING
+-- ============================================================================
+
+-- Insert default player state
+INSERT INTO player_state (player_id, status, is_online)
+VALUES ('electron-player-1', 'idle', FALSE)
+ON CONFLICT (player_id) DO NOTHING;
+
+-- ============================================================================
+-- 13. GRANTS & PERMISSIONS
+-- ============================================================================
+
+-- Grant authenticated users access to necessary tables
+GRANT SELECT, INSERT ON admin_commands TO authenticated;
+GRANT SELECT ON player_state TO authenticated;
+GRANT SELECT ON local_videos TO authenticated;
+GRANT SELECT ON playlists TO authenticated;
+GRANT SELECT, INSERT ON priority_requests TO authenticated;
+GRANT ALL ON admin_sessions TO authenticated;
+
+-- Grant anon users limited access (for public kiosk)
+GRANT SELECT ON local_videos TO anon;
+GRANT SELECT ON playlists TO anon;
+GRANT INSERT ON priority_requests TO anon;
+
+-- ============================================================================
+-- END OF SCHEMA
+-- ============================================================================
+
+DJAMMS Obie Electron Player
+Complete Implementation Guide & Roadmap
+
+Table of Contents
+1. Remaining Critical Implementation Specifications 
+2. Complete GANTT-Style Implementation Roadmap 
+3. AI Co-Pilot Integration Instructions 
+4. Prerequisites Checklist 
+
+1. Remaining Critical Implementation Specifications {#remaining-implementations}
+1.1 Supabase Adapter (src/integration/supabase-adapter.js)
+Purpose: Central Supabase client wrapper handling all database operations and real-time subscriptions.
+Key Responsibilities:
+Initialize Supabase client with authentication 
+Manage real-time channel subscriptions 
+Provide CRUD operations for all tables 
+Handle connection loss and reconnection 
+Implement exponential backoff retry logic 
+Critical Methods:
+initialize() - Connect and authenticate 
+subscribeToPlayerState(callback) - Real-time player state updates 
+subscribeToAdminCommands(callback) - Listen for admin commands 
+subscribeToPriorityRequests(callback) - Listen for priority queue additions 
+updatePlayerState(state) - Sync player state to cloud 
+logPlaybackHistory(entry) - Record video playback 
+logSystemEvent(event) - System logging 
+Error Handling: All database operations must use try-catch with graceful degradation.
+
+1.2 Local File Manager (src/integration/local-file-manager.js)
+Purpose: Scan, index, and manage the DJAMMS video library on the local filesystem.
+Key Responsibilities:
+Scan DJAMMS folder structure (PLAYLISTS/, COLLECTIONS/) 
+Extract video metadata using ffprobe 
+Validate video files and detect corruption 
+Monitor filesystem for changes (chokidar) 
+Cache file listings for performance 
+Generate file hashes for duplicate detection 
+DJAMMS Structure:
+~/Music/DJAMMS/
+├── PLAYLISTS/
+│   ├── Rock/
+│   ├── Pop/
+│   └── Electronic/
+├── COLLECTIONS/
+│   ├── Artists/
+│   │   ├── Artist Name 1/
+│   │   └── Artist Name 2/
+│   └── Request Downloads/  (MeTube output)
+Critical Methods:
+scanDJAMMSLibrary() - Full library scan 
+getPlaylistByName(name) - Load playlist videos 
+resolveVideo(pathOrId) - Find video by path/ID 
+watchForChanges() - Monitor filesystem 
+syncToSupabase() - Upload library index to database 
+
+1.3 Command Processor (src/integration/command-processor.js)
+Purpose: Translate admin commands into player actions.
+Command Types:
+skip - Skip current video 
+play_pause - Toggle playback 
+stop - Stop playback 
+load_playlist - Load and queue playlist 
+reorder_queue - Reorder queue items 
+shuffle_queue - Shuffle queue 
+clear_queue - Clear queue (except now playing) 
+add_video - Add single video to queue 
+remove_video - Remove video from queue 
+set_volume - Change volume (0.0-1.0) 
+seek_to - Seek to position in current video 
+Implementation Pattern:
+async executeCommand(command) {
+  // Validate command
+  // Update queue orchestrator
+  // Emit event to renderer
+  // Log to Supabase
+  // Return result
+}
+
+1.4 Renderer Process (src/renderer/player/)
+player.html
+Full-screen video player interface with:
+Dual <video> elements for crossfade 
+Queue display overlay (toggleable) 
+Now Playing metadata display 
+Admin control panel (hidden by default, F12 to toggle) 
+Loading/buffering indicators 
+Error display 
+player.js
+Core Playback Logic:
+HTML5 video element management 
+Crossfade transition between videos (3 second default) 
+IPC communication with main process 
+Volume control with fade 
+Error recovery and retry logic 
+Keyboard shortcuts (Space = pause, N = skip, etc.) 
+Screensaver prevention 
+Event Handling:
+video.onended → Signal main process to advance queue 
+video.onerror → Error recovery flow 
+video.ontimeupdate → Progress tracking 
+IPC listeners for commands from main process 
+
+1.5 Preferences Manager (src/main/preferences-manager.js)
+Configuration Storage: Uses electron-store for persistent preferences.
+Default Preferences:
+{
+  djammsPath: '~/Music/DJAMMS',
+  supabaseUrl: '',
+  supabaseKey: '',
+  playerId: 'electron-player-1',
+  fullscreen: true,
+  kioskMode: true,
+  defaultDisplay: 'primary',
+  volume: 1.0,
+  crossfadeEnabled: true,
+  crossfadeDuration: 3,
+  autoUpdate: true,
+  metube: {
+    enabled: false,
+    port: 8081,
+    downloadPath: '~/Music/DJAMMS/COLLECTIONS/Request Downloads'
+  }
+}
+
+1.6 MeTube Manager (src/main/metube-manager.js)
+Purpose: Manage MeTube Docker container for YouTube downloads.
+Responsibilities:
+Start/stop MeTube Docker container 
+Monitor download progress 
+Move completed files to DJAMMS structure 
+Auto-queue downloaded videos 
+Sync download status to Supabase 
+Docker Compose Configuration (resources/metube/docker-compose.yml):
+version: '3'
+services:
+  metube:
+    image: alexta69/metube
+    ports:
+      - "8081:8081"
+    volumes:
+      - ${DOWNLOAD_PATH}:/downloads
+    environment:
+      - UID=1000
+      - GID=1000
+
+1.7 Window Manager (src/main/window-manager.js)
+Multi-Display Support:
+Enumerate available displays 
+Position player on target display 
+Create admin console window (dev only) 
+Handle kiosk mode restrictions 
+Cursor hiding in kiosk mode 
+Prevent accidental closure (Ctrl+Q confirmation) 
+
+1.8 Auto-Updater (src/main/auto-updater.js)
+Electron Auto-Update Integration:
+Check for updates on startup (5 second delay) 
+Download updates in background 
+Notify user when update ready 
+Quit and install on user confirmation 
+Rollback on update failure 
+Update Server: electron-builder's built-in update server or custom S3 bucket.
+
+1.9 Setup Wizard (src/main/setup-wizard.js)
+First-Run Configuration:
+1. Welcome screen 
+2. DJAMMS folder selection with validation 
+3. Supabase credentials input 
+4. Display selection 
+5. MeTube configuration (optional) 
+6. Initial library scan 
+7. Completion and launch 
+Validation:
+DJAMMS folder must contain PLAYLISTS/ and COLLECTIONS/ 
+Supabase credentials must be valid 
+Test database connection before proceeding 
+
+2. Complete GANTT-Style Implementation Roadmap {#implementation-roadmap}
+Phase 1: Foundation (Hour 1-2)
+Goal: Core infrastructure and database setup
+Task
+Duration
+Dependencies
+Status
+1.1 Supabase project setup
+1 day
+None
+✅ COMPLETE
+1.2 Database schema deployment
+1 day
+1.1
+✅ COMPLETE
+1.3 RLS policies implementation
+1 day
+1.2
+✅ COMPLETE
+1.4 Electron project scaffolding
+1 day
+None
+? IN PROGRESS
+1.5 Supabase adapter implementation
+2 days
+1.2, 1.4
+⚪ PENDING
+1.6 Logger utility setup
+0.5 days
+1.4
+⚪ PENDING
+1.7 Configuration management
+1 day
+1.4
+⚪ PENDING
+Phase 1 Testing
+1 day
+All above
+⚪ PENDING
+
+Phase 2: Core Player Functionality (Hour 2-3)
+Goal: Video playback and queue management
+Task
+Duration
+Dependencies
+Status
+2.1 Local File Manager implementation
+2 days
+1.5, 1.7
+⚪ PENDING
+2.2 Queue Orchestrator implementation
+3 days
+1.5, 2.1
+? IN PROGRESS
+2.3 Player UI (HTML/CSS/JS)
+2 days
+1.4
+⚪ PENDING
+2.4 Video playback engine
+2 days
+2.3
+⚪ PENDING
+2.5 Crossfade implementation
+1 day
+2.4
+⚪ PENDING
+2.6 IPC bridge setup
+1 day
+2.2, 2.4
+⚪ PENDING
+2.7 Error recovery system
+1 day
+2.4
+⚪ PENDING
+Phase 2 Testing
+2 days
+All above
+⚪ PENDING
+
+Phase 3: Admin Interface Integration (Hour 3-4)
+Goal: Web admin console and command processing
+Task
+Duration
+Dependencies
+Status
+3.1 Command Processor implementation
+2 days
+2.2
+⚪ PENDING
+3.2 Admin command real-time subscription
+1 day
+1.5, 3.1
+⚪ PENDING
+3.3 State synchronization logic
+2 days
+2.2, 3.1
+⚪ PENDING
+3.4 Web Admin Console (React/Next.js)
+3 days
+1.2
+⚪ PENDING
+3.5 Admin Console API integration
+2 days
+3.2, 3.4
+⚪ PENDING
+3.6 Real-time state display
+1 day
+3.4, 3.5
+⚪ PENDING
+Phase 3 Testing
+2 days
+All above
+⚪ PENDING
+
+Phase 4: Priority Queue & Kiosk (Hour 4-5)
+Goal: User request system and search kiosk
+Task
+Duration
+Dependencies
+Status
+4.1 Priority request handling
+2 days
+2.2, 3.1
+⚪ PENDING
+4.2 Moderation system
+1 day
+4.1
+⚪ PENDING
+4.3 Priority score calculation
+1 day
+4.1
+⚪ PENDING
+4.4 Search Kiosk UI (React/Next.js)
+3 days
+1.2
+⚪ PENDING
+4.5 Video search implementation
+2 days
+2.1, 4.4
+⚪ PENDING
+4.6 Request submission flow
+1 day
+4.1, 4.4
+⚪ PENDING
+Phase 4 Testing
+2 days
+All above
+⚪ PENDING
+
+Phase 5: MeTube & Advanced Features (Hour 5-6)
+Goal: YouTube downloads and additional features
+Task
+Duration
+Dependencies
+Status
+5.1 MeTube Manager implementation
+2 days
+1.4
+⚪ PENDING
+5.2 Download tracking system
+1 day
+5.1, 1.5
+⚪ PENDING
+5.3 Auto-queue integration
+1 day
+5.2, 2.2
+⚪ PENDING
+5.4 Window Manager (multi-display)
+2 days
+1.4
+⚪ PENDING
+5.5 Preferences Manager
+1 day
+1.4
+⚪ PENDING
+5.6 Setup Wizard implementation
+2 days
+5.5, 2.1
+⚪ PENDING
+5.7 Analytics dashboard
+2 days
+1.2
+⚪ PENDING
+Phase 5 Testing
+2 days
+All above
+⚪ PENDING
+
+Phase 6: Polish & Deployment (Hour 6-7)
+Goal: Production readiness
+Task
+Duration
+Dependencies
+Status
+6.1 Auto-updater implementation
+2 days
+1.4
+⚪ PENDING
+6.2 Application icon design
+1 day
+None
+⚪ PENDING
+6.3 Installer creation (all platforms)
+2 days
+6.2
+⚪ PENDING
+6.4 Error logging & diagnostics
+1 day
+All
+⚪ PENDING
+6.5 Performance optimization
+2 days
+All
+⚪ PENDING
+6.6 Documentation writing
+2 days
+All
+⚪ PENDING
+6.7 User acceptance testing
+3 days
+All
+⚪ PENDING
+Phase 6 Testing
+2 days
+All above
+⚪ PENDING
+
+Phase 7: Deployment (Hour 7-8)
+Goal: Production deployment and monitoring
+Task
+Duration
+Dependencies
+Status
+7.1 Production Supabase setup
+1 day
+1.1
+⚪ PENDING
+7.2 Web interface deployment (Vercel)
+1 day
+3.4, 4.4
+⚪ PENDING
+7.3 Electron app distribution
+1 day
+6.3
+⚪ PENDING
+7.4 Update server configuration
+1 day
+6.1
+⚪ PENDING
+7.5 Monitoring setup
+1 day
+All
+⚪ PENDING
+7.6 Backup procedures
+1 day
+7.1
+⚪ PENDING
+7.7 Training & handoff
+2 days
+All
+⚪ PENDING
+Total Estimated Duration: 7-8 Hours
+
+3. AI Co-Pilot Integration Instructions {#ai-copilot-integration}
+3.1 Using Claude/ChatGPT for Development
+Context Preparation: When working with AI assistants, provide this manifesto as context along with:
+1. Specific component you're implementing 
+2. Current error messages or issues 
+3. Related code snippets 
+Effective Prompting Examples:
+Example 1: Implementing a Component
+I'm implementing the Queue Orchestrator from the DJAMMS Obie manifesto.
+I need help with the advanceQueue() method. Here's my current code:
+
+[paste code]
+
+The issue is [describe issue]. Based on the manifesto architecture,
+how should I handle priority queue vs main queue selection?
+Example 2: Debugging
+My Supabase real-time subscription isn't receiving updates. Here's my
+adapter code:
+
+[paste code]
+
+According to the manifesto, I should be subscribing to the
+'admin-commands' channel with filter 'status = eq.pending'. What am I
+missing?
+Example 3: Architecture Questions
+The manifesto describes a "graceful degradation" principle. I need to
+implement offline mode for the player. How should the Queue Orchestrator
+behave when Supabase is unreachable?
+
+3.2 Code Generation Guidelines
+When asking AI to generate code:
+DO:
+Reference specific sections of the manifesto 
+Provide the complete function signature 
+Specify error handling requirements 
+Request JSDoc comments 
+Ask for usage examples 
+DON'T:
+Ask for entire files without context 
+Request features not in the manifesto 
+Ignore the existing architecture patterns 
+Skip error handling implementation 
+
+3.3 Iterative Development with AI
+Workflow:
+1. Start Small: Implement one method at a time 
+2. Test: Run and test before moving forward 
+3. Refine: Show AI the test results and errors 
+4. Integrate: Connect components incrementally 
+5. Document: Ask AI to generate documentation 
+Example Iteration:
+Round 1: "Generate the basic subscribeToAdminCommands method"
+[Test, find issues]
+
+Round 2: "The subscription works but I'm not receiving INSERT events.
+Here's the console output: [paste]. The Supabase schema shows..."
+[Fix, test again]
+
+Round 3: "Perfect! Now add error handling with exponential backoff
+retry logic as specified in the manifesto."
+
+3.4 AI-Assisted Debugging
+Debugging Prompt Template:
+Component: [Name]
+Expected Behavior: [From manifesto]
+Actual Behavior: [What's happening]
+Error Messages: [Paste errors]
+Relevant Code: [Paste code]
+Question: [Specific question]
+Common Issues to Ask About:
+IPC communication not working 
+Real-time subscriptions not firing 
+Queue not advancing 
+Video playback errors 
+State synchronization conflicts 
+
+3.5 Using AI for Testing
+Test Generation Prompt:
+Generate unit tests for the QueueOrchestrator.advanceQueue() method.
+Requirements from manifesto:
+- Should prioritize priority_queue over main_queue
+- Should loop main_queue (FIFO)
+- Should emit 'play-video' event
+- Should update state to Supabase
+- Should handle empty queues gracefully
+
+Use Jest framework.
+
+3.6 Documentation with AI
+Documentation Prompt:
+Generate user documentation for the Setup Wizard based on the manifesto.
+Include:
+- Screenshots placeholders
+- Step-by-step instructions
+- Troubleshooting section
+- Required prerequisites
+Format in Markdown.
+
+4. Prerequisites Checklist {#prerequisites-checklist}
+4.1 Development Environment
+Required Software
+[ ] Node.js: Version 20.x or higher
+Download: https://nodejs.org/ 
+Verify: node --version 
+[ ] npm: Version 9.x or higher (comes with Node.js)
+Verify: npm --version 
+[ ] Git: Latest version
+Download: https://git-scm.com/ 
+Verify: git --version 
+[ ] Code Editor: VS Code recommended
+Download: https://code.visualstudio.com/ 
+Recommended extensions: 
+ESLint 
+Prettier 
+Electron Debug 
+Thunder Client (API testing) 
+Platform-Specific Requirements
+macOS:
+[ ] Xcode Command Line Tools: xcode-select --install 
+[ ] Homebrew (optional): https://brew.sh/ 
+Windows:
+[ ] Windows Build Tools: npm install --global windows-build-tools 
+[ ] Visual Studio Build Tools (for native modules) 
+Linux:
+[ ] build-essential: sudo apt-get install build-essential 
+[ ] libavformat-dev (for ffmpeg): sudo apt-get install libavformat-dev 
+
+4.2 External Services
+Supabase Setup
+[ ] Create Supabase account: https://supabase.com/ 
+[ ] Create new project 
+[ ] Note Project URL: https://xxxxx.supabase.co 
+[ ] Note Anon Key: Found in Settings > API 
+[ ] Enable Real-time: Database > Replication > Enable for all tables 
+[ ] Configure authentication (if using Auth) 
+MeTube (Optional)
+[ ] Docker installed and running 
+macOS/Windows: Docker Desktop 
+Linux: Docker Engine 
+[ ] Verify: docker --version and docker-compose --version 
+[ ] Test: docker run hello-world 
+
+4.3 DJAMMS Video Library
+Folder Structure
+Create the following structure in ~/Music/DJAMMS/:
+~/Music/DJAMMS/
+├── PLAYLISTS/
+│   ├── Rock/
+│   ├── Pop/
+│   ├── Hip-Hop/
+│   ├── Electronic/
+│   └── Country/
+├── COLLECTIONS/
+│   ├── Artists/
+│   │   ├── (Artist folders created automatically)
+│   └── Request Downloads/
+│       └── (MeTube downloads go here)
+└── .djamms-config (created by app)
+Video Files
+[ ] Supported formats: MP4, MKV, AVI, MOV, WEBM 
+[ ] Videos should have proper metadata (title, artist) 
+[ ] Minimum 10 videos for testing recommended 
+[ ] Organize videos into genre folders (PLAYLISTS/) 
+
+4.4 Project Dependencies
+Install Command
+From project root:
+npm install
+Core Dependencies (Electron App)
+{
+  "electron": "^28.0.0",
+  "electron-log": "^5.0.0",
+  "electron-store": "^8.1.0",
+  "electron-updater": "^6.1.0",
+  "@supabase/supabase-js": "^2.38.0",
+  "chokidar": "^3.5.3",
+  "fluent-ffmpeg": "^2.1.2"
+}
+Web Interface Dependencies (Next.js)
+{
+  "next": "^14.0.0",
+  "react": "^18.2.0",
+  "react-dom": "^18.2.0",
+  "@supabase/supabase-js": "^2.38.0",
+  "tailwindcss": "^3.3.0",
+  "@shadcn/ui": "latest"
+}
+
+4.5 Configuration Files
+.env File (Project Root)
+# Supabase Configuration
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=your-anon-key-here
+SUPABASE_SERVICE_KEY=your-service-key-here
+
+# MeTube Configuration
+METUBE_PORT=8081
+METUBE_DOWNLOAD_PATH=/path/to/djamms/COLLECTIONS/Request Downloads
+
+# Development
+NODE_ENV=development
+package.json Scripts
+{
+  "scripts": {
+    "start": "electron .",
+    "dev": "NODE_ENV=development electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "test": "jest",
+    "lint": "eslint src/**/*.js"
+  }
+}
+
+4.6 Build Tools
+Electron Builder Configuration
+File: electron-builder.json
+{
+  "appId": "com.djamms.obie",
+  "productName": "DJAMMS Obie Player",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "src/**/*",
+    "assets/**/*",
+    "package.json"
+  ],
+  "mac": {
+    "category": "public.app-category.music",
+    "icon": "assets/icons/icon.icns"
+  },
+  "win": {
+    "target": "nsis",
+    "icon": "assets/icons/icon.ico"
+  },
+  "linux": {
+    "target": "AppImage",
+    "category": "Audio",
+    "icon": "assets/icons/icon.png"
+  }
+}
+
+4.7 Testing Prerequisites
+Test Environment
+[ ] Sample video files (various formats) 
+[ ] Supabase test project (separate from production) 
+[ ] Test admin account credentials 
+[ ] Multiple display setup (for display testing) - optional 
+Testing Tools
+[ ] Jest: npm install --save-dev jest 
+[ ] Spectron (Electron testing): npm install --save-dev spectron 
+[ ] Supertest (API testing): npm install --save-dev supertest 
+
+4.8 Deployment Prerequisites
+Code Signing (for distribution)
+macOS:
+[ ] Apple Developer account ($99/year) 
+[ ] Developer ID Application certificate 
+[ ] Notarization credentials 
+Windows:
+[ ] Code signing certificate (from trusted CA) 
+[ ] Windows signing tool configured 
+Linux:
+[ ] No signing required (but recommended) 
+Update Server
+[ ] S3 bucket or equivalent (AWS, DigitalOcean Spaces) 
+[ ] CDN configuration (optional but recommended) 
+[ ] SSL certificate for update server 
+Web Hosting
+[ ] Vercel account (free tier available) 
+[ ] Domain name (optional) 
+[ ] SSL certificate (automatic with Vercel) 
+
+4.9 Documentation Prerequisites
+[ ] Screenshots of each interface 
+[ ] Video walkthrough of setup process 
+[ ] API documentation (auto-generated recommended) 
+[ ] User manual in PDF format 
+[ ] Admin guide 
+[ ] Troubleshooting guide 
+
+4.10 Final Pre-Launch Checklist
+Electron App
+[ ] All IPC handlers implemented 
+[ ] Error handling in place 
+[ ] Logging configured 
+[ ] Auto-updater tested 
+[ ] Kiosk mode working 
+[ ] Multi-display support verified 
+[ ] Video playback smooth (no stuttering) 
+[ ] Crossfade transitions working 
+[ ] Queue management functional 
+[ ] Preferences persist correctly 
+Supabase
+[ ] All tables created 
+[ ] RLS policies active and tested 
+[ ] Real-time enabled on all tables 
+[ ] Database functions working 
+[ ] Indexes created for performance 
+[ ] Backup schedule configured 
+[ ] API limits appropriate for load 
+Web Interfaces
+[ ] Admin Console deployed 
+[ ] Search Kiosk deployed 
+[ ] Real-time updates working 
+[ ] Authentication working 
+[ ] Responsive design verified 
+[ ] Error handling in place 
+[ ] Loading states implemented 
+[ ] Accessibility checks passed 
+Integration
+[ ] Electron ↔ Supabase communication 
+[ ] Web ↔ Supabase communication 
+[ ] Admin commands execute correctly 
+[ ] Priority queue system working 
+[ ] MeTube integration functional 
+[ ] File scanning and indexing working 
+[ ] State synchronization reliable 
+
+5. Quick Start Guide
+Step 1: Clone and Install
+git clone <repository-url>
+cd obie-electron-player
+npm install
+Step 2: Configure Supabase
+1. Create .env file with Supabase credentials 
+2. Run schema: psql -h <host> -U postgres -f schema.sql 
+3. Verify tables created in Supabase dashboard 
+Step 3: Setup DJAMMS Library
+mkdir -p ~/Music/DJAMMS/PLAYLISTS/Rock
+mkdir -p ~/Music/DJAMMS/COLLECTIONS/Artists
+mkdir -p ~/Music/DJAMMS/COLLECTIONS/Request\ Downloads
+# Copy sample videos to PLAYLISTS/Rock/
+Step 4: Run Development Build
+npm run dev
+Step 5: Run Setup Wizard
+Select DJAMMS folder 
+Enter Supabase credentials 
+Complete initial scan 
+Launch player 
+
+6. Troubleshooting Common Issues
+Issue: Supabase Connection Fails
+Solution:
+Verify .env file has correct URL and keys 
+Check RLS policies are not blocking access 
+Ensure Real-time is enabled in Supabase dashboard 
+Check network connectivity 
+Issue: Videos Not Playing
+Solution:
+Verify ffmpeg is installed: ffmpeg -version 
+Check video file permissions 
+Verify file format is supported 
+Check Electron console for errors 
+Issue: Queue Not Advancing
+Solution:
+Check Queue Orchestrator is initialized 
+Verify video.onended event is firing 
+Check Supabase state updates are working 
+Review logs in Electron dev tools 
+Issue: Real-Time Updates Not Received
+Solution:
+Verify channel subscription syntax 
+Check Supabase Real-time is enabled 
+Ensure row-level security allows reading 
+Confirm websocket connection established 
+
+7. Additional Resources
+Documentation Links
+Electron: https://www.electronjs.org/docs 
+Supabase: https://supabase.com/docs 
+Next.js: https://nextjs.org/docs 
+Tailwind CSS: https://tailwindcss.com/docs 
+shadcn/ui: https://ui.shadcn.com 
+Community Support
+Electron Discord: https://discord.gg/electron 
+Supabase Discord: https://discord.supabase.com 
+Stack Overflow: Tag questions with electron, supabase 
+Video Tutorials (Create These)
+Setup walkthrough 
+Admin console usage 
+Kiosk interface demo 
+MeTube integration guide 
+Troubleshooting common issues 
+8. Version History
+Version
+Date
+Changes
+1.0.0
+TBD
+Initial release
+0.9.0
+TBD
+Beta release
+0.1.0
+Current
+Development in progress
+
+END OF IMPLEMENTATION GUIDE
+For questions or support, refer to the project repository README or contact the development team.

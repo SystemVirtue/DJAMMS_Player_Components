@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Electron (main + renderer)",
+      "type": "pwa-node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron",
+      "runtimeArgs": [".", "--remote-debugging-port=9222"],
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron.cmd"
+      },
+      "console": "integratedTerminal",
+      "env": {
+        "NODE_ENV": "development",
+        "ELECTRON_ENABLE_LOGGING": "true",
+        "ELECTRON_ENABLE_STACK_DUMPING": "true"
+      },
+      "internalConsoleOptions": "neverOpen",
+      "outputCapture": "std",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Attach to Renderer (DevTools)",
+      "type": "pwa-chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}"
+    }
+  ]
+}

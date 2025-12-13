@@ -1,0 +1,13 @@
+version: '3.8'
+services:
+  metube:
+    image: ghcr.io/alexta69/metube:latest
+    container_name: metube
+    ports:
+      - "8081:8081"
+    volumes:
+      - /Users/mikeclarkin/Music/DJAMMS/COLLECTIONS/Request Downloads:/downloads
+    environment:
+      - MAX_CONCURRENT_DOWNLOADS=3
+      - YTDL_OPTIONS=--embed-subs --embed-metadata
+    restart: unless-stopped
