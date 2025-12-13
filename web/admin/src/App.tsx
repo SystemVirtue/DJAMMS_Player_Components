@@ -824,15 +824,15 @@ function AdminApp() {
   const confirmPause = async () => {
     if (settings.forceAutoPlay) return; // Don't allow pause when force auto-play is enabled
     setShowPauseDialog(false);
-    setIsPlaying(false); // Optimistic update
-    const success = await sendBlockingCommand(() => blockingCommands.pause(playerId));
-    if (!success) setIsPlaying(true); // Rollback on failure
+    // CRITICAL: Only send command - player will update state via realtime callback
+    // NO optimistic updates - player is the single source of truth
+    await sendBlockingCommand(() => blockingCommands.pause(playerId));
   };
 
   const handleResumePlayback = async () => {
-    setIsPlaying(true); // Optimistic update
-    const success = await sendBlockingCommand(() => blockingCommands.resume(playerId));
-    if (!success) setIsPlaying(false); // Rollback on failure
+    // CRITICAL: Only send command - player will update state via realtime callback
+    // NO optimistic updates - player is the single source of truth
+    await sendBlockingCommand(() => blockingCommands.resume(playerId));
   };
 
   const skipTrack = async () => {
@@ -857,7 +857,8 @@ function AdminApp() {
   };
 
   const handleVolumeChange = async (newVolume: number) => {
-    setVolume(newVolume);
+    // CRITICAL: Only send command - player will update state via realtime callback
+    // NO local state update - player is the single source of truth
     // Volume change is non-blocking (frequent updates)
     await sendCommand('setVolume', { volume: newVolume / 100 });
   };
