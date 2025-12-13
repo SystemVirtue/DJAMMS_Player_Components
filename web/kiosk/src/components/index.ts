@@ -1,4 +1,5 @@
 export { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS, FallbackBackground } from './BackgroundPlaylist';
+export { VideoBackground } from './VideoBackground';
 export { SearchKeyboard } from './SearchKeyboard';
 export { SearchInterface } from './SearchInterface';
 export { JukeboxSearchMode } from './JukeboxSearchMode';
