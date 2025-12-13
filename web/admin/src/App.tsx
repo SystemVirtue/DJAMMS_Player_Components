@@ -1412,35 +1412,24 @@ function AdminApp() {
                           </td>
                         </tr>
                       ) : (() => {
-                        // Match Player's QueueTab.tsx display logic exactly:
-                        // 1. "UP NEXT" items (from queueIndex + 1 to end)
-                        // 2. "Already Played" items (from 0 to queueIndex - 1)
-                        // Display index starts at 1 for first "UP NEXT" item
-                        const upNextVideos = activeQueue.slice(queueIndex + 1).map((track, idx) => ({
-                          track,
-                          originalIndex: queueIndex + 1 + idx,
-                          isUpNext: true
-                        }));
-                        const alreadyPlayedVideos = activeQueue.slice(0, queueIndex).map((track, idx) => ({
-                          track,
-                          originalIndex: idx,
-                          isUpNext: false
-                        }));
+                        // EXACT COPY from Player's QueueTab.tsx (src/components/QueueTab.tsx lines 40-44)
+                        // Reorder queue: "up next" videos first (after queueIndex), then "already played" (before queueIndex)
+                        // The current video is NOT shown in this list - it's displayed in NOW PLAYING section
+                        const upNextVideos = activeQueue.slice(queueIndex + 1); // Videos after current
+                        const alreadyPlayedVideos = activeQueue.slice(0, queueIndex); // Videos before current
                         const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
                         
-                        // Debug logging to verify reordering is working
-                        if (reorderedQueue.length > 0) {
-                          console.log('[WebAdmin] Queue reordering:', {
-                            queueIndex,
-                            totalVideos: activeQueue.length,
-                            upNextCount: upNextVideos.length,
-                            alreadyPlayedCount: alreadyPlayedVideos.length,
-                            reorderedCount: reorderedQueue.length,
-                            firstUpNext: upNextVideos[0]?.track?.title,
-                            firstPlayed: alreadyPlayedVideos[0]?.track?.title,
-                            firstInReordered: reorderedQueue[0]?.track?.title
-                          });
-                        }
+                        // EXACT COPY from Player's QueueTab.tsx (lines 47-55)
+                        // Map to track original indices for click handling
+                        const getOriginalIndex = (reorderedIndex: number): number => {
+                          if (reorderedIndex < upNextVideos.length) {
+                            // It's in the "up next" section
+                            return queueIndex + 1 + reorderedIndex;
+                          } else {
+                            // It's in the "already played" section
+                            return reorderedIndex - upNextVideos.length;
+                          }
+                        };
                         
                         if (reorderedQueue.length === 0) {
                           return (
@@ -1450,20 +1439,27 @@ function AdminApp() {
                           );
                         }
                         
-                        return reorderedQueue.map(({ track, originalIndex, isUpNext }, displayIndex) => (
-                          <tr
-                            key={`queue-${track.id}-${originalIndex}`}
-                            className={!isUpNext ? 'played' : ''}
-                            onClick={() => handleQueueItemClick(originalIndex)}
-                            style={{ cursor: 'pointer' }}
-                          >
-                            <td>{displayIndex + 1}</td>
-                            <td className="col-title">{cleanVideoTitle(track.title)}</td>
-                            <td>{getDisplayArtist(track.artist)}</td>
-                            <td>{track.duration || '—'}</td>
-                            <td>{getPlaylistDisplayName(track.playlist || '')}</td>
-                          </tr>
-                        ));
+                        // EXACT COPY from Player's QueueTab.tsx (line 60-71)
+                        // Map over reorderedQueue using reorderedIndex (not displayIndex)
+                        return reorderedQueue.map((track, reorderedIndex) => {
+                          const originalIndex = getOriginalIndex(reorderedIndex);
+                          const isUpNext = reorderedIndex < upNextVideos.length;
+                          
+                          return (
+                            <tr
+                              key={`queue-${track.id}-${originalIndex}`}
+                              className={!isUpNext ? 'played' : ''}
+                              onClick={() => handleQueueItemClick(originalIndex)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <td>{reorderedIndex + 1}</td>
+                              <td className="col-title">{cleanVideoTitle(track.title)}</td>
+                              <td>{getDisplayArtist(track.artist)}</td>
+                              <td>{track.duration || '—'}</td>
+                              <td>{getPlaylistDisplayName(track.playlist || '')}</td>
+                            </tr>
+                          );
+                        });
                       })()}
                     </tbody>
                   </table>
