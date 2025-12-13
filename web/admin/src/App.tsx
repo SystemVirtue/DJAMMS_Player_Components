@@ -337,8 +337,22 @@ function AdminApp() {
         console.log('[WebAdmin] Clearing active queue (active_queue is null)');
         setActiveQueue([]);
       } else if (state.active_queue === undefined) {
-        // Don't clear if undefined - field wasn't provided in this update
-        console.log('[WebAdmin] active_queue is undefined, preserving existing queue');
+        // CRITICAL FIX: When active_queue is undefined, it means the update didn't include it
+        // This is a BUG - active_queue should ALWAYS be included in updates
+        // Instead of preserving stale data, we should fetch fresh state or log a warning
+        console.warn('[WebAdmin] ⚠️ WARNING: active_queue is undefined in update - this should not happen!');
+        console.warn('[WebAdmin] Update data:', {
+          hasNowPlaying: !!state.now_playing_video,
+          nowPlayingTitle: state.now_playing_video?.title,
+          queueIndex: state.queue_index,
+          isPlaying: state.is_playing,
+          hasPriorityQueue: !!state.priority_queue
+        });
+        // Don't preserve existing queue - it's likely stale
+        // Instead, try to fetch fresh state if we have a playerId
+        // For now, log the warning but don't change queue (to avoid breaking UI)
+        // TODO: Implement fetch of fresh state when active_queue is undefined
+        console.warn('[WebAdmin] ⚠️ Preserving existing queue (may be stale) - consider fetching fresh state');
       } else {
         console.warn('[WebAdmin] active_queue is not an array:', state.active_queue, 'type:', typeof state.active_queue);
         setActiveQueue([]);
@@ -444,14 +458,35 @@ function AdminApp() {
     // Then subscribe to real-time changes
     console.log('[WebAdmin] Setting up realtime subscription for player:', playerId);
     const channel = subscribeToPlayerState(playerId, (state) => {
-      console.log('[WebAdmin] Realtime subscription callback fired with state:', {
+      // #region agent log
+      const logData = {
         hasState: !!state,
         hasActiveQueue: !!state?.active_queue,
         activeQueueLength: state?.active_queue?.length,
         activeQueueType: Array.isArray(state?.active_queue) ? 'array' : typeof state?.active_queue,
         hasNowPlaying: !!state?.now_playing_video,
-        nowPlayingTitle: state?.now_playing_video?.title
-      });
+        nowPlayingTitle: state?.now_playing_video?.title,
+        nowPlayingId: state?.now_playing_video?.id,
+        queueIndex: state?.queue_index,
+        priorityQueueLength: state?.priority_queue?.length,
+        timestamp: new Date().toISOString()
+      };
+      // Log to console for debugging
+      console.log('[WebAdmin] Realtime subscription callback fired with state:', logData);
+      
+      // Also log to debug endpoint if available (for monitoring)
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({
+          location: 'App.tsx:446',
+          message: 'Realtime update received',
+          data: logData,
+          timestamp: Date.now(),
+          sessionId: 'debug-session',
+          runId: 'run1',
+          hypothesisId: 'F'
+        }).catch(() => {});
+      }
+      // #endregion
       applyState(state);
     });
 
@@ -1359,7 +1394,7 @@ function AdminApp() {
                 <div className="queue-section active-queue-section">
                   <div className="queue-section-header">
                     <span className="material-symbols-rounded">queue_music</span>
-                    UP NEXT {activeQueue.length > 0 && `(${activeQueue.length} tracks)`}
+                    UP NEXT
                   </div>
                   <table className="media-table">
                     <thead>
@@ -1379,7 +1414,10 @@ function AdminApp() {
                           </td>
                         </tr>
                       ) : (() => {
-                        // Reorder: videos after current index first ("up next"), then videos before ("already played")
+                        // Match Player's QueueTab.tsx display logic exactly:
+                        // 1. "UP NEXT" items (from queueIndex + 1 to end)
+                        // 2. "Already Played" items (from 0 to queueIndex - 1)
+                        // Display index starts at 1 for first "UP NEXT" item
                         const upNextVideos = activeQueue.slice(queueIndex + 1).map((track, idx) => ({
                           track,
                           originalIndex: queueIndex + 1 + idx,

@@ -48,3 +48,4 @@ export function setThumbnailsPath(path: string): void {
 }
 
 
+

@@ -1795,7 +1795,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     lastFullStateHash: '', // Tracks full state hash (queue + other state) for change detection
     lastMainProcessHash: '', // Tracks last queue from main process to prevent recursion
     lastSkipLogTime: 0, // Throttles skip log messages to reduce spam
-    lastVideoId: '' // Tracks last video ID for change detection
+    lastVideoId: '', // Tracks last video ID for change detection
+    isExplicitSync: false // Flag to indicate we're doing an explicit sync (prevents useEffect from skipping)
   });
   
   // Keep refs in sync with state
@@ -2005,9 +2006,18 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           priorityQueue: (state.priorityQueue || []).map((v: Video) => v.id),
           queueIndex: state.queueIndex
         });
-        syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
+        
+        // CRITICAL: Don't set lastMainProcessHash yet - we'll set it AFTER we check if we need explicit sync
+        // This prevents the useEffect from skipping when we explicitly sync
         
         // Update local state from authoritative main process state
+        // CRITICAL: Store the queue data before updating state so we can use it for sync
+        const prevQueueHash = JSON.stringify({
+          activeQueue: queueRef.current.map(v => v.id),
+          priorityQueue: priorityQueueRef.current.map(v => v.id),
+          queueIndex: queueIndexRef.current
+        });
+        
         if (state.activeQueue) {
           setQueue(state.activeQueue);
           queueRef.current = state.activeQueue;
@@ -2018,6 +2028,14 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setPriorityQueue(state.priorityQueue);
           priorityQueueRef.current = state.priorityQueue;
         }
+        
+        // Check if queue content changed (for shuffle detection)
+        const newQueueHash = JSON.stringify({
+          activeQueue: (state.activeQueue || queueRef.current).map((v: Video) => v.id),
+          priorityQueue: (state.priorityQueue || priorityQueueRef.current).map((v: Video) => v.id),
+          queueIndex: state.queueIndex
+        });
+        const queueContentChanged = prevQueueHash !== newQueueHash;
         if (typeof state.queueIndex === 'number') {
           const prevIndex = queueIndexRef.current;
           // #region agent log
@@ -2028,11 +2046,49 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setQueueIndex(state.queueIndex);
           queueIndexRef.current = state.queueIndex;
           
-          // Note: Don't sync here - the useEffect will handle it
-          // This prevents recursion loops when queue state comes from main process
-          if (prevIndex !== state.queueIndex) {
-            console.log(`[PlayerWindow] Queue advanced: ${prevIndex} → ${state.queueIndex} (sync will be handled by useEffect)`);
+          // CRITICAL FIX: When queueIndex changes (SKIP) or queue content changes (SHUFFLE),
+          // we MUST explicitly sync with the full queue data to ensure WEBADMIN receives it
+          // This matches the behavior of WEBADMIN-triggered shuffle which explicitly calls syncState
+          // We check both queueIndex change AND queueContentChanged (set above) to catch all cases
+          if (prevIndex !== state.queueIndex || queueContentChanged) {
+            const queueIndexChanged = prevIndex !== state.queueIndex;
+            const changeType = queueIndexChanged ? 'advanced' : (queueContentChanged ? 'content changed (shuffle)' : 'updated');
+            
+            console.log(`[PlayerWindow] Queue ${changeType}: ${prevIndex} → ${state.queueIndex} - explicitly syncing with full queue data to WEBADMIN`);
+            
+            // CRITICAL: Clear lastMainProcessHash BEFORE explicit sync AND mark that we're doing explicit sync
+            // This prevents the useEffect from skipping the sync after we explicitly trigger it
+            // The explicit sync should be the one that goes through, not the useEffect
+            syncStateRef.current.lastMainProcessHash = '';
+            syncStateRef.current.isExplicitSync = true; // Flag to indicate we're doing explicit sync
+            
+            // Explicitly sync with full queue data - this ensures WEBADMIN receives active_queue
+            // Use setTimeout to ensure state updates have been applied, but use the state data directly
+            setTimeout(() => {
+              syncState({
+                activeQueue: state.activeQueue || queueRef.current,
+                priorityQueue: state.priorityQueue || priorityQueueRef.current,
+                queueIndex: state.queueIndex,
+                currentVideo: state.currentVideo || state.nowPlaying || currentVideoRef.current,
+                isPlaying: state.isPlaying !== undefined ? state.isPlaying : isPlaying,
+                status: state.isPlaying ? 'playing' : 'paused'
+              }, true); // immediate = true to bypass debounce
+              
+              // AFTER explicit sync completes, set lastMainProcessHash to prevent useEffect from syncing again
+              // This ensures we don't double-sync, but the explicit sync already went through
+              setTimeout(() => {
+                syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
+                syncStateRef.current.isExplicitSync = false; // Clear the flag
+              }, 200); // Increased delay to ensure sync completes
+            }, 0);
+          } else {
+            // No explicit sync needed - set lastMainProcessHash to prevent useEffect from syncing
+            // This is the normal case where queue didn't change, so we don't want to sync
+            syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
           }
+        } else {
+          // queueIndex not provided - just set the hash normally
+          syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
         }
         
         // Handle current video change - always use nowPlaying from main process (authoritative)
@@ -2320,6 +2376,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     
     // Prevent concurrent/recursive syncs
     if (syncStateRef.current.isSyncing) {
+      // #region agent log
+      if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2322',message:'Skipping sync - already syncing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+      }
+      // #endregion
       return; // Silently skip - no need to log every time
     }
     
@@ -2331,20 +2392,32 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     });
     
     // Create a hash of other state that might trigger syncs
+    // IMPORTANT: Round playbackTime to nearest 5 seconds to prevent frequent syncs from playback position updates
+    // This prevents recursion loops from playbackTime updating every second
+    const roundedPlaybackTime = Math.floor(playbackTime / 5) * 5; // Round to nearest 5 seconds
     const otherStateHash = JSON.stringify({
       currentVideo: currentVideo?.id || null,
       isPlaying,
-      playbackTime: Math.floor(playbackTime), // Round to avoid micro-changes
+      playbackTime: roundedPlaybackTime, // Round to 5-second intervals to reduce sync frequency
       volume: Math.round(volume)
     });
     
     // Combine hashes for full state comparison
     const fullStateHash = `${queueHash}|${otherStateHash}`;
     
+    // #region agent log
+    if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+      (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2342',message:'useEffect triggered - checking if sync needed',data:{playbackTime,roundedPlaybackTime,lastFullStateHash:syncStateRef.current.lastFullStateHash?.substring(0,50),fullStateHash:fullStateHash.substring(0,50),hashesMatch:fullStateHash===syncStateRef.current.lastFullStateHash},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+    }
+    // #endregion
+    
     // State-based detection: Skip sync if current queue matches what we just received from main process
     // This prevents syncing back to Supabase what we just received from main process
-    // IMPORTANT: Clear lastMainProcessHash after sync completes to allow future syncs
-    if (queueHash === syncStateRef.current.lastMainProcessHash && syncStateRef.current.lastMainProcessHash !== '') {
+    // CRITICAL: Don't skip if we're doing an explicit sync (isExplicitSync flag is set)
+    // The explicit sync should always go through, even if the queue hash matches
+    if (queueHash === syncStateRef.current.lastMainProcessHash && 
+        syncStateRef.current.lastMainProcessHash !== '' &&
+        !syncStateRef.current.isExplicitSync) {
       // Only log occasionally to reduce spam (every 5 seconds max)
       const now = Date.now();
       if (!syncStateRef.current.lastSkipLogTime || (now - syncStateRef.current.lastSkipLogTime) > 5000) {
@@ -2367,10 +2440,21 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     // Compare both queue hash and other state hash
     const lastFullStateHash = syncStateRef.current.lastFullStateHash || '';
     if (fullStateHash === lastFullStateHash) {
+      // #region agent log
+      if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2369',message:'Skipping sync - state hash unchanged',data:{fullStateHash:fullStateHash.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+      }
+      // #endregion
       return; // State hasn't changed, skip sync
     }
     
     console.log(`[PlayerWindow] 📤 Syncing state to Supabase: ${queue.length} active, ${priorityQueue.length} priority items, queueIndex: ${queueIndex}`);
+    
+    // #region agent log
+    if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+      (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2373',message:'Starting sync to Supabase',data:{queueLength:queue.length,priorityLength:priorityQueue.length,queueIndex,playbackTime,roundedPlaybackTime,currentVideoId:currentVideo?.id,isPlaying,wasSyncing:syncStateRef.current.isSyncing},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+    }
+    // #endregion
     
     // Set syncing flag to prevent recursion
     syncStateRef.current.isSyncing = true;
@@ -2446,6 +2530,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       // Clear syncing flag after a short delay to allow sync to complete
       // Use setTimeout to ensure this happens after any potential state updates
       setTimeout(() => {
+        // #region agent log
+        if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+          (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2448',message:'Clearing isSyncing flag',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+        }
+        // #endregion
         syncStateRef.current.isSyncing = false;
       }, 100);
     }

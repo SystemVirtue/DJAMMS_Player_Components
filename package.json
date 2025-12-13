@@ -11,7 +11,8 @@
     "electron"
   ],
   "scripts": {
-    "dev": "bash scripts/close-ports.sh && concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "setup:logging": "node scripts/setup-logging.js",
+    "dev": "npm run setup:logging && bash scripts/close-ports.sh && concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:vite": "vite",
     "dev:electron": "npm run build:electron-main && wait-on http://localhost:3003 && cross-env NODE_ENV=development electron .",
     "dev:electron:debug": "npm run build:electron-main && wait-on http://localhost:3003 && cross-env NODE_ENV=development electron . --remote-debugging-port=9222",

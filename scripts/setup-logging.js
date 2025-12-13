@@ -37,3 +37,4 @@ console.log(`   - Main process: ${MAIN_LOG}`);
 console.log(`   - Renderer process: ${RENDERER_LOG}`);
 console.log(`   - Vite dev server: ${VITE_LOG}`);
 console.log(`   - Combined: ${COMBINED_LOG}`);
+

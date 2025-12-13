@@ -229,11 +229,27 @@ export function subscribeToPlayerState(
       (payload) => {
         const newState = payload.new as SupabasePlayerState;
         if (newState) {
-          console.log(`[SupabaseClient] Received Realtime update for player ${playerId}:`, {
+          const logData = {
             now_playing: newState.now_playing_video?.title,
+            now_playing_id: newState.now_playing_video?.id,
             queue_length: newState.active_queue?.length,
-            priority_length: newState.priority_queue?.length
-          });
+            queue_index: newState.queue_index,
+            priority_length: newState.priority_queue?.length,
+            has_active_queue: newState.active_queue !== undefined,
+            active_queue_type: Array.isArray(newState.active_queue) ? 'array' : typeof newState.active_queue,
+            event_type: payload.eventType,
+            timestamp: new Date().toISOString()
+          };
+          console.log(`[SupabaseClient] Received Realtime update for player ${playerId}:`, logData);
+          
+          // Log detailed info for debugging
+          if (newState.active_queue === undefined) {
+            console.warn(`[SupabaseClient] ⚠️ Realtime update missing active_queue for player ${playerId}`);
+          }
+          if (!newState.now_playing_video) {
+            console.warn(`[SupabaseClient] ⚠️ Realtime update missing now_playing_video for player ${playerId}`);
+          }
+          
           lastPolledState = newState;
           callback(newState);
           
@@ -244,9 +260,15 @@ export function subscribeToPlayerState(
       }
     )
     .subscribe((status) => {
-      console.log(`[SupabaseClient] Player state subscription: ${status}`);
+      const statusLog = {
+        status,
+        playerId,
+        timestamp: new Date().toISOString()
+      };
+      console.log(`[SupabaseClient] Player state subscription: ${status}`, statusLog);
+      
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.warn('[SupabaseClient] Realtime subscription failed, starting fallback polling');
+        console.warn('[SupabaseClient] ⚠️ Realtime subscription failed, starting fallback polling', statusLog);
         
         // Start fallback polling every 2 seconds
         if (!isPolling) {
@@ -257,11 +279,16 @@ export function subscribeToPlayerState(
               if (state) {
                 // Only call callback if state actually changed
                 if (!lastPolledState || JSON.stringify(state) !== JSON.stringify(lastPolledState)) {
-                  console.log(`[SupabaseClient] Polled state update for player ${playerId}:`, {
+                  const pollLog = {
                     now_playing: state.now_playing_video?.title,
+                    now_playing_id: state.now_playing_video?.id,
                     queue_length: state.active_queue?.length,
-                    priority_length: state.priority_queue?.length
-                  });
+                    queue_index: state.queue_index,
+                    priority_length: state.priority_queue?.length,
+                    has_active_queue: state.active_queue !== undefined,
+                    timestamp: new Date().toISOString()
+                  };
+                  console.log(`[SupabaseClient] Polled state update for player ${playerId}:`, pollLog);
                   lastPolledState = state;
                   callback(state);
                 }
@@ -272,9 +299,11 @@ export function subscribeToPlayerState(
           }, 2000);
         }
       } else if (status === 'SUBSCRIBED') {
-        console.log('[SupabaseClient] Realtime subscription active');
+        console.log('[SupabaseClient] ✅ Realtime subscription active', statusLog);
         // Stop polling if Realtime is working
         stopPolling();
+      } else if (status === 'CLOSED') {
+        console.warn('[SupabaseClient] ⚠️ Realtime subscription closed', statusLog);
       }
     });
 
@@ -850,42 +879,92 @@ export async function getAllLocalVideos(
   
   // Only apply range if limit is specified
   // IMPORTANT: PostgREST defaults to 1000 rows if no range is specified
-  // To fetch all videos, we must explicitly set a very large range
+  // To fetch all videos, we must use pagination to fetch in chunks
+  // PostgREST may enforce server-side limits, so we fetch in batches
   if (limit !== null) {
     queryBuilder = queryBuilder.range(offset, offset + limit - 1);
-  } else {
-    // No limit specified - fetch all videos by setting a very large range
-    // This overrides PostgREST's default 1000 row limit
-    queryBuilder = queryBuilder.range(offset, offset + 9999999); // 10 million should be more than enough
-  }
-  
-  const { data, error } = await queryBuilder;
-
-  if (error) {
-    console.error('[SupabaseClient] ❌ Error fetching all videos:', error);
-    console.error('[SupabaseClient] Error details:', {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint
+    const { data, error } = await queryBuilder;
+    
+    if (error) {
+      console.error('[SupabaseClient] ❌ Error fetching all videos:', error);
+      console.error('[SupabaseClient] Error details:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      return [];
+    }
+    
+    // Filter results client-side to ensure only video files (double-check)
+    const filteredData = (data || []).filter(video => {
+      const filename = (video.filename || '').toLowerCase();
+      return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
     });
-    return [];
+    
+    return filteredData;
+  } else {
+    // No limit specified - fetch ALL videos using pagination
+    // PostgREST may limit results per request, so we fetch in chunks
+    const PAGE_SIZE = 1000; // Fetch 1000 at a time (PostgREST default limit)
+    let allVideos: SupabaseLocalVideo[] = [];
+    let currentOffset = offset;
+    let hasMore = true;
+    
+    console.log('[SupabaseClient] Fetching all videos using pagination (chunk size:', PAGE_SIZE, ')');
+    
+    while (hasMore) {
+      const chunkQuery = supabase
+        .from('local_videos')
+        .select('*')
+        .eq('player_id', playerId)
+        .eq('is_available', true)
+        .order('title')
+        .range(currentOffset, currentOffset + PAGE_SIZE - 1);
+      
+      // Apply filename filter
+      const extensionFilters = VIDEO_EXTENSIONS.map(ext => `filename.ilike.%${ext}`);
+      chunkQuery.or(extensionFilters.join(','));
+      
+      const { data: chunkData, error: chunkError } = await chunkQuery;
+      
+      if (chunkError) {
+        console.error('[SupabaseClient] ❌ Error fetching video chunk:', chunkError);
+        console.error('[SupabaseClient] Error details:', {
+          code: chunkError.code,
+          message: chunkError.message,
+          offset: currentOffset
+        });
+        break; // Stop pagination on error
+      }
+      
+      if (!chunkData || chunkData.length === 0) {
+        hasMore = false; // No more data
+      } else {
+        // Filter results client-side to ensure only video files
+        const filteredChunk = chunkData.filter(video => {
+          const filename = (video.filename || '').toLowerCase();
+          return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
+        });
+        
+        allVideos = [...allVideos, ...filteredChunk];
+        
+        // If we got fewer than PAGE_SIZE results, we've reached the end
+        if (chunkData.length < PAGE_SIZE) {
+          hasMore = false;
+        } else {
+          currentOffset += PAGE_SIZE;
+          console.log(`[SupabaseClient] Fetched ${allVideos.length} videos so far...`);
+        }
+      }
+    }
+    
+    console.log(`[SupabaseClient] ✅ Fetched all ${allVideos.length} videos using pagination`);
+    if (allVideos.length > 0) {
+      console.log('[SupabaseClient] Sample video:', { title: allVideos[0].title, artist: allVideos[0].artist, filename: allVideos[0].filename });
+    }
+    return allVideos;
   }
-
-  // Filter results client-side to ensure only video files (double-check)
-  const filteredData = (data || []).filter(video => {
-    const filename = (video.filename || '').toLowerCase();
-    return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
-  });
-  
-  console.log('[SupabaseClient] ✅ getAllLocalVideos returned', filteredData.length, 'videos (filtered from', data?.length || 0, 'total) for playerId:', playerId);
-  if (filteredData.length > 0) {
-    console.log('[SupabaseClient] Sample video:', { title: filteredData[0].title, artist: filteredData[0].artist, filename: filteredData[0].filename });
-  }
-  if (data && data.length > filteredData.length) {
-    console.warn('[SupabaseClient] ⚠️ Filtered out', data.length - filteredData.length, 'non-video files/folders');
-  }
-  return filteredData;
 }
 
 /**
