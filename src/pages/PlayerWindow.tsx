@@ -934,12 +934,40 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         }
 
         // Upload search data to Supabase once we have a client
-        // Note: The other useEffect will handle indexing when playlists change
+        // CRITICAL: When player ID changes, we MUST re-index even if playlists haven't changed
+        // because videos need to be indexed with the new player_id
         if (supabaseInitialized && loadedPlaylists && Object.keys(loadedPlaylists).length > 0) {
-          console.log('[PlayerWindow] Player ID validated - will sync to Supabase via playlist change effect');
-          // Don't index here - let the playlist change effect handle it to avoid double indexing
+          console.log('[PlayerWindow] Player ID changed - forcing re-index with new player ID:', playerId);
+          // Clear the playlist hash to force re-indexing with new player ID
+          lastIndexedPlaylistsRef.current = '';
+          // Wait a bit to ensure SupabaseService has re-initialized with new player ID
+          await new Promise(resolve => setTimeout(resolve, 500));
+          // Force re-index immediately with new player ID
+          setIsProcessing(true);
+          setProcessingProgress({ current: 0, total: 0 });
+          indexingCompleteRef.current = false;
+          const supabaseService = getSupabaseService();
+          console.log('[PlayerWindow] Re-indexing with SupabaseService player ID:', supabaseService.getPlayerId());
+          await supabaseService.indexLocalVideos(
+            loadedPlaylists,
+            (current, total) => {
+              setProcessingProgress({ current, total });
+            },
+            true // forceIndex = true to ensure re-indexing with new player ID
+          );
+          setIsProcessing(false);
+          setProcessingProgress({ current: 0, total: 0 });
+          indexingCompleteRef.current = true;
+          // Update playlist hash after successful indexing
+          lastIndexedPlaylistsRef.current = playlistHash;
+          console.log('[PlayerWindow] ✅ Re-indexed videos with new player ID:', playerId);
+        } else if (!supabaseInitialized) {
+          // If Supabase is not initialized yet, wait for it and then index
+          console.log('[PlayerWindow] Player ID changed but Supabase not initialized yet - will index when ready');
+          // Clear playlist hash so it will re-index when Supabase initializes
+          lastIndexedPlaylistsRef.current = '';
         } else {
-          // If Supabase is not initialized, mark as complete (no indexing needed)
+          // If Supabase is initialized but no playlists, mark as complete
           indexingCompleteRef.current = true;
         }
       } catch (error) {
