@@ -74,3 +74,4 @@ After fix:
 3. Check WEB_ADMIN console for "Received player state update" with queue_length
 4. Verify `active_queue` appears in Supabase database `player_state` table
 5. Verify WEB_ADMIN UI shows updated queue
+
