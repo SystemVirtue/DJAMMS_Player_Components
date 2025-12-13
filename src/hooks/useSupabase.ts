@@ -156,10 +156,7 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     try {
       // Reset handlers flag when re-initializing (playerId might have changed)
       handlersRegisteredRef.current = false;
-      // Force re-init if player ID changed
-      const currentPlayerId = serviceRef.current.getPlayerId();
-      const forceReinit = currentPlayerId !== (playerId || '');
-      const success = await serviceRef.current.initialize(playerId, forceReinit);
+      const success = await serviceRef.current.initialize(playerId);
       setIsInitialized(success);
       setIsOnline(success);
       return success;
@@ -351,17 +348,12 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     };
   }, [isInitialized]);
 
-  // Auto-initialize on mount and when player ID changes
+  // Auto-initialize on mount
   const hasInitializedRef = useRef(false);
   const lastAutoInitRef = useRef(false);
-  const lastPlayerIdRef = useRef<string | undefined>(playerId);
   useEffect(() => {
-    // Check if player ID changed
-    const playerIdChanged = lastPlayerIdRef.current !== playerId;
-    lastPlayerIdRef.current = playerId;
-    
-    // Only initialize when autoInit changes from false to true, or when player ID changes
-    if (autoInit && (playerIdChanged || (!lastAutoInitRef.current && !hasInitializedRef.current))) {
+    // Only initialize when autoInit changes from false to true
+    if (autoInit && !lastAutoInitRef.current && !hasInitializedRef.current) {
       hasInitializedRef.current = true;
       lastAutoInitRef.current = true;
       initialize();
@@ -376,7 +368,7 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
       // Note: We don't fully shutdown here as the service is a singleton
       // and may be used by other components. The main app handles final shutdown.
     };
-  }, [autoInit, playerId, initialize]); // Include playerId and initialize in dependencies
+  }, [autoInit]); // Only depend on autoInit, not initialize
 
   return {
     isInitialized,
