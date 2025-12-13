@@ -1444,6 +1444,20 @@ function AdminApp() {
                         }));
                         const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
                         
+                        // Debug logging to verify reordering is working
+                        if (reorderedQueue.length > 0) {
+                          console.log('[WebAdmin] Queue reordering:', {
+                            queueIndex,
+                            totalVideos: activeQueue.length,
+                            upNextCount: upNextVideos.length,
+                            alreadyPlayedCount: alreadyPlayedVideos.length,
+                            reorderedCount: reorderedQueue.length,
+                            firstUpNext: upNextVideos[0]?.track?.title,
+                            firstPlayed: alreadyPlayedVideos[0]?.track?.title,
+                            firstInReordered: reorderedQueue[0]?.track?.title
+                          });
+                        }
+                        
                         if (reorderedQueue.length === 0) {
                           return (
                             <tr className="empty-state">
