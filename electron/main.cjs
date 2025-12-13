@@ -750,12 +750,21 @@ ipcMain.on('queue-command', async (_event, command) => {
         }
         break;
       case 'play_at_index': {
+        // ARCHITECTURE: Index 0 is always now-playing
+        // Move selected video to index 0, then play it
         const idx = payload?.index ?? 0;
-        if (queueState.activeQueue[idx]) {
-          queueState.queueIndex = idx;
-          queueState.nowPlaying = queueState.activeQueue[idx];
+        if (idx >= 0 && idx < queueState.activeQueue.length) {
+          // Move video from idx to index 0
+          const video = queueState.activeQueue[idx];
+          queueState.activeQueue.splice(idx, 1); // Remove from current position
+          queueState.activeQueue.unshift(video); // Add to index 0
+          
+          // Index 0 is now the selected video
+          queueState.nowPlaying = queueState.activeQueue[0];
           queueState.nowPlayingSource = 'active';
           queueState.isPlaying = true;
+          
+          console.log('[main] Moved video to index 0 and playing:', video?.title);
           if (fullscreenWindow) {
             fullscreenWindow.webContents.send('control-player', { action: 'play', data: queueState.nowPlaying });
           }
@@ -763,103 +772,57 @@ ipcMain.on('queue-command', async (_event, command) => {
         break;
       }
       case 'shuffle_queue': {
-        const keepFirst = payload?.keepFirst ?? false;
-        if (queueState.activeQueue.length === 0) {
-          // Nothing to shuffle
+        // ARCHITECTURE: Index 0 is always now-playing - NEVER shuffle index 0
+        if (queueState.activeQueue.length <= 1) {
+          // Nothing to shuffle (0 or 1 items)
           break;
         }
         
-        if (queueState.activeQueue.length === 1) {
-          // Only one item, no need to shuffle, just ensure queueIndex is correct
-          queueState.queueIndex = 0;
-          break;
+        // Only shuffle indices 1-end, never touch index 0
+        const first = queueState.activeQueue[0]; // Keep index 0 (now-playing)
+        const rest = queueState.activeQueue.slice(1); // Get indices 1-end
+        
+        // Shuffle the rest (indices 1-end)
+        for (let i = rest.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [rest[i], rest[j]] = [rest[j], rest[i]];
         }
         
-        // Find the currently playing video in the queue (if any)
-        let currentPlayingIndex = -1;
-        if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
-          currentPlayingIndex = queueState.activeQueue.findIndex(
-            v => v && queueState.nowPlaying && 
-            (v.path === queueState.nowPlaying.path || v.id === queueState.nowPlaying.id)
-          );
-        }
-        
-        if (keepFirst && currentPlayingIndex >= 0) {
-          // Keep the currently playing video at its position, shuffle the rest
-          const currentVideo = queueState.activeQueue[currentPlayingIndex];
-          const before = queueState.activeQueue.slice(0, currentPlayingIndex);
-          const after = queueState.activeQueue.slice(currentPlayingIndex + 1);
-          const rest = [...before, ...after];
-          
-          // Shuffle the rest
-          for (let i = rest.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [rest[i], rest[j]] = [rest[j], rest[i]];
-          }
-          
-          // Reconstruct queue with current video at its position
-          queueState.activeQueue = [...rest.slice(0, currentPlayingIndex), currentVideo, ...rest.slice(currentPlayingIndex)];
-          // queueIndex stays the same since we kept the current video at its position
-        } else if (keepFirst) {
-          // Keep first item, shuffle the rest
-          const first = queueState.activeQueue[0];
-          const rest = queueState.activeQueue.slice(1);
-          for (let i = rest.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [rest[i], rest[j]] = [rest[j], rest[i]];
-          }
-          queueState.activeQueue = [first, ...rest];
-          queueState.queueIndex = 0;
-        } else {
-          // Full shuffle - find where current video ends up
-          for (let i = queueState.activeQueue.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [queueState.activeQueue[i], queueState.activeQueue[j]] = [queueState.activeQueue[j], queueState.activeQueue[i]];
-          }
-          
-          // Update queueIndex to point to currently playing video (if it exists)
-          if (currentPlayingIndex >= 0 && queueState.nowPlaying) {
-            const newIndex = queueState.activeQueue.findIndex(
-              v => v && queueState.nowPlaying && 
-              (v.path === queueState.nowPlaying.path || v.id === queueState.nowPlaying.id)
-            );
-            queueState.queueIndex = newIndex >= 0 ? newIndex : 0;
-          } else {
-            queueState.queueIndex = 0;
-          }
-        }
+        // Reconstruct: index 0 stays the same, rest is shuffled
+        queueState.activeQueue = [first, ...rest];
+        console.log('[main] ✅ Shuffled queue (index 0 preserved):', queueState.activeQueue[0]?.title, 'at index 0');
         break;
       }
       case 'move_queue_item': {
+        // ARCHITECTURE: Index 0 is always now-playing - prevent moving index 0
         const fromIndex = payload?.fromIndex ?? -1;
         const toIndex = payload?.toIndex ?? -1;
+        
+        // Prevent moving index 0 (now-playing)
+        if (fromIndex === 0 || toIndex === 0) {
+          console.log('[main] ⚠️ Cannot move index 0 (now-playing video)');
+          break;
+        }
+        
         if (fromIndex >= 0 && toIndex >= 0 && fromIndex < queueState.activeQueue.length && toIndex <= queueState.activeQueue.length) {
           const [movedVideo] = queueState.activeQueue.splice(fromIndex, 1);
           const adjustedTarget = fromIndex < toIndex ? toIndex - 1 : toIndex;
           queueState.activeQueue.splice(adjustedTarget, 0, movedVideo);
-          // Update queueIndex if needed
-          if (fromIndex === queueState.queueIndex) {
-            queueState.queueIndex = adjustedTarget;
-          } else if (fromIndex < queueState.queueIndex && toIndex > queueState.queueIndex) {
-            queueState.queueIndex--;
-          } else if (fromIndex > queueState.queueIndex && toIndex <= queueState.queueIndex) {
-            queueState.queueIndex++;
-          }
+          console.log('[main] Moved video from index', fromIndex, 'to index', adjustedTarget, ':', movedVideo?.title);
         }
         break;
       }
       case 'remove_from_queue': {
+        // ARCHITECTURE: Index 0 is always now-playing - prevent removing index 0
         const idx = payload?.index ?? -1;
+        if (idx === 0) {
+          console.log('[main] ⚠️ Cannot remove index 0 (now-playing video)');
+          break;
+        }
+        
         if (idx >= 0 && idx < queueState.activeQueue.length) {
-          // Don't remove currently playing video
-          if (idx === queueState.queueIndex) {
-            break;
-          }
-          queueState.activeQueue.splice(idx, 1);
-          // Adjust queueIndex if we removed a video before the current one
-          if (idx < queueState.queueIndex) {
-            queueState.queueIndex--;
-          }
+          const removedVideo = queueState.activeQueue.splice(idx, 1)[0];
+          console.log('[main] Removed video from index', idx, ':', removedVideo?.title);
         }
         break;
       }
@@ -867,129 +830,87 @@ ipcMain.on('queue-command', async (_event, command) => {
         // #region agent log
         try {
           const logPath = path.join(__dirname, '../../.cursor/debug.log');
-          const logData = {location:'main.cjs:687',message:'next command received',data:{priorityQueueLength:queueState.priorityQueue.length,activeQueueLength:queueState.activeQueue.length,queueIndex:queueState.queueIndex,nowPlayingSource:queueState.nowPlayingSource,nowPlayingTitle:queueState.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,E'};
+          const logData = {location:'main.cjs:687',message:'next command received',data:{priorityQueueLength:queueState.priorityQueue.length,activeQueueLength:queueState.activeQueue.length,nowPlayingSource:queueState.nowPlayingSource,nowPlayingTitle:queueState.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,E'};
           fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
         } catch(e) {}
         // #endregion
         console.log('[main] next command - priorityQueue.length:', queueState.priorityQueue.length, 'activeQueue.length:', queueState.activeQueue.length, 'nowPlayingSource:', queueState.nowPlayingSource);
         console.log('[main] Priority queue contents:', queueState.priorityQueue.map(v => v?.title || 'unknown').join(', '));
         
-        // Priority queue takes precedence - ALWAYS check first before active queue
-        // IMPORTANT: Check priority queue EVERY time, even if current video was from priority
-        if (queueState.priorityQueue.length > 0) {
-          console.log('[main] ✅ Playing from priority queue (has', queueState.priorityQueue.length, 'items)');
-          // Recycle current active queue video if it was playing (before priority interrupts)
-          if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
-            console.log('[main] Recycling active queue video:', queueState.nowPlaying.title);
-            queueState.activeQueue.push(queueState.nowPlaying);
-          }
-          // Play next priority video (one-time, not recycled)
-          const nextVideo = queueState.priorityQueue.shift();
-          console.log('[main] 🎬 Priority queue video:', nextVideo?.title, 'Remaining priority:', queueState.priorityQueue.length);
-          queueState.nowPlaying = nextVideo || null;
-          queueState.nowPlayingSource = nextVideo ? 'priority' : null;
-          queueState.isPlaying = !!nextVideo;
-          if (nextVideo && fullscreenWindow) {
-            console.log('[main] 🎬 Sending priority video to fullscreen window:', nextVideo.title);
-            fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
-          } else if (!nextVideo) {
-            console.error('[main] ❌ Priority queue had items but shift() returned null!');
-          } else if (!fullscreenWindow) {
-            console.error('[main] ❌ No fullscreen window available to play priority video!');
-          }
-        } else if (queueState.activeQueue.length > 0) {
-          console.log('[main] ⚠️ Priority queue is empty, playing from active queue');
-          console.log('[main] Playing from active queue');
-          // No priority queue items - play from active queue
-          // Recycle the current video to the end if it was from active queue
-          if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
-            // Recycle current video to end
-            const prevQueueIndex = queueState.queueIndex;
-            const prevQueueLength = queueState.activeQueue.length;
-            queueState.activeQueue.push(queueState.nowPlaying);
-            // Advance index to next video (circular, using new length after recycling)
-            queueState.queueIndex = (queueState.queueIndex + 1) % queueState.activeQueue.length;
-            // #region agent log
-            try {
-              const logPath = path.join(__dirname, '../../.cursor/debug.log');
-              const logData = {location:'main.cjs:723',message:'queueIndex advanced after recycle',data:{prevQueueIndex,newQueueIndex:queueState.queueIndex,prevQueueLength,newQueueLength:queueState.activeQueue.length,recycledVideo:queueState.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'};
-              fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
-            } catch(e) {}
-            // #endregion
-          } else if (queueState.nowPlaying && queueState.nowPlayingSource === 'priority') {
-            // Current video was from priority queue (just finished) - don't recycle it
-            // Priority videos are one-time, so just continue with active queue
-            // queueIndex should already point to the next active queue video to play
-            // (it was preserved when priority video interrupted)
-          } else if (!queueState.nowPlaying || queueState.nowPlayingSource === null) {
-            // No video currently playing (state was lost/reset) - advance queueIndex to next video
-            // This handles the case where nowPlayingSource is null but we need to advance
-            const prevQueueIndex = queueState.queueIndex;
-            queueState.queueIndex = (queueState.queueIndex + 1) % queueState.activeQueue.length;
-            // #region agent log
-            try {
-              const logPath = path.join(__dirname, '../../.cursor/debug.log');
-              const logData = {location:'main.cjs:754',message:'queueIndex advanced (nowPlayingSource was null)',data:{prevQueueIndex,newQueueIndex:queueState.queueIndex,queueLength:queueState.activeQueue.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'};
-              fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
-            } catch(e) {}
-            // #endregion
+        // ARCHITECTURE: Index 0 is always now-playing
+        // NEW PRIORITY QUEUE LOGIC:
+        // 1. Check if current video at index 0 was from priority queue - if so, remove it (don't recycle)
+        // 2. BEFORE moving index 0 to end, insert priority video into index 1 if available
+        // 3. Move index 0 to end (recycle) - but ONLY if it was from active queue
+        // 4. The new index 0 becomes the next video to play
+        
+        if (queueState.activeQueue.length > 0) {
+          const currentVideoAt0 = queueState.activeQueue[0];
+          const wasFromPriority = queueState.nowPlayingSource === 'priority';
+          
+          // Step 1: Handle the current video at index 0
+          if (wasFromPriority) {
+            // Current video was from priority queue - remove it entirely (don't recycle)
+            console.log('[main] 🗑️ Removing priority queue video (not recycling):', currentVideoAt0?.title);
+            queueState.activeQueue.shift(); // Remove from index 0
           }
           
-          // Use queueIndex to get the next video to play
-          // queueIndex should point to the currently playing video
-          let nextVideo = queueState.activeQueue[queueState.queueIndex];
-          // #region agent log
-          try {
-            const logPath = path.join(__dirname, '../../.cursor/debug.log');
-            const logData = {location:'main.cjs:733',message:'getting next video from queueIndex',data:{queueIndex:queueState.queueIndex,queueLength:queueState.activeQueue.length,nextVideoTitle:nextVideo?.title,queueTitles:queueState.activeQueue.map((v,i)=>`[${i}]${v?.title}`).slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,E'};
-            fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
-          } catch(e) {}
-          // #endregion
-          
-          // Check if index 1 (up-next) is the same as index 0 (now-playing)
-          // This can happen if the queue only has 1 video and it was recycled
-          if (nextVideo && queueState.activeQueue.length > 1) {
-            const currentVideoId = nextVideo.id || nextVideo.src;
-            const nextIndex = (queueState.queueIndex + 1) % queueState.activeQueue.length;
-            const upNextVideo = queueState.activeQueue[nextIndex];
-            
-            if (upNextVideo && (upNextVideo.id || upNextVideo.src) === currentVideoId) {
-              console.log('[main] ⚠️ Up-next video (index', nextIndex, ') is same as now-playing (index', queueState.queueIndex, '), skipping to next');
-              // Skip to the video after the duplicate
-              queueState.queueIndex = (nextIndex + 1) % queueState.activeQueue.length;
-              nextVideo = queueState.activeQueue[queueState.queueIndex];
-            }
+          // Step 2: BEFORE moving index 0 to end, insert priority video into index 1 if available
+          let priorityVideoInserted = false;
+          if (queueState.priorityQueue.length > 0) {
+            const priorityVideo = queueState.priorityQueue.shift();
+            console.log('[main] 📥 Inserting priority video into index 1:', priorityVideo?.title, 'Remaining priority:', queueState.priorityQueue.length);
+            queueState.activeQueue.splice(1, 0, priorityVideo); // Insert at index 1
+            priorityVideoInserted = true;
           }
+          
+          // Step 3: Move index 0 to end (recycle) - but ONLY if it was from active queue
+          if (!wasFromPriority && queueState.activeQueue.length > 0) {
+            const currentVideo = queueState.activeQueue.shift(); // Remove from index 0
+            queueState.activeQueue.push(currentVideo); // Add to end (recycle)
+            console.log('[main] ♻️ Recycled active queue video to end:', currentVideo?.title);
+          }
+          
+          // Step 4: The new index 0 is now the next video to play
+          const nextVideo = queueState.activeQueue[0];
           
           if (nextVideo) {
+            // Determine source: if we inserted a priority video, it's now at index 0
             queueState.nowPlaying = nextVideo;
-            queueState.nowPlayingSource = 'active';
+            queueState.nowPlayingSource = priorityVideoInserted ? 'priority' : 'active';
             queueState.isPlaying = true;
-            // queueIndex already points to the currently playing video
-            // #region agent log
-            try {
-              const logPath = path.join(__dirname, '../../.cursor/debug.log');
-              const logData = {location:'main.cjs:754',message:'broadcasting queue state after next',data:{queueIndex:queueState.queueIndex,nowPlayingTitle:nextVideo.title,queueLength:queueState.activeQueue.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'};
-              fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
-            } catch(e) {}
-            // #endregion
+            console.log('[main] 🎬 Next video:', nextVideo.title, 'Source:', queueState.nowPlayingSource);
             
             if (fullscreenWindow) {
               fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
             }
           } else {
-            // Shouldn't happen, but handle gracefully
+            // Queue is empty
             queueState.nowPlaying = null;
             queueState.nowPlayingSource = null;
             queueState.isPlaying = false;
-            queueState.queueIndex = 0;
+            console.log('[main] ⚠️ Queue is empty after next command');
+          }
+        } else if (queueState.priorityQueue.length > 0) {
+          // Active queue is empty, but priority queue has items
+          const priorityVideo = queueState.priorityQueue.shift();
+          console.log('[main] 🎬 Playing priority video (active queue empty):', priorityVideo?.title);
+          queueState.nowPlaying = priorityVideo;
+          queueState.nowPlayingSource = 'priority';
+          queueState.isPlaying = true;
+          
+          // Insert into active queue at index 0
+          queueState.activeQueue.push(priorityVideo);
+          
+          if (fullscreenWindow) {
+            fullscreenWindow.webContents.send('control-player', { action: 'play', data: priorityVideo });
           }
         } else {
           // No videos in either queue
           queueState.nowPlaying = null;
           queueState.nowPlayingSource = null;
           queueState.isPlaying = false;
-          queueState.queueIndex = 0;
+          console.log('[main] ⚠️ Both queues are empty');
         }
         break;
       }
