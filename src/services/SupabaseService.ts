@@ -365,6 +365,11 @@ class SupabaseService {
     priorityQueue?: Video[];
     queueIndex?: number;
   }, immediate: boolean = false): void {
+    // #region agent log
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+      (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:367',message:'syncPlayerState called',data:{hasActiveQueue:state.activeQueue!==undefined,activeQueueLength:state.activeQueue?.length,hasPriorityQueue:state.priorityQueue!==undefined,hasCurrentVideo:state.currentVideo!==undefined,currentVideoId:state.currentVideo?.id,immediate,lastSyncedHasQueue:this.lastSyncedState?.active_queue!==undefined,lastSyncedQueueLength:this.lastSyncedState?.active_queue?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
+    }
+    // #endregion
     // If transitioning, queue the update instead of writing immediately
     if (this.isTransitioning && (state.activeQueue !== undefined || state.priorityQueue !== undefined)) {
       logger.debug('[SupabaseService] Transition in progress, queueing queue update');
@@ -614,6 +619,12 @@ class SupabaseService {
         logger.debug('[SupabaseService] Fallback: Including priority_queue from lastSyncedState to ensure Web Admin receives it');
       }
       
+      // #region agent log
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:622',message:'updateData before DB write',data:{hasActiveQueue:updateData.active_queue!==undefined,activeQueueLength:updateData.active_queue?.length,hasPriorityQueue:updateData.priority_queue!==undefined,hasNowPlaying:updateData.now_playing_video!==undefined,nowPlayingId:updateData.now_playing_video?.id,lastSyncedHasQueue:this.lastSyncedState?.active_queue!==undefined,lastSyncedQueueLength:this.lastSyncedState?.active_queue?.length,updateDataKeys:Object.keys(updateData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
+      }
+      // #endregion
+      
       // Check if we have queue data after all the above logic
       const hasQueueData = updateData.active_queue !== undefined || updateData.priority_queue !== undefined;
       
@@ -622,11 +633,21 @@ class SupabaseService {
       
       // Only update if something changed OR if we have queue/now_playing data to sync
       if (Object.keys(updateData).length <= 1 && !hasQueueData && !hasNowPlaying) {
+        // #region agent log
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+          (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:625',message:'Skipping sync - no meaningful data',data:{updateDataKeys:Object.keys(updateData),hasQueueData,hasNowPlaying},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'}).catch(()=>{});
+        }
+        // #endregion
         return; // Only last_updated and no meaningful data, skip
       }
 
       // Skip sync if we're currently processing a remote update (prevents recursion loop)
       if (this.isProcessingRemoteUpdate) {
+        // #region agent log
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+          (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:630',message:'Skipping sync - processing remote update',data:{hasQueueData,hasNowPlaying},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'}).catch(()=>{});
+        }
+        // #endregion
         logger.debug('[SupabaseService] Skipping state sync - processing remote update');
         return;
       }
@@ -707,6 +728,11 @@ class SupabaseService {
         }
       } else if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData)) {
         // Only skip if no queue data and everything else is identical
+        // #region agent log
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+          (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:711',message:'Skipping sync - deep equality match',data:{hasQueueData,hasNowPlaying,updateDataKeys:Object.keys(updateData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'}).catch(()=>{});
+        }
+        // #endregion
         logger.debug('Skipping state sync - no changes detected (deep equality, no queue data)');
         return;
       }
@@ -752,6 +778,11 @@ class SupabaseService {
       }, null, 2);
       const requestId = await getIOLogger().logSent('supabase', requestStr, 'player_state');
 
+      // #region agent log
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:760',message:'Sending update to Supabase DB',data:{hasActiveQueue:updateData.active_queue!==undefined,activeQueueLength:updateData.active_queue?.length,hasPriorityQueue:updateData.priority_queue!==undefined,hasNowPlaying:updateData.now_playing_video!==undefined,nowPlayingId:updateData.now_playing_video?.id,updateDataKeys:Object.keys(updateData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
+      }
+      // #endregion
       // Select updated_at after update to get the actual timestamp from database trigger
       const { data: updatedRow, error } = await this.client
         .from('player_state')
@@ -807,10 +838,28 @@ class SupabaseService {
         });
         // Merge updateData into lastSyncedState to preserve all fields from previous syncs
         // This ensures comparisons use complete state, not just fields from most recent update
-        this.lastSyncedState = {
+        // CRITICAL: Never remove active_queue or priority_queue from lastSyncedState if updateData doesn't include them
+        // This prevents losing queue data when partial updates (e.g., only now_playing_video) are sent
+        const mergedState: Partial<SupabasePlayerState> = {
           ...this.lastSyncedState,
           ...updateData
-        } as Partial<SupabasePlayerState>;
+        };
+        
+        // Preserve queue data if updateData doesn't include it (defensive - should already be handled above)
+        if (updateData.active_queue === undefined && this.lastSyncedState?.active_queue !== undefined) {
+          mergedState.active_queue = this.lastSyncedState.active_queue;
+        }
+        if (updateData.priority_queue === undefined && this.lastSyncedState?.priority_queue !== undefined) {
+          mergedState.priority_queue = this.lastSyncedState.priority_queue;
+        }
+        
+        this.lastSyncedState = mergedState;
+        
+        // #region agent log
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+          (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:813',message:'lastSyncedState updated after DB write',data:{hasActiveQueue:this.lastSyncedState?.active_queue!==undefined,activeQueueLength:this.lastSyncedState?.active_queue?.length,hasPriorityQueue:this.lastSyncedState?.priority_queue!==undefined,hasNowPlaying:this.lastSyncedState?.now_playing_video!==undefined,nowPlayingId:this.lastSyncedState?.now_playing_video?.id,updateDataHadQueue:updateData.active_queue!==undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
+        }
+        // #endregion
         
         // Update lastQueueUpdateTime if queue data was synced
         // Use the actual updated_at from database (set by trigger) for accurate conflict resolution
