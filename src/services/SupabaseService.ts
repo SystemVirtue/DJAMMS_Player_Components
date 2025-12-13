@@ -624,20 +624,33 @@ class SupabaseService {
         if (activeQueueLengthChanged || priorityQueueLengthChanged) {
           logger.debug('Syncing state with queue data (queue length changed)');
         } else {
-          // Lengths are same - check if content is different (compare sets of IDs, not order)
-          // This handles cases where videos are recycled (same content, just reordered)
+          // Lengths are same - check if content OR order is different
+          // Compare both content (ID sets) and order (ID sequence) to catch shuffle operations
           const lastActiveIds = new Set(lastActiveQueue.map(item => item.id));
           const newActiveIds = new Set(newActiveQueue.map(item => item.id));
           const activeQueueContentChanged = lastActiveIds.size !== newActiveIds.size ||
             [...lastActiveIds].some(id => !newActiveIds.has(id));
+          
+          // Check if order changed (compare ID sequences, not just sets)
+          const lastActiveIdSequence = lastActiveQueue.map(item => item.id);
+          const newActiveIdSequence = newActiveQueue.map(item => item.id);
+          const activeQueueOrderChanged = lastActiveIdSequence.length === newActiveIdSequence.length &&
+            lastActiveIdSequence.some((id, index) => id !== newActiveIdSequence[index]);
           
           const lastPriorityIds = new Set(lastPriorityQueue.map(item => item.id));
           const newPriorityIds = new Set(newPriorityQueue.map(item => item.id));
           const priorityQueueContentChanged = lastPriorityIds.size !== newPriorityIds.size ||
             [...lastPriorityIds].some(id => !newPriorityIds.has(id));
           
-          // If queue content hasn't changed, check if other fields changed
-          if (!activeQueueContentChanged && !priorityQueueContentChanged) {
+          // Check if priority queue order changed
+          const lastPriorityIdSequence = lastPriorityQueue.map(item => item.id);
+          const newPriorityIdSequence = newPriorityQueue.map(item => item.id);
+          const priorityQueueOrderChanged = lastPriorityIdSequence.length === newPriorityIdSequence.length &&
+            lastPriorityIdSequence.some((id, index) => id !== newPriorityIdSequence[index]);
+          
+          // If queue content AND order haven't changed, check if other fields changed
+          if (!activeQueueContentChanged && !activeQueueOrderChanged && 
+              !priorityQueueContentChanged && !priorityQueueOrderChanged) {
             // Check if other fields changed
             const otherFieldsChanged = Object.keys(updateData).some(key => {
               if (key === 'active_queue' || key === 'priority_queue' || key === 'last_updated') return false;
@@ -645,12 +658,16 @@ class SupabaseService {
             });
             
             if (!otherFieldsChanged) {
-              logger.debug('[SupabaseService] Skipping state sync - queue content unchanged (same videos, possibly reordered)');
+              logger.debug('[SupabaseService] Skipping state sync - queue content and order unchanged');
               return;
             }
           }
           
-          logger.debug('Syncing state with queue data (queue content changed or other fields changed)');
+          if (activeQueueOrderChanged || priorityQueueOrderChanged) {
+            logger.debug('Syncing state with queue data (queue order changed)');
+          } else {
+            logger.debug('Syncing state with queue data (queue content changed or other fields changed)');
+          }
         }
       } else if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData)) {
         // Only skip if no queue data and everything else is identical
