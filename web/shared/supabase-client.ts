@@ -710,9 +710,13 @@ export async function searchLocalVideos(
     });
 
     if (error) {
-      // Suppress schema mismatch errors (42804 = type mismatch, PGRST203 = function not found, 400 = bad request)
-      // These are non-critical since we have ILIKE fallback
-      if (error.code !== '42804' && error.code !== 'PGRST203' && error.code !== '400') {
+      // Suppress known schema mismatch errors (42804 = type mismatch, PGRST203 = function not found, 400 = bad request)
+      // These are non-critical since we have ILIKE fallback - don't log them as errors
+      const errorCode = error.code?.toString() || '';
+      const isKnownError = errorCode === '42804' || errorCode === 'PGRST203' || errorCode === '400' || 
+                          error.message?.includes('structure of query does not match') ||
+                          error.message?.includes('Returned type jsonb does not match');
+      if (!isKnownError) {
         console.warn('[SupabaseClient] FTS search_videos RPC failed, falling back to ILIKE:', error);
       }
       throw error;
@@ -721,9 +725,33 @@ export async function searchLocalVideos(
     // If RPC returns player_id, filter client-side to be safe
     const filtered = (data || []).filter((row: any) => !row.player_id || row.player_id === playerId);
     return filtered;
-  } catch (rpcError) {
+  } catch (rpcError: any) {
     // Always fall back to ILIKE search if RPC fails
-    console.debug('[SupabaseClient] RPC search failed, using ILIKE fallback:', rpcError);
+    // Suppress ALL logging for known schema mismatch errors (expected behavior, no need to log)
+    const errorCode = String(rpcError?.code || '');
+    const errorMessage = String(rpcError?.message || '');
+    const errorDetails = String(rpcError?.details || '');
+    const errorString = JSON.stringify(rpcError || {});
+    
+    // Check for known schema mismatch errors - be very permissive and check all possible fields
+    const isKnownError = 
+      errorCode === '42804' || 
+      errorCode === 'PGRST203' || 
+      errorCode === '400' ||
+      errorMessage.toLowerCase().includes('structure of query') ||
+      errorMessage.toLowerCase().includes('does not match') ||
+      errorMessage.toLowerCase().includes('jsonb') ||
+      errorDetails.toLowerCase().includes('jsonb') ||
+      errorDetails.toLowerCase().includes('does not match') ||
+      errorString.toLowerCase().includes('structure of query') ||
+      errorString.toLowerCase().includes('jsonb does not match');
+    
+    // COMPLETELY SILENT for known errors - no console output at all
+    // Only log truly unexpected errors that we haven't seen before
+    if (!isKnownError) {
+      console.debug('[SupabaseClient] RPC search failed, using ILIKE fallback:', rpcError);
+    }
+    // For known errors: silently continue to ILIKE fallback (no console output whatsoever)
     // Fallback: legacy ILIKE search (any word in title OR artist), scoped to player
     const MIN_WORD_LENGTH = 2;
   const words = trimmedQuery
@@ -765,6 +793,29 @@ export async function getAllLocalVideos(
   limit: number = 1000,
   offset: number = 0
 ): Promise<SupabaseLocalVideo[]> {
+  if (!playerId || playerId.trim() === '') {
+    console.warn('[SupabaseClient] getAllLocalVideos called with empty playerId');
+    return [];
+  }
+
+  console.log('[SupabaseClient] getAllLocalVideos called:', { playerId, limit, offset });
+  
+  // First, check what player_ids exist in the database (for debugging)
+  const { data: allPlayers, error: countError } = await supabase
+    .from('local_videos')
+    .select('player_id')
+    .limit(10);
+  
+  if (!countError && allPlayers && allPlayers.length > 0) {
+    const uniquePlayerIds = [...new Set(allPlayers.map(v => v.player_id))];
+    console.log('[SupabaseClient] Found videos for player IDs:', uniquePlayerIds);
+    if (!uniquePlayerIds.includes(playerId)) {
+      console.warn(`[SupabaseClient] ⚠️ WARNING: No videos found for playerId "${playerId}". Available player IDs:`, uniquePlayerIds);
+    }
+  } else if (!countError) {
+    console.warn('[SupabaseClient] ⚠️ WARNING: local_videos table is EMPTY - no videos indexed yet!');
+  }
+  
   const { data, error } = await supabase
     .from('local_videos')
     .select('*')
@@ -774,10 +825,20 @@ export async function getAllLocalVideos(
     .range(offset, offset + limit - 1);
 
   if (error) {
-    console.error('[SupabaseClient] Error fetching all videos:', error);
+    console.error('[SupabaseClient] ❌ Error fetching all videos:', error);
+    console.error('[SupabaseClient] Error details:', {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint
+    });
     return [];
   }
 
+  console.log('[SupabaseClient] ✅ getAllLocalVideos returned', data?.length || 0, 'videos for playerId:', playerId);
+  if (data && data.length > 0) {
+    console.log('[SupabaseClient] Sample video:', { title: data[0].title, artist: data[0].artist, player_id: data[0].player_id });
+  }
   return data || [];
 }
 

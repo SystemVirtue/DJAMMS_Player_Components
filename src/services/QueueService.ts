@@ -106,6 +106,17 @@ class QueueService {
    * @param user - Optional user/kiosk identifier who requested
    */
   public addToPriorityQueue(video: Video, user?: string): void {
+    // Check if video already exists in priority queue (prevent duplicates)
+    const videoId = video.id || video.src;
+    const alreadyExists = this.state.priorityQueue.some(
+      v => (v.id || v.src) === videoId
+    );
+    
+    if (alreadyExists) {
+      console.log('[QueueService] ⚠️ Video already in priority queue, skipping duplicate:', video.title);
+      return; // Don't add duplicate
+    }
+    
     const priorityVideo = {
       ...video,
       requestedBy: user // Store who requested it

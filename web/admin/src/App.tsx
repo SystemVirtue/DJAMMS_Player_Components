@@ -50,6 +50,18 @@ const getVideoPlaylist = (video: SupabaseLocalVideo): string => {
   return metadata?.playlist || '';
 };
 
+// Helper to extract playlist name from file path
+// Path format: /path/to/PLAYLISTS/PLxxxxxx.PlaylistName/video.mp4
+const extractPlaylistFromPath = (path: string): string => {
+  if (!path) return '';
+  // Match playlist folder name (PLxxxxxx.PlaylistName or PLxxxxxx_PlaylistName)
+  const match = path.match(/PLAYLISTS[\/\\]([^\/\\]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return '';
+};
+
 type TabId = 'queue' | 'search' | 'settings' | 'tools';
 
 // Navigation items configuration
@@ -286,6 +298,9 @@ function AdminApp() {
   useEffect(() => {
     // Helper to apply state
     const applyState = (state: SupabasePlayerState) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:300',message:'applyState: function entry',data:{hasState:!!state,activeQueueLength:state?.active_queue?.length,hasNowPlaying:!!state?.now_playing_video,nowPlayingTitle:state?.now_playing_video?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H'})}).catch(()=>{});
+      // #endregion
       const prevQueueLength = activeQueue.length;
       const prevPriorityLength = priorityQueue.length;
       const prevQueueIndex = queueIndex;
@@ -303,21 +318,56 @@ function AdminApp() {
       
       // Update local state from Supabase
       // Note: Electron writes 'now_playing_video', not 'now_playing'
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:318',message:'applyState: checking now_playing_video',data:{hasNowPlaying:!!state.now_playing_video,nowPlayingTitle:state.now_playing_video?.title,nowPlayingId:state.now_playing_video?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      console.log('[WebAdmin] applyState - now_playing_video:', state.now_playing_video ? {title: state.now_playing_video.title, id: state.now_playing_video.id} : 'null/undefined');
+      // #endregion
       if (state.now_playing_video) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:320',message:'applyState: setting currentVideo',data:{title:state.now_playing_video.title,id:state.now_playing_video.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        console.log('[WebAdmin] Setting currentVideo:', state.now_playing_video.title);
         setCurrentVideo(state.now_playing_video);
+      } else if (state.now_playing_video === null) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:325',message:'applyState: now_playing_video is explicitly null, clearing currentVideo',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        // Only clear if explicitly null (not undefined - undefined means field wasn't provided)
+        console.log('[WebAdmin] Clearing currentVideo (now_playing_video is null)');
+        setCurrentVideo(null);
       }
       if (typeof state.is_playing === 'boolean') {
         setIsPlaying(state.is_playing);
       }
-      if (state.active_queue) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:330',message:'applyState: checking active_queue',data:{hasActiveQueue:!!state.active_queue,activeQueueLength:state.active_queue?.length,activeQueueType:Array.isArray(state.active_queue)?'array':typeof state.active_queue,activeQueueValue:state.active_queue},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      console.log('[WebAdmin] applyState - active_queue:', state.active_queue ? `array with ${state.active_queue.length} items` : state.active_queue === null ? 'null' : 'undefined');
+      // #endregion
+      if (state.active_queue && Array.isArray(state.active_queue)) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:333',message:'applyState: setting active queue',data:{length:state.active_queue.length,firstItem:state.active_queue[0]?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         console.log('[WebAdmin] Setting active queue:', state.active_queue.length, 'items');
         setActiveQueue(state.active_queue);
+      } else if (state.active_queue === null) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:340',message:'applyState: active_queue is explicitly null, clearing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        // Only clear if explicitly null (not undefined - undefined means field wasn't provided)
+        console.log('[WebAdmin] Clearing active queue (active_queue is null)');
+        setActiveQueue([]);
+      } else if (state.active_queue === undefined) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:345',message:'applyState: active_queue is undefined, preserving existing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        // Don't clear if undefined - field wasn't provided in this update
+        console.log('[WebAdmin] active_queue is undefined, preserving existing queue');
       } else {
-        console.warn('[WebAdmin] State update has no active_queue:', state);
-        // Clear queue if state explicitly has null/undefined active_queue
-        if (state.active_queue === null || state.active_queue === undefined) {
-          setActiveQueue([]);
-        }
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:350',message:'applyState: active_queue is not array, clearing',data:{activeQueueValue:state.active_queue,isArray:Array.isArray(state.active_queue)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        console.warn('[WebAdmin] active_queue is not an array:', state.active_queue, 'type:', typeof state.active_queue);
+        setActiveQueue([]);
       }
       if (state.priority_queue) {
         // Track if the current video came from priority queue
@@ -398,10 +448,12 @@ function AdminApp() {
           console.log('[WebAdmin] Initial state received:', {
             has_active_queue: !!state.active_queue,
             active_queue_length: state.active_queue?.length || 0,
+            active_queue_type: Array.isArray(state.active_queue) ? 'array' : typeof state.active_queue,
             has_priority_queue: !!state.priority_queue,
             priority_queue_length: state.priority_queue?.length || 0,
             has_now_playing: !!state.now_playing_video,
-            now_playing_title: state.now_playing_video?.title
+            now_playing_title: state.now_playing_video?.title,
+            now_playing_id: state.now_playing_video?.id
           });
           applyState(state);
         } else {
@@ -416,7 +468,24 @@ function AdminApp() {
     loadInitialState();
 
     // Then subscribe to real-time changes
-    const channel = subscribeToPlayerState(playerId, applyState);
+    console.log('[WebAdmin] Setting up realtime subscription for player:', playerId);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:453',message:'Subscribing to player state realtime',data:{playerId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+    // #endregion
+    const channel = subscribeToPlayerState(playerId, (state) => {
+      console.log('[WebAdmin] Realtime subscription callback fired with state:', {
+        hasState: !!state,
+        hasActiveQueue: !!state?.active_queue,
+        activeQueueLength: state?.active_queue?.length,
+        activeQueueType: Array.isArray(state?.active_queue) ? 'array' : typeof state?.active_queue,
+        hasNowPlaying: !!state?.now_playing_video,
+        nowPlayingTitle: state?.now_playing_video?.title
+      });
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:456',message:'Realtime subscription callback fired',data:{hasState:!!state,hasActiveQueue:!!state?.active_queue,activeQueueLength:state?.active_queue?.length,hasNowPlaying:!!state?.now_playing_video,nowPlayingTitle:state?.now_playing_video?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
+      applyState(state);
+    });
 
     // unsubscribe() returns a Promise but cleanup must be sync - ignore return value
     return () => { 
@@ -428,6 +497,18 @@ function AdminApp() {
       }
     };
   }, [playerId]);
+
+  // Debug: Log current state values whenever they change
+  useEffect(() => {
+    console.log('[WebAdmin] State values updated:', {
+      currentVideo: currentVideo ? { title: currentVideo.title, id: currentVideo.id } : null,
+      activeQueueLength: activeQueue.length,
+      priorityQueueLength: priorityQueue.length,
+      queueIndex,
+      isPlaying,
+      playerState: playerState ? 'exists' : 'null'
+    });
+  }, [currentVideo, activeQueue.length, priorityQueue.length, queueIndex, isPlaying, playerState]);
 
   // Monitor Supabase Realtime connection status
   useEffect(() => {
@@ -544,11 +625,26 @@ function AdminApp() {
         videos.forEach(video => {
           // playlist is in metadata.playlist, not video.playlist
           const metadata = video.metadata as any;
-          const playlist = metadata?.playlist || 'Unknown';
+          let playlist = metadata?.playlist;
+          
+          // Fallback: Extract playlist from path if metadata.playlist is missing
+          const videoPath = (video as any).file_path || (video as any).path || '';
+          if (!playlist && videoPath) {
+            // Match playlist folder name (PLxxxxxx.PlaylistName or PLxxxxxx_PlaylistName)
+            const match = videoPath.match(/PLAYLISTS\/([^/]+)\//);
+            if (match) {
+              playlist = match[1];
+            }
+          }
+          
+          // Final fallback
+          playlist = playlist || 'Unknown';
+          
           if (!grouped[playlist]) grouped[playlist] = [];
           grouped[playlist].push(video);
         });
         console.log('[WebAdmin] Grouped into', Object.keys(grouped).length, 'playlists:', Object.keys(grouped));
+        console.log('[WebAdmin] Playlist names:', Object.keys(grouped));
         setPlaylists(grouped);
       } catch (error) {
         console.error('[WebAdmin] Failed to load videos:', error);
@@ -1222,6 +1318,12 @@ function AdminApp() {
               </div>
               <div className="table-container">
                 {/* Now Playing Section - Card with Progress Bar */}
+                {/* #region agent log */}
+                {(() => {
+                  fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1267',message:'UI render: checking currentVideo condition',data:{currentVideoExists:!!currentVideo,currentVideoTitle:currentVideo?.title,currentVideoId:currentVideo?.id,willRender:!!currentVideo},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                  return null;
+                })()}
+                {/* #endregion */}
                 {currentVideo && (
                   <div className="queue-section now-playing-section">
                     <div className="queue-section-header">
@@ -1232,7 +1334,7 @@ function AdminApp() {
                       <div className="now-playing-info">
                         <div className="now-playing-title">{cleanVideoTitle(currentVideo.title)}</div>
                         <div className="now-playing-artist">{getDisplayArtist(currentVideo.artist)}</div>
-                        <div className="now-playing-playlist">{getPlaylistDisplayName(currentVideo.playlist || '')}</div>
+                        <div className="now-playing-playlist">{getPlaylistDisplayName(extractPlaylistFromPath(currentVideo.path) || '')}</div>
                       </div>
                       <div className="now-playing-progress">
                         <span className="time-elapsed">
@@ -1279,10 +1381,25 @@ function AdminApp() {
                 )}
 
                 {/* Active Queue Section - Reordered: "Up Next" first, then "Already Played" */}
+                {/* #region agent log */}
+                {(() => {
+                  const logData = {
+                    activeQueueLength: activeQueue.length,
+                    activeQueueIsArray: Array.isArray(activeQueue),
+                    firstItem: activeQueue[0]?.title,
+                    willShowEmpty: activeQueue.length === 0,
+                    playerStateExists: !!playerState,
+                    currentVideoExists: !!currentVideo
+                  };
+                  console.log('[WebAdmin] UI render - Active Queue section:', logData);
+                  fetch('http://127.0.0.1:7242/ingest/43bded74-b0ec-4e73-962c-3136b089d71b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1374',message:'UI render: checking activeQueue condition',data:logData,timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+                  return null;
+                })()}
+                {/* #endregion */}
                 <div className="queue-section active-queue-section">
                   <div className="queue-section-header">
                     <span className="material-symbols-rounded">queue_music</span>
-                    UP NEXT
+                    UP NEXT {activeQueue.length > 0 && `(${activeQueue.length} tracks)`}
                   </div>
                   <table className="media-table">
                     <thead>

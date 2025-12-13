@@ -8,7 +8,63 @@
  * - Cross-client state consistency
  */
 
-import { test, expect, Page, BrowserContext } from '@playwright/test';
+import { test, expect, Page, BrowserContext, ConsoleMessage } from '@playwright/test';
+
+// Console monitor for integration tests
+class ConsoleMonitor {
+  private logs: Array<{ type: string; text: string; location: string; timestamp: Date }> = [];
+  private errors: Array<{ type: string; text: string; location: string; timestamp: Date }> = [];
+  private warnings: Array<{ type: string; text: string; location: string; timestamp: Date }> = [];
+
+  attach(page: Page) {
+    page.on('console', (msg: ConsoleMessage) => {
+      const log = {
+        type: msg.type(),
+        text: msg.text(),
+        location: msg.location().url || 'unknown',
+        timestamp: new Date()
+      };
+      
+      this.logs.push(log);
+      
+      if (msg.type() === 'error') {
+        this.errors.push(log);
+      } else if (msg.type() === 'warning') {
+        this.warnings.push(log);
+      }
+    });
+
+    page.on('pageerror', (error) => {
+      this.errors.push({
+        type: 'pageerror',
+        text: error.message,
+        location: error.stack || 'unknown',
+        timestamp: new Date()
+      });
+    });
+  }
+
+  getErrors() { return this.errors; }
+  getWarnings() { return this.warnings; }
+  getAllLogs() { return this.logs; }
+  hasErrors() { return this.errors.length > 0; }
+  
+  clear() {
+    this.logs = [];
+    this.errors = [];
+    this.warnings = [];
+  }
+
+  getReport() {
+    return {
+      totalLogs: this.logs.length,
+      errors: this.errors,
+      warnings: this.warnings,
+      errorCount: this.errors.length,
+      warningCount: this.warnings.length
+    };
+  }
+}
 
 const ADMIN_URL = process.env.ADMIN_URL || 'http://localhost:5176';
 const KIOSK_URL = process.env.KIOSK_URL || 'http://localhost:5175';
@@ -155,6 +211,12 @@ test.describe('Realtime Sync Tests', () => {
     const adminPage = await context.newPage();
     const kioskPage = await context.newPage();
 
+    // Monitor console logs
+    const adminMonitor = new ConsoleMonitor();
+    const kioskMonitor = new ConsoleMonitor();
+    adminMonitor.attach(adminPage);
+    kioskMonitor.attach(kioskPage);
+
     try {
       // Connect Admin
       await adminPage.goto(ADMIN_URL);
@@ -200,6 +262,16 @@ test.describe('Realtime Sync Tests', () => {
 
       // Priority queue should exist (count may or may not change depending on test data)
       expect(newPriorityCount).toBeGreaterThanOrEqual(0);
+
+      // Check for command errors in Kiosk console
+      const kioskErrors = kioskMonitor.getErrors();
+      const timeoutErrors = kioskErrors.filter(err =>
+        err.text.includes('timeout') && err.text.includes('Command')
+      );
+      
+      if (timeoutErrors.length > 0) {
+        console.warn('⚠️ Command timeout errors detected in Kiosk:', timeoutErrors.length);
+      }
     } finally {
       await adminPage.close();
       await kioskPage.close();

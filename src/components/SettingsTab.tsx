@@ -14,6 +14,7 @@ interface Settings {
   enableFullscreenPlayer: boolean;
   fadeDuration: number;
   crossfadeMode: CrossfadeMode;
+  forceAutoPlay: boolean;
 }
 
 interface SettingsTabProps {
@@ -340,6 +341,62 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             }}>
               {settings.fadeDuration.toFixed(1)}s
             </span>
+          </div>
+        </div>
+
+        {/* Force Auto-Play */}
+        <div className="settings-item">
+          <div className="settings-item-info">
+            <div className="settings-item-label">Force Auto-Play (this will disable 'Pause' toggle)</div>
+            <div className="settings-item-description">
+              When enabled, the Play/Pause button is hidden and playback cannot be paused. If paused for more than 2 seconds, playback will automatically resume. If no video is loaded for more than 2 seconds, the queue will advance.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => onUpdateSetting('forceAutoPlay', true)}
+              style={{
+                padding: '6px 14px',
+                fontSize: '13px',
+                backgroundColor: settings.forceAutoPlay 
+                  ? 'var(--yt-spec-call-to-action)' 
+                  : 'var(--yt-spec-badge-chip-background)',
+                color: settings.forceAutoPlay 
+                  ? 'white' 
+                  : 'var(--yt-text-secondary)',
+                border: settings.forceAutoPlay
+                  ? 'none'
+                  : '1px solid var(--yt-spec-10-percent-layer)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: settings.forceAutoPlay ? 600 : 400,
+                transition: 'all 0.2s'
+              }}
+            >
+              ENABLE
+            </button>
+            <button
+              onClick={() => onUpdateSetting('forceAutoPlay', false)}
+              style={{
+                padding: '6px 14px',
+                fontSize: '13px',
+                backgroundColor: !settings.forceAutoPlay 
+                  ? 'var(--yt-spec-call-to-action)' 
+                  : 'var(--yt-spec-badge-chip-background)',
+                color: !settings.forceAutoPlay 
+                  ? 'white' 
+                  : 'var(--yt-text-secondary)',
+                border: !settings.forceAutoPlay
+                  ? 'none'
+                  : '1px solid var(--yt-spec-10-percent-layer)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: !settings.forceAutoPlay ? 600 : 400,
+                transition: 'all 0.2s'
+              }}
+            >
+              DISABLE
+            </button>
           </div>
         </div>
       </div>

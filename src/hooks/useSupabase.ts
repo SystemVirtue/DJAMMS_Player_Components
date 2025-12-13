@@ -108,10 +108,54 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
   const [isOnline, setIsOnline] = useState(false);
   const serviceRef = useRef(getSupabaseService());
   const handlersRegisteredRef = useRef(false);
+  
+  // Store callbacks in refs to prevent effect re-runs when callbacks change
+  const callbacksRef = useRef({
+    onPlay,
+    onPause,
+    onResume,
+    onSkip,
+    onSetVolume,
+    onSeekTo,
+    onQueueAdd,
+    onQueueShuffle,
+    onLoadPlaylist,
+    onQueueMove,
+    onQueueRemove,
+    onPlayerWindowToggle,
+    onPlayerFullscreenToggle,
+    onPlayerRefresh,
+    onOverlaySettingsUpdate,
+    onKioskSettingsUpdate
+  });
+  
+  // Update callbacks ref when they change (but don't trigger effect)
+  useEffect(() => {
+    callbacksRef.current = {
+      onPlay,
+      onPause,
+      onResume,
+      onSkip,
+      onSetVolume,
+      onSeekTo,
+      onQueueAdd,
+      onQueueShuffle,
+      onLoadPlaylist,
+      onQueueMove,
+      onQueueRemove,
+      onPlayerWindowToggle,
+      onPlayerFullscreenToggle,
+      onPlayerRefresh,
+      onOverlaySettingsUpdate,
+      onKioskSettingsUpdate
+    };
+  }, [onPlay, onPause, onResume, onSkip, onSetVolume, onSeekTo, onQueueAdd, onQueueShuffle, onLoadPlaylist, onQueueMove, onQueueRemove, onPlayerWindowToggle, onPlayerFullscreenToggle, onPlayerRefresh, onOverlaySettingsUpdate, onKioskSettingsUpdate]);
 
   // Initialize the service
   const initialize = useCallback(async (): Promise<boolean> => {
     try {
+      // Reset handlers flag when re-initializing (playerId might have changed)
+      handlersRegisteredRef.current = false;
       const success = await serviceRef.current.initialize(playerId);
       setIsInitialized(success);
       setIsOnline(success);
@@ -146,127 +190,163 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     }
   }, []);
 
-  // Register command handlers
+  // Reset handlers flag when playerId changes
   useEffect(() => {
-    if (!isInitialized || handlersRegisteredRef.current) return;
+    handlersRegisteredRef.current = false;
+  }, [playerId]);
 
+  // Register command handlers
+  // Only re-register when isInitialized or playerId changes, not when callbacks change
+  useEffect(() => {
+    if (!isInitialized) {
+      console.log(`[useSupabase] ⚠️ Skipping handler registration - not initialized`);
+      return;
+    }
+
+    // Only register once per initialization/playerId
+    if (handlersRegisteredRef.current) {
+      console.log(`[useSupabase] ⚠️ Handlers already registered, skipping`);
+      return;
+    }
+
+    console.log(`[useSupabase] ✅ Registering command handlers for player: ${playerId}`);
     const service = serviceRef.current;
+    const callbacks = callbacksRef.current;
 
     // Play command (supports both video object and queueIndex for click-to-play)
-    if (onPlay) {
+    if (callbacks.onPlay) {
       service.onCommand('play', (cmd) => {
         const payload = cmd.command_data as { video?: QueueVideoItem; queueIndex?: number };
-        onPlay(payload?.video, payload?.queueIndex);
+        callbacks.onPlay?.(payload?.video, payload?.queueIndex);
       });
     }
 
     // Pause command
-    if (onPause) {
-      service.onCommand('pause', () => onPause());
+    if (callbacks.onPause) {
+      service.onCommand('pause', () => callbacks.onPause?.());
     }
 
     // Resume command
-    if (onResume) {
-      service.onCommand('resume', () => onResume());
+    if (callbacks.onResume) {
+      service.onCommand('resume', () => callbacks.onResume?.());
     }
 
     // Skip command
-    if (onSkip) {
-      service.onCommand('skip', () => onSkip());
+    if (callbacks.onSkip) {
+      service.onCommand('skip', () => callbacks.onSkip?.());
     }
 
     // Volume command
-    if (onSetVolume) {
+    if (callbacks.onSetVolume) {
       service.onCommand('setVolume', (cmd) => {
         const payload = cmd.command_data as VolumeCommandPayload;
-        onSetVolume(payload.volume);
+        callbacks.onSetVolume?.(payload.volume);
       });
     }
 
     // Seek command
-    if (onSeekTo) {
+    if (callbacks.onSeekTo) {
       service.onCommand('seekTo', (cmd) => {
         const payload = cmd.command_data as SeekCommandPayload;
-        onSeekTo(payload.position);
+        callbacks.onSeekTo?.(payload.position);
       });
     }
 
     // Queue add command
-    if (onQueueAdd) {
+    if (callbacks.onQueueAdd) {
+      console.log(`[useSupabase] ✅ Registering queue_add handler`);
       service.onCommand('queue_add', (cmd) => {
+        console.log(`[useSupabase] 🎯 queue_add handler called with command:`, cmd.id, cmd.command_type);
         const payload = cmd.command_data as QueueAddCommandPayload;
-        onQueueAdd(payload.video, payload.queueType);
+        console.log(`[useSupabase] 🎯 queue_add payload:`, payload);
+        callbacks.onQueueAdd?.(payload.video, payload.queueType);
       });
+    } else {
+      console.warn(`[useSupabase] ⚠️ onQueueAdd handler not provided - queue_add commands will not be processed`);
     }
 
     // Queue shuffle command
-    if (onQueueShuffle) {
-      service.onCommand('queue_shuffle', () => onQueueShuffle());
+    if (callbacks.onQueueShuffle) {
+      service.onCommand('queue_shuffle', () => callbacks.onQueueShuffle?.());
     }
 
     // Load playlist command
-    if (onLoadPlaylist) {
+    if (callbacks.onLoadPlaylist) {
       service.onCommand('load_playlist', (cmd) => {
         const payload = cmd.command_data as LoadPlaylistCommandPayload;
-        onLoadPlaylist(payload.playlistName, payload.shuffle);
+        callbacks.onLoadPlaylist?.(payload.playlistName, payload.shuffle);
       });
     }
 
     // Queue move command
-    if (onQueueMove) {
+    if (callbacks.onQueueMove) {
       service.onCommand('queue_move', (cmd) => {
         const payload = cmd.command_data as { fromIndex: number; toIndex: number };
-        onQueueMove(payload.fromIndex, payload.toIndex);
+        callbacks.onQueueMove?.(payload.fromIndex, payload.toIndex);
       });
     }
 
     // Queue remove command
-    if (onQueueRemove) {
+    if (callbacks.onQueueRemove) {
       service.onCommand('queue_remove', (cmd) => {
         const payload = cmd.command_data as { videoId: string; queueType: 'active' | 'priority' };
-        onQueueRemove(payload.videoId, payload.queueType);
+        callbacks.onQueueRemove?.(payload.videoId, payload.queueType);
       });
     }
 
     // Player window toggle command
-    if (onPlayerWindowToggle) {
+    if (callbacks.onPlayerWindowToggle) {
       service.onCommand('player_window_toggle', (cmd) => {
         const payload = cmd.command_data as { show: boolean };
-        onPlayerWindowToggle(payload.show);
+        callbacks.onPlayerWindowToggle?.(payload.show);
       });
     }
 
     // Player fullscreen toggle command
-    if (onPlayerFullscreenToggle) {
+    if (callbacks.onPlayerFullscreenToggle) {
       service.onCommand('player_fullscreen_toggle', (cmd) => {
         const payload = cmd.command_data as { fullscreen: boolean };
-        onPlayerFullscreenToggle(payload.fullscreen);
+        callbacks.onPlayerFullscreenToggle?.(payload.fullscreen);
       });
     }
 
     // Player refresh command
-    if (onPlayerRefresh) {
-      service.onCommand('player_refresh', () => onPlayerRefresh());
+    if (callbacks.onPlayerRefresh) {
+      service.onCommand('player_refresh', () => callbacks.onPlayerRefresh?.());
     }
 
     // Overlay settings update command
-    if (onOverlaySettingsUpdate) {
+    if (callbacks.onOverlaySettingsUpdate) {
       service.onCommand('overlay_settings_update', (cmd) => {
         const payload = cmd.command_data as { settings: Record<string, unknown> };
-        onOverlaySettingsUpdate(payload.settings);
+        callbacks.onOverlaySettingsUpdate?.(payload.settings);
       });
     }
 
     // Kiosk settings update command
-    if (onKioskSettingsUpdate) {
+    if (callbacks.onKioskSettingsUpdate) {
       service.onCommand('kiosk_settings_update', (cmd) => {
         const payload = cmd.command_data as { settings: Record<string, unknown> };
-        onKioskSettingsUpdate(payload.settings);
+        callbacks.onKioskSettingsUpdate?.(payload.settings);
       });
     }
 
     handlersRegisteredRef.current = true;
-  }, [isInitialized, onPlay, onPause, onResume, onSkip, onSetVolume, onSeekTo, onQueueAdd, onQueueShuffle, onLoadPlaylist, onQueueMove, onQueueRemove, onPlayerWindowToggle, onPlayerFullscreenToggle, onPlayerRefresh, onOverlaySettingsUpdate, onKioskSettingsUpdate]);
+    console.log(`[useSupabase] ✅ All command handlers registered`);
+  }, [isInitialized, playerId]); // Only depend on isInitialized and playerId
+
+  // Subscribe to connection status changes
+  useEffect(() => {
+    if (!isInitialized) return;
+    
+    const unsubscribe = serviceRef.current.onConnectionStatusChange((status) => {
+      setIsOnline(status === 'connected');
+    });
+    
+    return () => {
+      unsubscribe();
+    };
+  }, [isInitialized]);
 
   // Auto-initialize on mount
   const hasInitializedRef = useRef(false);

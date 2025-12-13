@@ -46,8 +46,18 @@ html, body, #root {
 }
 
 .material-symbols-rounded {
+  font-family: 'Material Symbols Rounded', sans-serif;
   font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
   user-select: none;
+  font-style: normal;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
 }
 
 .app ::-webkit-scrollbar {

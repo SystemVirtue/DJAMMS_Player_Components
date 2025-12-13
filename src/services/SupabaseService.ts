@@ -103,7 +103,9 @@ class SupabaseService {
   // Request deduplication
   private pendingStateSyncRequest: { requestId: string; timeoutId: ReturnType<typeof setTimeout> } | null = null;
   private activeStateSyncRequest: { requestId: string; promise: Promise<void>; abortController: AbortController } | null = null;
-  
+  private lastSyncTime: number = 0;
+  private readonly MIN_SYNC_INTERVAL_MS = 100; // Minimum 100ms between syncs to prevent rapid-fire duplicates
+
   // Connection state management
   private connectionStatus: 'connected' | 'disconnected' | 'reconnecting' = 'disconnected';
   private queuedCommands: Array<{ command: SupabaseCommand; timestamp: number }> = [];
@@ -123,6 +125,8 @@ class SupabaseService {
   // Offline queue handling
   private queuedQueueUpdates: QueuedQueueUpdate[] = [];
   private retryQueueTimeout: ReturnType<typeof setTimeout> | null = null;
+  private lastDuplicateSkipLogTime: number = 0; // Rate limit duplicate skip logs
+  private readonly DUPLICATE_SKIP_LOG_INTERVAL_MS = 2000; // Only log duplicate skip once per 2 seconds
 
   private constructor() {
     // Private constructor for singleton
@@ -177,8 +181,11 @@ class SupabaseService {
       // Start command listener
       await this.startCommandListener();
 
-      // Start player state realtime subscription
-      await this.startPlayerStateSubscription();
+      // CRITICAL: Electron Player should NOT subscribe to its own player_state updates
+      // This causes recursion loops: Player writes → Supabase broadcasts → Player receives own update → Processes → Writes again → Loop
+      // Only Web Admin and Web Kiosk should subscribe to player_state updates (they use subscribeToPlayerState from web/shared/supabase-client.ts)
+      // The Electron Player is the authoritative writer and should only WRITE to Supabase, not read its own updates
+      // await this.startPlayerStateSubscription(); // DISABLED - prevents recursion
 
       // Initialize IO Logger with Supabase client
       const { getIOLogger } = await import('./IOLogger');
@@ -371,13 +378,25 @@ class SupabaseService {
       return;
     }
 
-    // If offline, queue the update
+    // If offline, queue the update and RETURN EARLY (don't continue processing)
     if (this.connectionStatus === 'disconnected' || this.connectionStatus === 'reconnecting') {
       if (state.activeQueue !== undefined || state.priorityQueue !== undefined) {
-        logger.debug('[SupabaseService] Offline, queueing queue update');
-        this.queueQueueUpdate(state.activeQueue, state.priorityQueue);
+        // Only queue if it's different from the last queued update (prevent duplicates)
+        const shouldQueue = this.shouldQueueUpdate(state.activeQueue, state.priorityQueue);
+        if (shouldQueue) {
+          logger.debug('[SupabaseService] Offline, queueing queue update');
+          this.queueQueueUpdate(state.activeQueue, state.priorityQueue);
+        } else {
+          // Rate limit duplicate skip logs to prevent spam (only log once per interval)
+          const now = Date.now();
+          if (now - this.lastDuplicateSkipLogTime >= this.DUPLICATE_SKIP_LOG_INTERVAL_MS) {
+            logger.debug('[SupabaseService] Offline, skipping duplicate queue update (will retry on reconnect)');
+            this.lastDuplicateSkipLogTime = now;
+          }
+        }
       }
-      // Still allow other state updates to be queued (they'll be retried on reconnect)
+      // Return early - don't continue processing when offline
+      return;
     }
     const requestId = crypto.randomUUID();
     
@@ -437,6 +456,18 @@ class SupabaseService {
     },
     requestId: string
   ): Promise<void> {
+    // Rate limiting: prevent rapid-fire duplicate syncs
+    const now = Date.now();
+    const timeSinceLastSync = now - this.lastSyncTime;
+    if (timeSinceLastSync < this.MIN_SYNC_INTERVAL_MS && !this.isProcessingRemoteUpdate) {
+      logger.debug(`[SupabaseService] Rate limiting sync (${timeSinceLastSync}ms since last sync, min ${this.MIN_SYNC_INTERVAL_MS}ms)`);
+      // Reschedule for later
+      setTimeout(() => {
+        this.performStateSyncWithDedup(state, requestId);
+      }, this.MIN_SYNC_INTERVAL_MS - timeSinceLastSync);
+      return;
+    }
+    
     // If there's already an active request, cancel it
     if (this.activeStateSyncRequest) {
       this.activeStateSyncRequest.abortController.abort();
@@ -452,6 +483,8 @@ class SupabaseService {
     
     try {
       await syncPromise;
+      // Update last sync time on success
+      this.lastSyncTime = Date.now();
     } catch (error: any) {
       // Ignore abort errors (expected when cancelled)
       if (error?.name === 'AbortError' || abortController.signal.aborted) {
@@ -541,7 +574,17 @@ class SupabaseService {
 
       // Same logic for priority queue
       if (state.priorityQueue !== undefined) {
-        updateData.priority_queue = state.priorityQueue.map(v => this.videoToQueueItem(v));
+        // Remove duplicates from priority queue before syncing (prevent corruption)
+        const uniquePriorityQueue = state.priorityQueue.filter((video, index, self) => {
+          const videoId = video.id || video.src;
+          return index === self.findIndex(v => (v.id || v.src) === videoId);
+        });
+        
+        if (uniquePriorityQueue.length !== state.priorityQueue.length) {
+          logger.warn(`[SupabaseService] Removed ${state.priorityQueue.length - uniquePriorityQueue.length} duplicate(s) from priority queue before sync`);
+        }
+        
+        updateData.priority_queue = uniquePriorityQueue.map(v => this.videoToQueueItem(v));
       } else {
         // Only preserve if priorityQueue was not provided at all (undefined)
         if (this.lastSyncedState?.priority_queue) {
@@ -579,27 +622,42 @@ class SupabaseService {
         const newActiveQueue = updateData.active_queue || [];
         const newPriorityQueue = updateData.priority_queue || [];
         
-        // Compare queue lengths and content (quick check)
-        const activeQueueChanged = lastActiveQueue.length !== newActiveQueue.length ||
-          lastActiveQueue.some((item, idx) => item.id !== newActiveQueue[idx]?.id);
-        const priorityQueueChanged = lastPriorityQueue.length !== newPriorityQueue.length ||
-          lastPriorityQueue.some((item, idx) => item.id !== newPriorityQueue[idx]?.id);
+        // Compare queue lengths first (quick check)
+        const activeQueueLengthChanged = lastActiveQueue.length !== newActiveQueue.length;
+        const priorityQueueLengthChanged = lastPriorityQueue.length !== newPriorityQueue.length;
         
-        // If queues haven't changed and nothing else changed, skip sync
-        if (!activeQueueChanged && !priorityQueueChanged) {
-          // Check if other fields changed
-          const otherFieldsChanged = Object.keys(updateData).some(key => {
-            if (key === 'active_queue' || key === 'priority_queue' || key === 'last_updated') return false;
-            return !isEqual(this.lastSyncedState?.[key as keyof SupabasePlayerState], updateData[key as keyof SupabasePlayerState]);
-          });
+        // If lengths changed, queues definitely changed
+        if (activeQueueLengthChanged || priorityQueueLengthChanged) {
+          logger.debug('Syncing state with queue data (queue length changed)');
+        } else {
+          // Lengths are same - check if content is different (compare sets of IDs, not order)
+          // This handles cases where videos are recycled (same content, just reordered)
+          const lastActiveIds = new Set(lastActiveQueue.map(item => item.id));
+          const newActiveIds = new Set(newActiveQueue.map(item => item.id));
+          const activeQueueContentChanged = lastActiveIds.size !== newActiveIds.size ||
+            [...lastActiveIds].some(id => !newActiveIds.has(id));
           
-          if (!otherFieldsChanged) {
-            logger.debug('[SupabaseService] Skipping state sync - queue data unchanged');
-            return;
+          const lastPriorityIds = new Set(lastPriorityQueue.map(item => item.id));
+          const newPriorityIds = new Set(newPriorityQueue.map(item => item.id));
+          const priorityQueueContentChanged = lastPriorityIds.size !== newPriorityIds.size ||
+            [...lastPriorityIds].some(id => !newPriorityIds.has(id));
+          
+          // If queue content hasn't changed, check if other fields changed
+          if (!activeQueueContentChanged && !priorityQueueContentChanged) {
+            // Check if other fields changed
+            const otherFieldsChanged = Object.keys(updateData).some(key => {
+              if (key === 'active_queue' || key === 'priority_queue' || key === 'last_updated') return false;
+              return !isEqual(this.lastSyncedState?.[key as keyof SupabasePlayerState], updateData[key as keyof SupabasePlayerState]);
+            });
+            
+            if (!otherFieldsChanged) {
+              logger.debug('[SupabaseService] Skipping state sync - queue content unchanged (same videos, possibly reordered)');
+              return;
+            }
           }
+          
+          logger.debug('Syncing state with queue data (queue content changed or other fields changed)');
         }
-        
-        logger.debug('Syncing state with queue data (queue changed or other fields changed)');
       } else if (this.lastSyncedState && isEqual(this.lastSyncedState, updateData)) {
         // Only skip if no queue data and everything else is identical
         logger.debug('Skipping state sync - no changes detected (deep equality, no queue data)');
@@ -611,6 +669,11 @@ class SupabaseService {
         throw new DOMException('Request was cancelled', 'AbortError');
       }
 
+      // #region agent log
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:624',message:'syncing state to Supabase',data:{nowPlaying:updateData.now_playing_video?.title,queueLength:updateData.active_queue?.length,queueIndex:state.queueIndex,priorityLength:updateData.priority_queue?.length,hasQueueData},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'}).catch(()=>{});
+      }
+      // #endregion
       logger.debug('Syncing state to Supabase', {
         now_playing: updateData.now_playing_video?.title,
         status: updateData.status,
@@ -652,6 +715,11 @@ class SupabaseService {
 
       // Check if request was cancelled after the request
       if (abortSignal.aborted) {
+        // Log cancelled request to IO logger
+        await getIOLogger().logReceived('supabase', JSON.stringify({
+          cancelled: true,
+          reason: 'Request was cancelled before response'
+        }, null, 2), 'player_state', requestId);
         throw new DOMException('Request was cancelled', 'AbortError');
       }
 
@@ -700,6 +768,13 @@ class SupabaseService {
         }
       }
     } catch (error) {
+      // Handle aborted requests (cancelled) - log but don't treat as error
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        // Request was cancelled - this is expected when new syncs arrive
+        logger.debug('[SupabaseService] State sync request was cancelled (expected)');
+        return;
+      }
+      
       // Suppress exceptions during long runtime - Supabase errors shouldn't crash the app
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (errorMsg.includes('500') || errorMsg.includes('Internal Server Error')) {
@@ -730,39 +805,64 @@ class SupabaseService {
     this.commandChannel = this.client
       .channel(`djamms-commands:${this.playerId}`)
       .on('broadcast', { event: 'command' }, async (payload) => {
-        const message = payload.payload as {
-          command: SupabaseCommand;
-          timestamp: string;
-        };
-        
-        if (!message || !message.command) {
-          logger.warn('[SupabaseService] Received invalid broadcast message:', payload);
-          return;
-        }
+        try {
+          logger.info(`[SupabaseService] 📨 Broadcast event received:`, payload);
+          const message = payload.payload as {
+            command: SupabaseCommand;
+            timestamp: string;
+          };
+          
+          if (!message || !message.command) {
+            logger.warn('[SupabaseService] Received invalid broadcast message:', payload);
+            return;
+          }
 
-        const command = message.command;
-        
-        // CRITICAL: Verify command is for this player_id
-        // Check both top-level player_id and action_data.player_id for compatibility
-        const commandPlayerId = command.player_id || (command.command_data as any)?.player_id || (command.command_data as any)?.target_player_id;
-        if (commandPlayerId && commandPlayerId !== this.playerId) {
-          logger.debug(`[SupabaseService] Ignoring command for different player: ${commandPlayerId} (this player: ${this.playerId})`);
-          // Still acknowledge the command to prevent timeout, but don't process it
-          await this.markCommandExecuted(command.id, false, `Command for different player: ${commandPlayerId}`);
-          return;
+          const command = message.command;
+          logger.info(`[SupabaseService] 📦 Parsed command from broadcast:`, command.id, command.command_type);
+          
+          // CRITICAL: Verify command is for this player_id
+          // Check both top-level player_id and action_data.player_id for compatibility
+          const commandPlayerId = command.player_id || (command.command_data as any)?.player_id || (command.command_data as any)?.target_player_id;
+          logger.info(`[SupabaseService] 🔍 Checking command player_id: ${commandPlayerId} vs this player: ${this.playerId}`);
+          console.log(`[SupabaseService] 🔍 Checking command player_id: ${commandPlayerId} vs this player: ${this.playerId}`);
+          logger.info(`[SupabaseService] Command object:`, JSON.stringify({ 
+            id: command.id, 
+            command_type: command.command_type, 
+            player_id: command.player_id 
+          }, null, 2));
+          
+          if (commandPlayerId && commandPlayerId !== this.playerId) {
+            logger.warn(`[SupabaseService] ⚠️ Ignoring command for different player: ${commandPlayerId} (this player: ${this.playerId})`);
+            console.warn(`[SupabaseService] ⚠️ Ignoring command for different player: ${commandPlayerId} (this player: ${this.playerId})`);
+            // Still acknowledge the command to prevent timeout, but don't process it
+            await this.markCommandExecuted(command.id, false, `Command for different player: ${commandPlayerId}`);
+            return;
+          }
+          
+          // If no player_id specified, process it (backward compatibility)
+          if (!commandPlayerId) {
+            logger.warn(`[SupabaseService] ⚠️ Command has no player_id - processing anyway (backward compatibility)`);
+          }
+          
+          logger.info('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id, `(player: ${commandPlayerId || 'none'})`);
+          console.log('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id, `(player: ${commandPlayerId || 'none'})`);
+          logger.info('[SupabaseService] Command data:', JSON.stringify(command.command_data, null, 2));
+          
+          // Log received command
+          await getIOLogger().logReceived('web-admin', JSON.stringify({
+            command_type: command.command_type,
+            command_id: command.id,
+            command_data: command.command_data
+          }, null, 2), 'broadcast');
+          
+          // Process the command
+          logger.info(`[SupabaseService] 🚀 About to process command: ${command.command_type} (${command.id})`);
+          await this.processCommand(command);
+          logger.info(`[SupabaseService] ✅ Finished processing command: ${command.command_type} (${command.id})`);
+        } catch (broadcastError) {
+          logger.error(`[SupabaseService] ❌ Error in broadcast handler:`, broadcastError);
+          // Don't re-throw - log and continue
         }
-        
-        logger.info('[SupabaseService] 📥 Received command via Broadcast:', command.command_type, command.id, `(player: ${commandPlayerId || 'none'})`);
-        
-        // Log received command
-        await getIOLogger().logReceived('web-admin', JSON.stringify({
-          command_type: command.command_type,
-          command_id: command.id,
-          command_data: command.command_data
-        }, null, 2), 'broadcast');
-        
-        // Process the command
-        await this.processCommand(command);
       })
       .subscribe((status, err) => {
         this.broadcastChannelStatus = status as typeof this.broadcastChannelStatus;
@@ -952,9 +1052,25 @@ class SupabaseService {
 
   /**
    * Start realtime subscription to player_state table changes
-   * Listens for queue updates from Admin UI and applies conflict resolution
+   * 
+   * ⚠️ DISABLED FOR ELECTRON PLAYER ⚠️
+   * 
+   * The Electron Player should NOT subscribe to its own player_state updates because:
+   * 1. It causes recursion loops: Player writes → Supabase broadcasts → Player receives own update → Processes → Writes again
+   * 2. The Electron Player is the authoritative writer (per QUEUE_MANAGEMENT.md)
+   * 3. Only Web Admin and Web Kiosk should subscribe to player_state updates (they use subscribeToPlayerState from web/shared/supabase-client.ts)
+   * 
+   * The Electron Player should only WRITE to Supabase, not read its own updates.
+   * Web endpoints subscribe to see state changes from the Electron Player.
    */
   private async startPlayerStateSubscription(): Promise<void> {
+    // DISABLED - Electron Player should not subscribe to its own state updates
+    // This prevents recursion loops where the player receives its own writes
+    logger.info(`[SupabaseService] ⚠️ Player state subscription DISABLED for Electron Player (prevents recursion)`);
+    logger.info(`[SupabaseService] Only Web Admin/Kiosk should subscribe to player_state updates`);
+    return;
+    
+    /* ORIGINAL CODE (DISABLED):
     if (!this.client) throw new Error('Client not initialized');
 
     logger.info(`[SupabaseService] Setting up player_state realtime subscription for player: ${this.playerId}`);
@@ -987,6 +1103,7 @@ class SupabaseService {
           logger.debug(`[SupabaseService] Player state subscription status: ${status}`);
         }
       });
+    */
   }
 
   /**
@@ -1001,7 +1118,16 @@ class SupabaseService {
         return;
       }
 
-      const remoteUpdatedAt = newState.updated_at || newState.last_updated;
+      // CRITICAL: Verify this update is for the current player_id (prevent cross-player contamination)
+      if (newState.player_id !== this.playerId) {
+        logger.warn('[SupabaseService] Received player_state update for different player_id, ignoring', {
+          received: newState.player_id,
+          current: this.playerId
+        });
+        return;
+      }
+
+      const remoteUpdatedAt = (newState as any).updated_at || newState.last_updated;
       if (!remoteUpdatedAt) {
         logger.debug('[SupabaseService] Player state update missing updated_at, skipping conflict check');
         // Still notify callbacks but without conflict resolution
@@ -1028,7 +1154,8 @@ class SupabaseService {
       logger.info('[SupabaseService] 📥 Received remote queue update, applying merge', {
         remoteUpdatedAt,
         activeQueueLength: newState.active_queue?.length || 0,
-        priorityQueueLength: newState.priority_queue?.length || 0
+        priorityQueueLength: newState.priority_queue?.length || 0,
+        playerId: newState.player_id
       });
 
       // Set flag to prevent sync during remote update processing
@@ -1051,14 +1178,27 @@ class SupabaseService {
         });
 
         // Priority queue: adopt remote entirely (no merge needed)
-        const mergedPriorityQueue = newState.priority_queue || [];
+        // But ensure it's for this player_id (already verified above)
+        // Also remove duplicates to prevent corruption
+        let mergedPriorityQueue = newState.priority_queue || [];
+        
+        // Remove duplicates from remote priority queue (prevent corruption from other sources)
+        const uniquePriorityQueue = mergedPriorityQueue.filter((video, index, self) => {
+          const videoId = video.id || video.src;
+          return index === self.findIndex(v => (v.id || v.src) === videoId);
+        });
+        
+        if (uniquePriorityQueue.length !== mergedPriorityQueue.length) {
+          logger.warn(`[SupabaseService] Removed ${mergedPriorityQueue.length - uniquePriorityQueue.length} duplicate(s) from remote priority queue`);
+          mergedPriorityQueue = uniquePriorityQueue;
+        }
 
         // Update lastSyncedState with merged queues
         this.lastSyncedState = {
           ...this.lastSyncedState,
           active_queue: mergedActiveQueue,
           priority_queue: mergedPriorityQueue,
-          updated_at: remoteUpdatedAt
+          last_updated: remoteUpdatedAt
         };
 
         // Notify callbacks with merged queues (this will trigger PlayerWindow updates)
@@ -1146,6 +1286,41 @@ class SupabaseService {
   // ==================== Offline Queue Handling ====================
 
   /**
+   * Check if an update should be queued (not a duplicate of the last queued update)
+   */
+  private shouldQueueUpdate(activeQueue?: Video[], priorityQueue?: Video[]): boolean {
+    if (this.queuedQueueUpdates.length === 0) return true;
+    
+    // Get the last queued update
+    const lastQueued = this.queuedQueueUpdates[this.queuedQueueUpdates.length - 1];
+    if (!lastQueued) return true;
+    
+    // Convert new queues to QueueVideoItem format for comparison
+    const newActiveQueue = (activeQueue || []).map(v => this.videoToQueueItem(v));
+    const newPriorityQueue = (priorityQueue || []).map(v => this.videoToQueueItem(v));
+    
+    // Compare queue lengths first (quick check)
+    if (lastQueued.activeQueue.length !== newActiveQueue.length ||
+        lastQueued.priorityQueue.length !== newPriorityQueue.length) {
+      return true; // Different lengths, queue it
+    }
+    
+    // Compare queue content (compare sets of IDs, not order)
+    const lastActiveIds = new Set(lastQueued.activeQueue.map(item => item.id));
+    const newActiveIds = new Set(newActiveQueue.map(item => item.id));
+    const activeQueueChanged = lastActiveIds.size !== newActiveIds.size ||
+      [...lastActiveIds].some(id => !newActiveIds.has(id));
+    
+    const lastPriorityIds = new Set(lastQueued.priorityQueue.map(item => item.id));
+    const newPriorityIds = new Set(newPriorityQueue.map(item => item.id));
+    const priorityQueueChanged = lastPriorityIds.size !== newPriorityIds.size ||
+      [...lastPriorityIds].some(id => !newPriorityIds.has(id));
+    
+    // Only queue if content actually changed
+    return activeQueueChanged || priorityQueueChanged;
+  }
+
+  /**
    * Queue a queue update for retry when connection is restored
    */
   private queueQueueUpdate(activeQueue?: Video[], priorityQueue?: Video[]): void {
@@ -1157,6 +1332,28 @@ class SupabaseService {
       timestamp: Date.now(),
       retryCount: 0
     };
+
+    // Replace the last queued update if it's identical (keep only latest)
+    // This prevents the queue from filling up with identical updates
+    if (this.queuedQueueUpdates.length > 0) {
+      const lastQueued = this.queuedQueueUpdates[this.queuedQueueUpdates.length - 1];
+      const lastActiveIds = new Set(lastQueued.activeQueue.map(item => item.id));
+      const newActiveIds = new Set(queueItem.activeQueue.map(item => item.id));
+      const lastPriorityIds = new Set(lastQueued.priorityQueue.map(item => item.id));
+      const newPriorityIds = new Set(queueItem.priorityQueue.map(item => item.id));
+      
+      const isIdentical = lastActiveIds.size === newActiveIds.size &&
+        [...lastActiveIds].every(id => newActiveIds.has(id)) &&
+        lastPriorityIds.size === newPriorityIds.size &&
+        [...lastPriorityIds].every(id => newPriorityIds.has(id));
+      
+      if (isIdentical) {
+        // Replace the last update with this one (same content, newer timestamp)
+        this.queuedQueueUpdates[this.queuedQueueUpdates.length - 1] = queueItem;
+        logger.debug(`[SupabaseService] Replaced last queued update (identical content, ${this.queuedQueueUpdates.length} in queue)`);
+        return;
+      }
+    }
 
     this.queuedQueueUpdates.push(queueItem);
 
@@ -1286,11 +1483,11 @@ class SupabaseService {
    * Convert QueueVideoItem back to Video (for retry)
    */
   private queueItemToVideo(item: QueueVideoItem): Video {
-    return {
-      id: item.id,
-      title: item.title,
-      artist: item.artist || undefined,
-      src: item.src,
+      return {
+        id: item.id,
+        title: item.title,
+        artist: item.artist ?? null,
+        src: item.src,
       path: item.path,
       duration: item.duration,
       playlist: item.playlist,
@@ -1476,11 +1673,24 @@ class SupabaseService {
    * Ensures each command is only processed ONCE, even if received via both Broadcast and polling
    */
   private async processCommand(command: SupabaseCommand): Promise<void> {
+    // Log connection status for debugging
+    logger.info(`[SupabaseService] Processing command ${command.id} - connection status: ${this.connectionStatus}`);
+    console.log(`[SupabaseService] Processing command ${command.id} - connection status: ${this.connectionStatus}`);
+    
     // If disconnected, queue the command instead of processing
-    if (this.connectionStatus === 'disconnected' || this.connectionStatus === 'reconnecting') {
+    // BUT: If we received via Broadcast, we're actually connected, so process it
+    // Only queue if we're truly disconnected (no broadcast channel active)
+    if ((this.connectionStatus === 'disconnected' || this.connectionStatus === 'reconnecting') && 
+        this.broadcastChannelStatus !== 'SUBSCRIBED') {
+      logger.warn(`[SupabaseService] Connection status is ${this.connectionStatus} and Broadcast not SUBSCRIBED - queuing command`);
+      console.warn(`[SupabaseService] Connection status is ${this.connectionStatus} - queuing command`);
       this.queueCommand(command);
       return;
     }
+    
+    // If we got here via Broadcast, we're connected - process immediately
+    logger.info(`[SupabaseService] Connection OK - processing command immediately`);
+    console.log(`[SupabaseService] Connection OK - processing command immediately`);
     
     // CRITICAL: Check if command was already processed to prevent duplicate execution
     if (this.processedCommandIds.has(command.id)) {
@@ -1506,16 +1716,29 @@ class SupabaseService {
     
     const handlers = this.commandHandlers.get(command.command_type as CommandType);
     
+    logger.info(`[SupabaseService] 🔍 Looking for handlers for command type: ${command.command_type}`);
+    console.log(`[SupabaseService] 🔍 Looking for handlers for command type: ${command.command_type}`);
+    logger.info(`[SupabaseService] Registered command types:`, Array.from(this.commandHandlers.keys()));
+    console.log(`[SupabaseService] Registered command types:`, Array.from(this.commandHandlers.keys()));
+    logger.info(`[SupabaseService] Handler count for ${command.command_type}:`, handlers?.length || 0);
+    console.log(`[SupabaseService] Handler count for ${command.command_type}:`, handlers?.length || 0);
+    
     try {
       if (handlers && handlers.length > 0) {
         logger.info(`[SupabaseService] ⚙️ Executing command: ${command.command_type} (${command.id})`);
+        console.log(`[SupabaseService] ⚙️ Executing command: ${command.command_type} (${command.id})`);
+        logger.info(`[SupabaseService] Command data:`, JSON.stringify(command.command_data, null, 2));
         // Execute only the FIRST handler to prevent duplicate actions from multiple registrations
         await handlers[0](command);
         logger.info(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
+        console.log(`[SupabaseService] ✅ Command executed: ${command.command_type}`);
         // Mark command as executed in database (await to ensure acknowledgment)
         await this.markCommandExecuted(command.id, true);
+        logger.info(`[SupabaseService] ✅ Command ${command.id} marked as executed`);
+        console.log(`[SupabaseService] ✅ Command ${command.id} marked as executed`);
       } else {
         logger.warn(`[SupabaseService] ⚠️ No handler for command type: ${command.command_type}`);
+        logger.warn(`[SupabaseService] Available handlers:`, Array.from(this.commandHandlers.keys()));
         // Still acknowledge the command to prevent timeout, even if no handler
         await this.markCommandExecuted(command.id, false, `No handler registered for command type: ${command.command_type}`);
       }
@@ -1544,6 +1767,7 @@ class SupabaseService {
     }
 
     logger.info(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
+    console.log(`[SupabaseService] 📝 Marking command ${commandId} as ${success ? 'executed' : 'failed'}`);
 
     // Try to update database - this is critical for Web Admin acknowledgment
     try {
@@ -1560,14 +1784,19 @@ class SupabaseService {
         updatePayload.error_message = errorMessage; // Also try error_message column
       }
 
-      const { error } = await this.client
+      logger.info(`[SupabaseService] Updating admin_commands table for command ${commandId} with payload:`, JSON.stringify(updatePayload, null, 2));
+      console.log(`[SupabaseService] Updating admin_commands table for command ${commandId}`);
+
+      const { data, error } = await this.client
         .from('admin_commands')
         .update(updatePayload)
-        .eq('id', commandId);
+        .eq('id', commandId)
+        .select();
 
       if (error) {
         // Log error but don't fail - try alternative acknowledgment methods
-        logger.warn(`[SupabaseService] Database update failed for command ${commandId}:`, error.message, error.code);
+        logger.error(`[SupabaseService] ❌ Database update failed for command ${commandId}:`, error.message, error.code, error.details);
+        console.error(`[SupabaseService] ❌ Database update failed for command ${commandId}:`, error);
         
         // If schema mismatch, try minimal update with only status
         if (error.code === 'PGRST204' || error.code === '42P01') {
@@ -1987,6 +2216,16 @@ class SupabaseService {
             return null; // Will be filtered out
           }
           
+          // Extract playlist from file path if not provided in video object
+          let playlistName = video.playlist;
+          if (!playlistName && filePath) {
+            // Match playlist folder name (PLxxxxxx.PlaylistName or PLxxxxxx_PlaylistName)
+            const match = filePath.match(/PLAYLISTS\/([^/]+)\//);
+            if (match) {
+              playlistName = match[1];
+            }
+          }
+          
           const record: any = {
             player_id: this.playerId,
             title: video.title,
@@ -1999,10 +2238,11 @@ class SupabaseService {
           };
           
           // Always include metadata (column should exist after running SQL)
+          // Ensure playlist is always set (extract from path if needed)
           record.metadata = {
             sourceType: 'local',
-            playlist: video.playlist,
-            playlistDisplayName: video.playlistDisplayName,
+            playlist: playlistName || 'Unknown',
+            playlistDisplayName: video.playlistDisplayName || playlistName || 'Unknown',
             filename: video.filename
           };
           

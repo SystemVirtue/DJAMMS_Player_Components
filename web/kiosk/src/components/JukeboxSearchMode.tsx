@@ -113,10 +113,11 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
   const [searchResults, setSearchResults] = useState<SupabaseLocalVideo[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [keyboardVisible] = useState(true);
-  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide'>('hide'); // 'show' = only karaoke, 'hide' = no karaoke
+  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide' | 'all'>('all'); // 'show' = only karaoke, 'hide' = no karaoke, 'all' = show all
   
   // Filter results based on karaoke filter
   const filteredResults = searchResults.filter(video => {
+    if (karaokeFilter === 'all') return true;
     const hasKaraoke = video.title?.toLowerCase().includes('karaoke') || 
                        video.path?.toLowerCase().includes('karaoke');
     if (karaokeFilter === 'show') {
@@ -141,15 +142,24 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
 
   // Debounced search - show ALL videos when query is empty (browse mode)
   const performSearch = useCallback(async (query: string) => {
+    if (!playerId) {
+      console.warn('[JukeboxSearchMode] No playerId provided, skipping search');
+      return;
+    }
+
     setIsSearching(true);
     try {
       if (query.length < 2) {
         // Browse mode: show ALL videos from the player's database
+        console.log('[JukeboxSearchMode] Loading all videos for player:', playerId);
         const allVideos = await getAllLocalVideos(playerId, 1000, 0);
+        console.log('[JukeboxSearchMode] Loaded', allVideos?.length || 0, 'videos');
         setSearchResults(allVideos || []);
       } else {
         // Search mode: search for matching videos
+        console.log('[JukeboxSearchMode] Searching for:', query, 'playerId:', playerId);
         const results = await searchLocalVideos(query, playerId, 1000);
+        console.log('[JukeboxSearchMode] Found', results?.length || 0, 'results');
         setSearchResults(results || []);
       }
     } catch (error) {
@@ -162,7 +172,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
     } finally {
       setIsSearching(false);
     }
-  }, [playerId]);
+  }, [playerId, searchResults.length]);
 
   // Handle search input changes - immediate for browse mode, debounced for search
   useEffect(() => {
@@ -455,7 +465,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
           <div className="keyboard-section-right">
             <button
               className={`keyboard-key key-filter ${karaokeFilter === 'show' ? 'active' : ''}`}
-              onClick={() => setKaraokeFilter('show')}
+              onClick={() => setKaraokeFilter(karaokeFilter === 'show' ? 'all' : 'show')}
             >
               🎤 Karaoke
             </button>
@@ -511,7 +521,7 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
           <div className="keyboard-section-right">
             <button
               className={`keyboard-key key-filter ${karaokeFilter === 'hide' ? 'active' : ''}`}
-              onClick={() => setKaraokeFilter('hide')}
+              onClick={() => setKaraokeFilter(karaokeFilter === 'hide' ? 'all' : 'hide')}
             >
               🎵 Music
             </button>

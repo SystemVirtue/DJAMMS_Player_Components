@@ -4,6 +4,56 @@ const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store').default || require('electron-store');
 
+// Safe console logging to prevent EPIPE errors
+// Wrap console methods to catch EPIPE errors when stdout/stderr are closed
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+console.log = (...args) => {
+  try {
+    if (process.stdout.writable && !process.stdout.destroyed) {
+      originalLog.apply(console, args);
+    }
+  } catch (err) {
+    // Ignore EPIPE errors (broken pipe - stdout/stderr closed)
+    if (err.code !== 'EPIPE' && err.code !== 'ENOTCONN') {
+      // Only try to log other errors if stderr is available
+      try {
+        if (process.stderr.writable && !process.stderr.destroyed) {
+          originalError.apply(console, ['[Console Log Error]', err.message]);
+        }
+      } catch {}
+    }
+  }
+};
+
+console.error = (...args) => {
+  try {
+    if (process.stderr.writable && !process.stderr.destroyed) {
+      originalError.apply(console, args);
+    }
+  } catch (err) {
+    // Ignore EPIPE errors (broken pipe - stderr closed)
+    if (err.code !== 'EPIPE' && err.code !== 'ENOTCONN') {
+      // Silently fail - can't log if streams are closed
+    }
+  }
+};
+
+console.warn = (...args) => {
+  try {
+    if (process.stdout.writable && !process.stdout.destroyed) {
+      originalWarn.apply(console, args);
+    }
+  } catch (err) {
+    // Ignore EPIPE errors (broken pipe - stdout closed)
+    if (err.code !== 'EPIPE' && err.code !== 'ENOTCONN') {
+      // Silently fail - can't log if streams are closed
+    }
+  }
+};
+
 // Initialize persistent storage
 const store = new Store({
   name: 'djamms-config',
@@ -528,26 +578,53 @@ ipcMain.on('queue-command', async (_event, command) => {
     const { action, payload } = command || {};
     switch (action) {
       case 'clear_queue':
-        // Only clear active queue - preserve priority queue
+        // #region agent log
+        try {
+          const logPath = path.join(__dirname, '../../.cursor/debug.log');
+          const logData = {location:'main.cjs:530',message:'clear_queue command',data:{prevQueueIndex:queueState.queueIndex,prevQueueLength:queueState.activeQueue.length,prevNowPlaying:queueState.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'};
+          fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
+        } catch(e) {}
+        // #endregion
+        // Clear both active queue and priority queue
         queueState.activeQueue = [];
-        // DO NOT clear priorityQueue - it should persist until explicitly cleared
+        queueState.priorityQueue = [];
         queueState.queueIndex = 0;
-        // Only clear nowPlaying if it was from active queue
-        if (queueState.nowPlayingSource === 'active') {
-          queueState.nowPlaying = null;
-          queueState.nowPlayingSource = null;
-          queueState.isPlaying = false;
-        }
-        // If nowPlaying is from priority queue, keep it playing
+        // Clear nowPlaying regardless of source (both queues are cleared)
+        queueState.nowPlaying = null;
+        queueState.nowPlayingSource = null;
+        queueState.isPlaying = false;
+        console.log('[main] ✅ Cleared both active queue and priority queue');
         break;
       case 'add_to_queue':
         if (payload?.video) {
+          // Check if adding this video would create a duplicate at the next position after now-playing
+          // This prevents the up-next video from being the same as now-playing
+          if (queueState.activeQueue.length > 0) {
+            const videoId = payload.video.id || payload.video.src;
+            const currentVideoId = queueState.activeQueue[queueState.queueIndex]?.id || queueState.activeQueue[queueState.queueIndex]?.src;
+            
+            if (videoId === currentVideoId) {
+              console.log('[main] ⚠️ Video is same as now-playing (index', queueState.queueIndex, '), skipping add to prevent duplicate up-next');
+              break; // Don't add duplicate
+            }
+          }
           queueState.activeQueue.push(payload.video);
         }
         break;
       case 'add_to_priority_queue':
         if (payload?.video) {
-          queueState.priorityQueue.push(payload.video);
+          // Check if video already exists in priority queue (prevent duplicates)
+          const videoId = payload.video.id || payload.video.src;
+          const alreadyExists = queueState.priorityQueue.some(
+            v => (v.id || v.src) === videoId
+          );
+          
+          if (alreadyExists) {
+            console.log('[main] ⚠️ Video already in priority queue, skipping duplicate:', payload.video.title);
+          } else {
+            queueState.priorityQueue.push(payload.video);
+            console.log('[main] ✅ Added video to priority queue:', payload.video.title);
+          }
         }
         break;
       case 'play_at_index': {
@@ -665,6 +742,13 @@ ipcMain.on('queue-command', async (_event, command) => {
         break;
       }
       case 'next': {
+        // #region agent log
+        try {
+          const logPath = path.join(__dirname, '../../.cursor/debug.log');
+          const logData = {location:'main.cjs:687',message:'next command received',data:{priorityQueueLength:queueState.priorityQueue.length,activeQueueLength:queueState.activeQueue.length,queueIndex:queueState.queueIndex,nowPlayingSource:queueState.nowPlayingSource,nowPlayingTitle:queueState.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,E'};
+          fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
+        } catch(e) {}
+        // #endregion
         console.log('[main] next command - priorityQueue.length:', queueState.priorityQueue.length, 'activeQueue.length:', queueState.activeQueue.length, 'nowPlayingSource:', queueState.nowPlayingSource);
         console.log('[main] Priority queue contents:', queueState.priorityQueue.map(v => v?.title || 'unknown').join(', '));
         
@@ -698,25 +782,75 @@ ipcMain.on('queue-command', async (_event, command) => {
           // Recycle the current video to the end if it was from active queue
           if (queueState.nowPlaying && queueState.nowPlayingSource === 'active') {
             // Recycle current video to end
+            const prevQueueIndex = queueState.queueIndex;
+            const prevQueueLength = queueState.activeQueue.length;
             queueState.activeQueue.push(queueState.nowPlaying);
             // Advance index to next video (circular, using new length after recycling)
             queueState.queueIndex = (queueState.queueIndex + 1) % queueState.activeQueue.length;
+            // #region agent log
+            try {
+              const logPath = path.join(__dirname, '../../.cursor/debug.log');
+              const logData = {location:'main.cjs:723',message:'queueIndex advanced after recycle',data:{prevQueueIndex,newQueueIndex:queueState.queueIndex,prevQueueLength,newQueueLength:queueState.activeQueue.length,recycledVideo:queueState.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'};
+              fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
+            } catch(e) {}
+            // #endregion
           } else if (queueState.nowPlaying && queueState.nowPlayingSource === 'priority') {
             // Current video was from priority queue (just finished) - don't recycle it
             // Priority videos are one-time, so just continue with active queue
             // queueIndex should already point to the next active queue video to play
             // (it was preserved when priority video interrupted)
+          } else if (!queueState.nowPlaying || queueState.nowPlayingSource === null) {
+            // No video currently playing (state was lost/reset) - advance queueIndex to next video
+            // This handles the case where nowPlayingSource is null but we need to advance
+            const prevQueueIndex = queueState.queueIndex;
+            queueState.queueIndex = (queueState.queueIndex + 1) % queueState.activeQueue.length;
+            // #region agent log
+            try {
+              const logPath = path.join(__dirname, '../../.cursor/debug.log');
+              const logData = {location:'main.cjs:754',message:'queueIndex advanced (nowPlayingSource was null)',data:{prevQueueIndex,newQueueIndex:queueState.queueIndex,queueLength:queueState.activeQueue.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'};
+              fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
+            } catch(e) {}
+            // #endregion
           }
           
           // Use queueIndex to get the next video to play
           // queueIndex should point to the currently playing video
-          const nextVideo = queueState.activeQueue[queueState.queueIndex];
+          let nextVideo = queueState.activeQueue[queueState.queueIndex];
+          // #region agent log
+          try {
+            const logPath = path.join(__dirname, '../../.cursor/debug.log');
+            const logData = {location:'main.cjs:733',message:'getting next video from queueIndex',data:{queueIndex:queueState.queueIndex,queueLength:queueState.activeQueue.length,nextVideoTitle:nextVideo?.title,queueTitles:queueState.activeQueue.map((v,i)=>`[${i}]${v?.title}`).slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,E'};
+            fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
+          } catch(e) {}
+          // #endregion
+          
+          // Check if index 1 (up-next) is the same as index 0 (now-playing)
+          // This can happen if the queue only has 1 video and it was recycled
+          if (nextVideo && queueState.activeQueue.length > 1) {
+            const currentVideoId = nextVideo.id || nextVideo.src;
+            const nextIndex = (queueState.queueIndex + 1) % queueState.activeQueue.length;
+            const upNextVideo = queueState.activeQueue[nextIndex];
+            
+            if (upNextVideo && (upNextVideo.id || upNextVideo.src) === currentVideoId) {
+              console.log('[main] ⚠️ Up-next video (index', nextIndex, ') is same as now-playing (index', queueState.queueIndex, '), skipping to next');
+              // Skip to the video after the duplicate
+              queueState.queueIndex = (nextIndex + 1) % queueState.activeQueue.length;
+              nextVideo = queueState.activeQueue[queueState.queueIndex];
+            }
+          }
           
           if (nextVideo) {
             queueState.nowPlaying = nextVideo;
             queueState.nowPlayingSource = 'active';
             queueState.isPlaying = true;
             // queueIndex already points to the currently playing video
+            // #region agent log
+            try {
+              const logPath = path.join(__dirname, '../../.cursor/debug.log');
+              const logData = {location:'main.cjs:754',message:'broadcasting queue state after next',data:{queueIndex:queueState.queueIndex,nowPlayingTitle:nextVideo.title,queueLength:queueState.activeQueue.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'};
+              fs.appendFileSync(logPath, JSON.stringify(logData) + '\n', 'utf8');
+            } catch(e) {}
+            // #endregion
             
             if (fullscreenWindow) {
               fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
@@ -1144,6 +1278,19 @@ ipcMain.handle('refresh-player-window', async (event, displayId) => {
     return { success: true, windowId: win.id };
   } catch (error) {
     console.error('Error refreshing player window:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Debug logging
+ipcMain.handle('write-debug-log', async (event, logData) => {
+  try {
+    const logPath = path.join(__dirname, '../../.cursor/debug.log');
+    const logLine = JSON.stringify(logData) + '\n';
+    fs.appendFileSync(logPath, logLine, 'utf8');
+    return { success: true };
+  } catch (error) {
+    console.error('[main] Failed to write debug log:', error);
     return { success: false, error: error.message };
   }
 });

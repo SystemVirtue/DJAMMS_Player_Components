@@ -283,6 +283,7 @@ function FullscreenApp() {
           // Force a re-layout
           window.dispatchEvent(new Event('resize'))
         } else {
+          
           handleControl(action, data)
         }
       })

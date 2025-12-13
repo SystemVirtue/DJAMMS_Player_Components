@@ -301,7 +301,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     crossfadeMode: 'manual' as 'manual' | 'seamless',
     playerDisplayId: null as number | null,
     playerFullscreen: false,
-    playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
+    playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS',
+    forceAutoPlay: false
   });
 
   // Kiosk settings state
@@ -364,6 +365,21 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const watchdogCheckCountRef = useRef<number>(0);
   const WATCHDOG_CHECK_INTERVAL_MS = 2000; // Check every 2 seconds
   const WATCHDOG_MAX_STALL_CHECKS = 3; // Trigger recovery after 3 consecutive stall detections (6 seconds)
+
+  // Force Auto-Play refs
+  const isPlayingRef = useRef(isPlaying);
+  const settingsRef = useRef(settings);
+  const isCommandPendingRef = useRef(false); // Track if skip/play command is in progress
+  const forceAutoPlayTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Keep refs in sync (currentVideoRef is already declared above and synced)
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   // Check if we're in Electron (check multiple ways for reliability)
   const isElectron = typeof window !== 'undefined' && (
@@ -468,6 +484,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onPause: () => {
       console.log('[PlayerWindow] Supabase pause command received');
+      // If forceAutoPlay is enabled, ignore pause commands
+      if (settingsRef.current.forceAutoPlay) {
+        console.log('[PlayerWindow] Force Auto-Play is enabled - ignoring pause command');
+        return;
+      }
       setIsPlaying(false);
       if (isElectron) {
         (window as any).electronAPI.controlPlayerWindow('pause');
@@ -501,8 +522,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         (window as any).electronAPI.controlPlayerWindow('seekTo', position);
       }
     },
-    onQueueAdd: (video: QueueVideoItem, queueType: 'active' | 'priority') => {
-      console.log('[PlayerWindow] Supabase queue_add command received:', video.title, queueType);
+    onQueueAdd: async (video: QueueVideoItem, queueType: 'active' | 'priority') => {
+      console.log('[PlayerWindow] ✅ Supabase queue_add command received:', video.title, queueType);
       const videoToAdd: Video = {
         id: video.id,
         src: video.src,
@@ -514,25 +535,37 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         duration: video.duration
       };
       if (queueType === 'priority') {
-        // Add to separate priority queue (consumed first on skip)
-        setPriorityQueue(prev => [...prev, videoToAdd]);
+        // Check if video already exists in priority queue (prevent duplicates)
+        const videoId = videoToAdd.id || videoToAdd.src;
+        setPriorityQueue(prev => {
+          const alreadyExists = prev.some(v => (v.id || v.src) === videoId);
+          if (alreadyExists) {
+            console.log('[PlayerWindow] ⚠️ Video already in priority queue, skipping duplicate:', videoToAdd.title);
+            return prev; // Don't add duplicate
+          }
+          return [...prev, videoToAdd];
+        });
         // IMPORTANT: Also add to main process queue state (source of truth for playback)
+        // Main process will also check for duplicates
         if (isElectron) {
-          console.log('[PlayerWindow] Adding video to priority queue in main process (from Supabase):', videoToAdd.title);
+          console.log('[PlayerWindow] 📤 Adding video to priority queue in main process (from Supabase):', videoToAdd.title);
           (window as any).electronAPI.sendQueueCommand?.({ 
             action: 'add_to_priority_queue', 
             payload: { video: videoToAdd } 
           });
+          console.log('[PlayerWindow] ✅ Priority queue command sent to main process');
         }
       } else {
         // Add to end of active queue
         setQueue(prev => [...prev, videoToAdd]);
         // Also add to main process
         if (isElectron) {
+          console.log('[PlayerWindow] 📤 Adding video to active queue in main process (from Supabase):', videoToAdd.title);
           (window as any).electronAPI.sendQueueCommand?.({ 
             action: 'add_to_queue', 
             payload: { video: videoToAdd } 
           });
+          console.log('[PlayerWindow] ✅ Active queue command sent to main process');
         }
       }
     },
@@ -624,6 +657,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         // IMPORTANT: Do NOT clear priority queue - it should persist when loading a new playlist
         setQueue(finalTracks);
         setQueueIndex(0);
+        // Mark that we have a non-empty queue (allows syncing to Supabase)
+        if (finalTracks.length > 0) {
+          hasSyncedNonEmptyQueueRef.current = true;
+        }
         // Priority queue is preserved - do NOT call setPriorityQueue([]) here
       }
     },
@@ -708,78 +745,19 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
   });
 
-  // Subscribe to realtime queue updates from Supabase
+  // ⚠️ DISABLED: Electron Player should NOT subscribe to its own queue updates
+  // This causes recursion loops: Player writes → Supabase broadcasts → Player receives own update → Processes → Writes again
+  // Only Web Admin and Web Kiosk should subscribe to player_state updates (they use subscribeToPlayerState from web/shared/supabase-client.ts)
+  // The Electron Player is the authoritative writer and should only WRITE to Supabase, not read its own updates
+  // 
+  // The original subscription code has been disabled to prevent recursion. The Electron Player only writes to Supabase.
   useEffect(() => {
-    if (!supabaseInitialized || !isElectron) return;
-
-    const supabaseService = getSupabaseService();
-    if (!supabaseService.initialized) return;
-
-    console.log('[PlayerWindow] Subscribing to realtime queue updates');
-
-    const unsubscribe = supabaseService.onQueueUpdate((activeQueue, priorityQueue) => {
-      console.log('[PlayerWindow] 📥 Received realtime queue update:', {
-        activeQueueLength: activeQueue.length,
-        priorityQueueLength: priorityQueue.length
-      });
-
-      // Set flag to prevent syncState from triggering on this update
-      isReceivingRemoteUpdateRef.current = true;
-
-      // Convert QueueVideoItem[] to Video[]
-      const activeQueueVideos: Video[] = activeQueue.map(q => ({
-        id: q.id,
-        src: q.src,
-        title: q.title,
-        artist: q.artist,
-        path: q.path,
-        playlist: q.playlist,
-        playlistDisplayName: q.playlistDisplayName,
-        duration: q.duration
-      }));
-
-      const priorityQueueVideos: Video[] = priorityQueue.map(q => ({
-        id: q.id,
-        src: q.src,
-        title: q.title,
-        artist: q.artist,
-        path: q.path,
-        playlist: q.playlist,
-        playlistDisplayName: q.playlistDisplayName,
-        duration: q.duration
-      }));
-
-      // Update local state (preserve current queueIndex if video is playing)
-      setQueue(activeQueueVideos);
-      setPriorityQueue(priorityQueueVideos);
-      
-      // Clear flag after state update (use longer timeout to ensure useEffect has time to check flag)
-      setTimeout(() => {
-        isReceivingRemoteUpdateRef.current = false;
-      }, 500);
-
-      // Also update main process queue state
-      if (isElectron) {
-        // Clear and rebuild queue in main process
-        (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-        activeQueueVideos.forEach((video) => {
-          (window as any).electronAPI.sendQueueCommand?.({ 
-            action: 'add_to_queue', 
-            payload: { video } 
-          });
-        });
-        priorityQueueVideos.forEach((video) => {
-          (window as any).electronAPI.sendQueueCommand?.({ 
-            action: 'add_to_priority_queue', 
-            payload: { video } 
-          });
-        });
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
+    // This effect is intentionally empty - subscription is disabled to prevent recursion
+    // The Electron Player only writes to Supabase, it doesn't read its own updates
+    if (supabaseInitialized && isElectron) {
+      console.log('[PlayerWindow] ⚠️ Queue update subscription DISABLED for Electron Player (prevents recursion)');
+      console.log('[PlayerWindow] Electron Player only WRITES to Supabase, does not subscribe to its own updates');
+    }
   }, [supabaseInitialized, isElectron]);
 
   // Search state - now managed by useSearch hook (called after playerId and supabaseInitialized are available)
@@ -1058,6 +1036,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           const savedEnablePlayer = await (window as any).electronAPI.getSetting('enableFullscreenPlayer');
           const savedFadeDuration = await (window as any).electronAPI.getSetting('fadeDuration');
           const savedCrossfadeMode = await (window as any).electronAPI.getSetting('crossfadeMode');
+          const savedForceAutoPlay = await (window as any).electronAPI.getSetting('forceAutoPlay');
           const savedPlaylistsDir = await (window as any).electronAPI.getPlaylistsDirectory();
           
           setSettings(s => ({
@@ -1069,6 +1048,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             enableFullscreenPlayer: savedEnablePlayer ?? s.enableFullscreenPlayer,
             fadeDuration: savedFadeDuration ?? s.fadeDuration,
             crossfadeMode: savedCrossfadeMode ?? s.crossfadeMode,
+            forceAutoPlay: savedForceAutoPlay ?? s.forceAutoPlay,
             playlistsDirectory: savedPlaylistsDir ?? s.playlistsDirectory
           }));
           
@@ -1120,6 +1100,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             setQueue(savedQueueState.activeQueue);
             setQueueIndex(savedQueueState.queueIndex || 0);
             setPriorityQueue(savedQueueState.priorityQueue || []);
+            // Mark that we have a non-empty queue (allows syncing to Supabase)
+            if (savedQueueState.activeQueue && savedQueueState.activeQueue.length > 0) {
+              hasSyncedNonEmptyQueueRef.current = true;
+            }
             if (savedQueueState.currentVideo) {
               setCurrentVideo(savedQueueState.currentVideo);
             }
@@ -1375,6 +1359,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Player control functions
   const handlePauseClick = () => {
     if (!playerReady) return; // Ignore until player is ready
+    // If forceAutoPlay is enabled, prevent pause
+    if (settings.forceAutoPlay) {
+      console.log('[PlayerWindow] Force Auto-Play is enabled - pause is disabled');
+      return;
+    }
     if (isPlaying) {
       setShowPauseDialog(true);
     } else {
@@ -1393,11 +1382,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   const handleResumePlayback = () => {
     if (currentVideo) {
+      isCommandPendingRef.current = true;
       if (isElectron) {
         (window as any).electronAPI.controlPlayerWindow('resume');
       }
       setIsPlaying(true);
       setCurrentTab('queue'); // Auto-switch to Queue tab
+      // Reset command pending flag after a delay
+      setTimeout(() => {
+        isCommandPendingRef.current = false;
+      }, 1000);
     } else if (queue.length > 0) {
       playVideoAtIndex(0);
       setCurrentTab('queue'); // Auto-switch to Queue tab
@@ -1407,10 +1401,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Send skip command to Player Window - triggers fade-out, then video end
   const sendSkipCommand = useCallback(() => {
     console.log('[PlayerWindow] Sending skip command to Player Window');
+    isCommandPendingRef.current = true;
     if (isElectron) {
       (window as any).electronAPI.controlPlayerWindow('skip');
     }
     setCurrentTab('queue'); // Auto-switch to Queue tab
+    // Reset command pending flag after a delay (skip takes time)
+    setTimeout(() => {
+      isCommandPendingRef.current = false;
+    }, 3000);
   }, [isElectron]);
 
   const skipTrack = () => {
@@ -1721,7 +1720,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Queue management via IPC (main orchestrator is source of truth)
   const handleClearQueue = () => {
     if (!isElectron) return;
+    // Clear both active queue and priority queue
     (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+    // Also clear local state
+    setQueue([]);
+    setPriorityQueue([]);
+    setQueueIndex(0);
   };
 
   const handleAddToQueue = (video: Video) => {
@@ -1739,10 +1743,22 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Add video to priority queue (from popover)
   const handleAddToPriorityQueue = useCallback(() => {
     if (!popoverVideo) return;
+    
+    // Check if video already exists in priority queue (prevent duplicates)
+    const videoId = popoverVideo.id || popoverVideo.src;
+    const alreadyExists = priorityQueue.some(v => (v.id || v.src) === videoId);
+    
+    if (alreadyExists) {
+      console.log('[PlayerWindow] ⚠️ Video already in priority queue, skipping duplicate:', popoverVideo.title);
+      setPopoverVideo(null);
+      return; // Don't add duplicate
+    }
+    
     const newPriorityQueue = [...priorityQueue, popoverVideo];
     setPriorityQueue(newPriorityQueue);
     
     // IMPORTANT: Sync to main process queue state (source of truth for playback)
+    // Main process will also check for duplicates
     if (isElectron) {
       console.log('[PlayerWindow] Adding video to priority queue in main process:', popoverVideo.title);
       (window as any).electronAPI.sendQueueCommand?.({ 
@@ -1778,7 +1794,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const prevQueueIndexRef = useRef(queueIndex); // Track previous queueIndex for change detection
   const isReceivingRemoteUpdateRef = useRef(false); // Flag to prevent sync loop when receiving remote updates
   const lastSyncedQueueRef = useRef<string>(''); // Track last synced queue to prevent duplicate syncs
-  const isUpdatingFromMainProcessRef = useRef(false); // Flag to prevent sync when updating from main process
+  const lastMainProcessQueueRef = useRef<string>(''); // Track last queue state received from main process (for state-based sync detection)
+  const hasSyncedNonEmptyQueueRef = useRef(false); // Track if we've ever synced a non-empty queue (prevents syncing empty queue on startup)
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -1981,8 +1998,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     
     const unsubscribe = (window as any).electronAPI.onQueueState?.((state: any) => {
       if (state) {
-        // Set flag to prevent sync when updating from main process (prevents recursion)
-        isUpdatingFromMainProcessRef.current = true;
+        // Store the queue state we're about to set (for state-based sync detection)
+        const mainProcessQueueHash = JSON.stringify({
+          activeQueue: (state.activeQueue || []).map((v: Video) => v.id),
+          priorityQueue: (state.priorityQueue || []).map((v: Video) => v.id),
+          queueIndex: state.queueIndex
+        });
+        lastMainProcessQueueRef.current = mainProcessQueueHash;
         
         // Update local state from authoritative main process state
         if (state.activeQueue) {
@@ -1997,6 +2019,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         }
         if (typeof state.queueIndex === 'number') {
           const prevIndex = queueIndexRef.current;
+          // #region agent log
+          if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+            (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2062',message:'onQueueState received queueIndex',data:{prevIndex,newIndex:state.queueIndex,activeQueueLength:state.activeQueue?.length,nowPlayingTitle:state.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C,E'}).catch(()=>{});
+          }
+          // #endregion
           setQueueIndex(state.queueIndex);
           queueIndexRef.current = state.queueIndex;
           
@@ -2009,18 +2036,26 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         
         // Handle current video change - send play command if video changed
         // First, try to get video from state.currentVideo or state.nowPlaying
-        // If not available, derive from queue[queueIndex] if queue and index are available
+        // Only derive from queue[queueIndex] if we don't have a currentVideo AND the queueIndex has actually changed
         let newVideo: Video | null = null;
         if (state.currentVideo || state.nowPlaying) {
           newVideo = state.currentVideo || state.nowPlaying;
-        } else if (state.activeQueue && typeof state.queueIndex === 'number' && state.activeQueue.length > 0) {
-          // Derive current video from queue index if nowPlaying is missing (during transitions)
+        } else if (!currentVideoRef.current && state.activeQueue && typeof state.queueIndex === 'number' && state.activeQueue.length > 0) {
+          // Only derive from queue index if:
+          // 1. We don't currently have a video (currentVideoRef is null)
+          // 2. The queueIndex is valid and within bounds
+          // 3. The queueIndex matches our local queueIndex (prevents using stale index from remote updates)
           const queueIndex = state.queueIndex >= 0 && state.queueIndex < state.activeQueue.length 
             ? state.queueIndex 
-            : 0;
-          newVideo = state.activeQueue[queueIndex] || null;
-          if (newVideo) {
-            console.log('[PlayerWindow] Queue state update - Derived current video from queue index:', queueIndex, newVideo.title);
+            : null;
+          // Only use derived video if queueIndex matches our local state (prevents stale remote updates)
+          if (queueIndex !== null && queueIndex === queueIndexRef.current) {
+            newVideo = state.activeQueue[queueIndex] || null;
+            if (newVideo) {
+              console.log('[PlayerWindow] Queue state update - Derived current video from queue index:', queueIndex, newVideo.title);
+            }
+          } else if (queueIndex !== null && queueIndex !== queueIndexRef.current) {
+            console.log('[PlayerWindow] Queue state update - Ignoring derived video (queueIndex mismatch: remote=', queueIndex, 'local=', queueIndexRef.current, ')');
           }
         }
         
@@ -2052,13 +2087,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             // 1. Video changed and is playing, OR
             // 2. Current video was null (during skip transition) and is playing
             const shouldPlay = state.isPlaying && newVideo && (videoChanged || wasCurrentVideoNull);
-            if (shouldPlay) {
+            if (shouldPlay && newVideo) {
               console.log('🎬 [PlayerWindow] Queue state update - Sending play command (isPlaying=true)', wasCurrentVideoNull ? '- restoring from null' : '');
               // Small delay to ensure video state is set before sending play command
               // Use the newVideo directly (it's already set in state above)
               setTimeout(() => {
                 // Use newVideo directly since it's the source of truth from queue state
-                sendPlayCommand(newVideo);
+                if (newVideo) {
+                  sendPlayCommand(newVideo);
+                }
               }, 50);
             } else {
               console.log('🎬 [PlayerWindow] Queue state update - NOT sending play command (isPlaying=false or no video)');
@@ -2069,31 +2106,64 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             consecutiveFailuresRef.current = 0; // Reset failure count on new video
           }
         } else {
-          // Only clear currentVideo if queue is truly empty and not playing
-          // Don't clear during transitions (when queueIndex might be valid but nowPlaying is temporarily null)
+          // Only clear currentVideo if:
+          // 1. Queue is truly empty AND not playing, OR
+          // 2. We have a currentVideo but the queueIndex doesn't match (stale video)
           const queueHasItems = state.activeQueue && state.activeQueue.length > 0;
-          const isTransitioning = typeof state.queueIndex === 'number' && state.queueIndex >= 0 && queueHasItems;
+          const localQueueHasItems = queueRef.current && queueRef.current.length > 0;
+          const isValidQueueIndex = typeof state.queueIndex === 'number' && state.queueIndex >= 0 && state.queueIndex < (state.activeQueue?.length || 0);
+          const currentVideoMatchesQueueIndex = currentVideoRef.current && isValidQueueIndex && 
+            state.activeQueue[state.queueIndex]?.id === currentVideoRef.current.id;
           
-          if (!isTransitioning && !state.isPlaying) {
-            // No video playing and not transitioning - safe to clear
+          // Don't clear if we have a valid video that matches the queue index
+          if (currentVideoMatchesQueueIndex) {
+            // Keep current video - it's still valid (don't log to avoid spam)
+            // console.log('[PlayerWindow] Queue state update - Preserving current video (matches queueIndex:', state.queueIndex, ')');
+          } else if (!queueHasItems && !localQueueHasItems && !state.isPlaying) {
+            // Queue is empty in both state and local, and not playing - safe to clear
             console.log('[PlayerWindow] Queue state update - Clearing current video (queue empty, not playing)');
             setCurrentVideo(null);
             currentVideoRef.current = null;
             previousVideoId = null;
-          } else if (isTransitioning) {
-            console.log('[PlayerWindow] Queue state update - Preserving current video during transition (queueIndex:', state.queueIndex, 'queueLength:', state.activeQueue?.length, ')');
-            // During transition, keep current video until new one is set
-            // Don't clear it
+          } else if (!queueHasItems && localQueueHasItems && currentVideoRef.current) {
+            // Remote update shows empty queue but local queue has items - preserve current video
+            // This happens when remote updates are stale or incomplete
+            // Don't log to avoid spam
+            // console.log('[PlayerWindow] Queue state update - Preserving current video (remote queue empty but local has items)');
+          } else if (queueHasItems && isValidQueueIndex && !currentVideoMatchesQueueIndex && currentVideoRef.current) {
+            // Queue has items and queueIndex is valid, but current video doesn't match
+            // Only update if the queueIndex in state matches our local queueIndex (prevents stale remote updates)
+            if (state.queueIndex === queueIndexRef.current) {
+              const videoAtIndex = state.activeQueue[state.queueIndex];
+              if (videoAtIndex) {
+                console.log('[PlayerWindow] Queue state update - Updating to video at queueIndex:', state.queueIndex, videoAtIndex.title);
+                setCurrentVideo(videoAtIndex);
+                currentVideoRef.current = videoAtIndex;
+                previousVideoId = videoAtIndex.id || videoAtIndex.src;
+                if (state.isPlaying) {
+                  setTimeout(() => {
+                    sendPlayCommand(videoAtIndex);
+                  }, 50);
+                }
+              }
+            } else {
+              console.log('[PlayerWindow] Queue state update - Ignoring queueIndex update (mismatch: remote=', state.queueIndex, 'local=', queueIndexRef.current, ') - preserving current video');
+              // Keep current video - remote queueIndex is stale
+            }
+          } else if (queueHasItems && currentVideoRef.current) {
+            // We have a queue and a current video, but queueIndex might be invalid or missing
+            // Preserve current video - don't clear it based on incomplete remote state
+            // Don't log to avoid spam
+            // console.log('[PlayerWindow] Queue state update - Preserving current video (has queue and video, queueIndex:', state.queueIndex, 'queueLength:', state.activeQueue?.length, ')');
+          } else if (currentVideoRef.current) {
+            // During transition or when queueIndex is invalid, keep current video until new one is set
+            // Don't clear it and don't log to avoid spam
+            // console.log('[PlayerWindow] Queue state update - Preserving current video (transitioning, queueIndex:', state.queueIndex, 'queueLength:', state.activeQueue?.length, ')');
           }
         }
         
         if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
-        
-        // Clear flag after state updates complete (allow useEffect to check flag)
-        setTimeout(() => {
-          isUpdatingFromMainProcessRef.current = false;
-        }, 100);
       }
     });
     
@@ -2158,40 +2228,62 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 queueRef.current = activeQueueVideos;
                 setQueueIndex(0);
                 queueIndexRef.current = 0;
-                
-                // Send queue to main process
-                if (isElectron) {
-                  (window as any).electronAPI.sendQueueCommand?.({
-                    action: 'set_queue',
-                    payload: {
-                      activeQueue: activeQueueVideos,
-                      priorityQueue: playerState.priority_queue?.map(q => ({
-                        id: q.id,
-                        src: q.src,
-                        title: q.title,
-                        artist: q.artist,
-                        path: q.path,
-                        playlist: q.playlist,
-                        playlistDisplayName: q.playlistDisplayName,
-                        duration: q.duration
-                      })) || [],
-                      queueIndex: 0
-                    }
-                  });
+                // Mark that we have a non-empty queue (allows syncing to Supabase)
+                if (activeQueueVideos.length > 0) {
+                  hasSyncedNonEmptyQueueRef.current = true;
                 }
                 
-                // Autoplay index 0 video
-                if (activeQueueVideos.length > 0) {
-                  const firstVideo = activeQueueVideos[0];
-                  console.log('[PlayerWindow] 🎬 Autoplaying index 0 video:', firstVideo.title);
-                  setCurrentVideo(firstVideo);
-                  currentVideoRef.current = firstVideo;
-                  setIsPlaying(true);
+                // Send queue to main process (same approach as playlist loading)
+                if (isElectron && activeQueueVideos.length > 0) {
+                  // Clear queue in main process
+                  (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
                   
-                  // Wait a bit for state to settle, then send play command
-                  setTimeout(() => {
-                    sendPlayCommand(firstVideo);
-                  }, 200);
+                  // Add all videos to main process queue
+                  activeQueueVideos.forEach((video) => {
+                    (window as any).electronAPI.sendQueueCommand?.({ 
+                      action: 'add_to_queue', 
+                      payload: { video } 
+                    });
+                  });
+                  
+                  // Add priority queue videos if any
+                  const priorityQueueVideos = playerState.priority_queue?.map(q => ({
+                    id: q.id,
+                    src: q.src,
+                    title: q.title,
+                    artist: q.artist,
+                    path: q.path,
+                    playlist: q.playlist,
+                    playlistDisplayName: q.playlistDisplayName,
+                    duration: q.duration
+                  })) || [];
+                  
+                  priorityQueueVideos.forEach((video) => {
+                    (window as any).electronAPI.sendQueueCommand?.({ 
+                      action: 'add_to_priority_queue', 
+                      payload: { video } 
+                    });
+                  });
+                  
+                  // Wait for indexing to complete (if still in progress), then autoplay index 0 (same as playlist loading)
+                  waitForIndexingComplete().then(() => {
+                    console.log('[PlayerWindow] Queue loaded from Supabase - starting auto-play');
+                    // Delay to ensure Player Window is fully loaded and ready to receive IPC
+                    // Player Window is created at 500ms, needs time to load and register handlers
+                    setTimeout(() => {
+                      console.log('[PlayerWindow] 🎬 Autoplaying index 0 video from Supabase queue');
+                      // Mark player as ready since we have a queue loaded
+                      if (!playerReadyRef.current) {
+                        playerReadyRef.current = true;
+                        setPlayerReady(true);
+                      }
+                      // Play first video via main process orchestrator (same as playlist loading)
+                      (window as any).electronAPI.sendQueueCommand?.({ 
+                        action: 'play_at_index', 
+                        payload: { index: 0 } 
+                      });
+                    }, 500);
+                  });
                 }
               } else {
                 console.log('[PlayerWindow] No active queue found in Supabase');
@@ -2228,20 +2320,83 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     (window as any).electronAPI.setSetting('kioskSettings', kioskSettings);
   }, [isElectron, kioskSettings]);
 
+  // Force Auto-Play logic: Auto-resume if paused >2s, skip if no video >2s
+  useEffect(() => {
+    // Check using ref to avoid stale closure
+    if (!settingsRef.current.forceAutoPlay || !playerReady) {
+      // Clear any existing timer
+      if (forceAutoPlayTimerRef.current) {
+        clearTimeout(forceAutoPlayTimerRef.current);
+        forceAutoPlayTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Clear previous timer
+    if (forceAutoPlayTimerRef.current) {
+      clearTimeout(forceAutoPlayTimerRef.current);
+    }
+
+    // Set up timer to check after 2 seconds
+    forceAutoPlayTimerRef.current = setTimeout(() => {
+      // Double-check forceAutoPlay is still enabled
+      if (!settingsRef.current.forceAutoPlay) {
+        return;
+      }
+
+      // Check current state using refs to avoid stale closures
+      const currentlyPlaying = isPlayingRef.current;
+      const currentVideoLoaded = currentVideoRef.current;
+      const commandInProgress = isCommandPendingRef.current;
+
+      // Ignore if command is in progress (skip/play happening)
+      if (commandInProgress) {
+        console.log('[PlayerWindow] Force Auto-Play: Command in progress, skipping check');
+        return;
+      }
+
+      // Case 1: Video is loaded but paused for >2 seconds - auto-resume
+      if (currentVideoLoaded && !currentlyPlaying) {
+        console.log('[PlayerWindow] Force Auto-Play: Video paused for >2s, auto-resuming');
+        handleResumePlayback();
+        return;
+      }
+
+      // Case 2: No video loaded for >2 seconds - skip to next
+      if (!currentVideoLoaded && queueRef.current.length > 0) {
+        console.log('[PlayerWindow] Force Auto-Play: No video loaded for >2s, skipping to next');
+        isCommandPendingRef.current = true;
+        playNextVideo();
+        // Reset command pending flag after delay
+        setTimeout(() => {
+          isCommandPendingRef.current = false;
+        }, 3000);
+        return;
+      }
+    }, 2000); // 2 second delay
+
+    return () => {
+      if (forceAutoPlayTimerRef.current) {
+        clearTimeout(forceAutoPlayTimerRef.current);
+        forceAutoPlayTimerRef.current = null;
+      }
+    };
+  }, [settings.forceAutoPlay, isPlaying, currentVideo, playerReady, handleResumePlayback, playNextVideo]);
+
   // Sync player state to Supabase when it changes
   // This ensures Web Admin / Kiosk see up-to-date state
   useEffect(() => {
     if (!supabaseInitialized) return;
     
-    // Skip sync if this update came from a remote source (prevents recursion)
-    if (isReceivingRemoteUpdateRef.current) {
-      console.log('[PlayerWindow] Skipping syncState - update came from remote source');
+    // Skip sync if offline (prevents log spam from repeated attempts)
+    if (!supabaseOnline) {
+      // Silently skip - SupabaseService will queue updates when offline
       return;
     }
     
-    // Skip sync if updating from main process (prevents recursion loop)
-    if (isUpdatingFromMainProcessRef.current) {
-      console.log('[PlayerWindow] Skipping syncState - update came from main process');
+    // Skip sync if this update came from a remote source (prevents recursion)
+    if (isReceivingRemoteUpdateRef.current) {
+      console.log('[PlayerWindow] Skipping syncState - update came from remote source');
       return;
     }
     
@@ -2251,6 +2406,41 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       priorityQueue: priorityQueue.map(v => v.id),
       queueIndex
     });
+    
+    // State-based detection: Skip sync if current queue matches what we just received from main process
+    // This prevents syncing back to Supabase what we just received from main process
+    if (queueHash === lastMainProcessQueueRef.current && lastMainProcessQueueRef.current !== '') {
+      console.log('[PlayerWindow] Skipping syncState - queue matches last main process update (state-based detection)');
+      // Still update refs to track state, but don't sync
+      prevQueueIndexRef.current = queueIndex;
+      lastSyncedQueueRef.current = queueHash;
+      return;
+    }
+    
+    // Skip syncing empty queues on initial load (prevents overwriting Supabase with empty queue)
+    // Only sync empty queues if we've previously synced a non-empty queue (explicit clear)
+    const queueIsEmpty = queue.length === 0 && priorityQueue.length === 0;
+    const hasQueueItems = queue.length > 0 || priorityQueue.length > 0;
+    
+    // If queue is empty and we haven't synced a non-empty queue yet, skip sync (prevents overwriting Supabase on startup)
+    // BUT: If we have queue items, always sync (even on first sync)
+    if (queueIsEmpty && !hasSyncedNonEmptyQueueRef.current) {
+      console.log('[PlayerWindow] ⏭️ Skipping sync - queue is empty and we haven\'t synced a non-empty queue yet (initial load)');
+      // Still update refs to track state, but don't sync
+      prevQueueIndexRef.current = queueIndex;
+      lastSyncedQueueRef.current = queueHash;
+      return;
+    }
+    
+    // If we have queue items, mark that we've synced a non-empty queue (allows future empty syncs for clearing)
+    if (hasQueueItems) {
+      if (!hasSyncedNonEmptyQueueRef.current) {
+        console.log('[PlayerWindow] ✅ First non-empty queue sync - will allow future empty queue syncs');
+      }
+      hasSyncedNonEmptyQueueRef.current = true;
+    }
+    
+    console.log(`[PlayerWindow] 📤 Syncing queue to Supabase: ${queue.length} active, ${priorityQueue.length} priority items`);
     
     // Skip if queue hasn't actually changed (prevents unnecessary syncs)
     if (queueHash === lastSyncedQueueRef.current && !currentVideo && !isPlaying) {
@@ -2264,6 +2454,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     // Detect queue advancement: if queueIndex changed, force immediate sync
     const queueAdvanced = prevQueueIndexRef.current !== queueIndex;
     if (queueAdvanced) {
+      // #region agent log
+      if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2444',message:'queueIndex changed in useEffect',data:{prevIndex:prevQueueIndexRef.current,newIndex:queueIndex,queueLength:queue.length,currentVideoTitle:currentVideo?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'}).catch(()=>{});
+      }
+      // #endregion
       console.log(`[PlayerWindow] Queue advanced in useEffect: ${prevQueueIndexRef.current} → ${queueIndex}, forcing immediate sync`);
       prevQueueIndexRef.current = queueIndex;
       lastSyncedQueueRef.current = queueHash;
@@ -2293,7 +2488,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         queueIndex
       });
     }
-  }, [supabaseInitialized, isPlaying, currentVideo, playbackTime, volume, queue, priorityQueue, queueIndex, syncState]);
+  }, [supabaseInitialized, supabaseOnline, isPlaying, currentVideo, playbackTime, volume, queue, priorityQueue, queueIndex, syncState]);
 
   // Tools handlers
   const handleOpenFullscreen = useCallback(async () => {
@@ -2417,7 +2612,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         crossfadeMode: 'manual',
         playerDisplayId: null,
         playerFullscreen: false,
-        playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'
+        playlistsDirectory: '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS',
+        forceAutoPlay: false
       });
 
       // Delete player profile from Supabase if connected
@@ -2460,7 +2656,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   }, [playlists]);
 
   // Get display name for active playlist
-  const activePlaylistDisplayName = activePlaylist ? getPlaylistDisplayName(activePlaylist) : 'None';
+  const activePlaylistDisplayName = activePlaylist ? getPlaylistDisplayName(activePlaylist) : 'No Playlist Selected';
   
   // Get display name for playlist to load in dialog
   const playlistToLoadDisplayName = playlistToLoad ? getPlaylistDisplayName(playlistToLoad) : '';
@@ -2587,9 +2783,42 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             <button className={`control-btn control-btn-large ${!playerReady ? 'disabled' : ''}`} onClick={toggleShuffle} disabled={!playerReady}>
               <span className="control-btn-label">SHUFFLE</span>
             </button>
-            <button className={`control-btn play-btn ${!playerReady ? 'disabled' : ''}`} onClick={handlePauseClick} disabled={!playerReady}>
-              <span className="material-symbols-rounded">{isPlaying ? 'pause' : 'play_arrow'}</span>
-            </button>
+            {settings.forceAutoPlay ? (
+              <div className={`control-btn play-btn ${isPlaying ? 'playing' : ''}`} style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '2px',
+                backgroundColor: isPlaying ? 'rgba(76, 175, 80, 0.2)' : 'transparent',
+                border: isPlaying ? '1px solid rgba(76, 175, 80, 0.5)' : '1px solid var(--yt-spec-10-percent-layer)',
+                cursor: 'default',
+                pointerEvents: 'none'
+              }}>
+                <span style={{ 
+                  fontSize: '10px', 
+                  fontWeight: 600, 
+                  color: '#4CAF50',
+                  letterSpacing: '0.5px',
+                  lineHeight: '1.2'
+                }}>
+                  AUTO-PLAY
+                </span>
+                <span style={{ 
+                  fontSize: '10px', 
+                  fontWeight: 600, 
+                  color: '#4CAF50',
+                  letterSpacing: '0.5px',
+                  lineHeight: '1.2'
+                }}>
+                  ENABLED
+                </span>
+              </div>
+            ) : (
+              <button className={`control-btn play-btn ${!playerReady ? 'disabled' : ''}`} onClick={handlePauseClick} disabled={!playerReady}>
+                <span className="material-symbols-rounded">{isPlaying ? 'pause' : 'play_arrow'}</span>
+              </button>
+            )}
             <div className="volume-control">
               <span className="material-symbols-rounded">volume_up</span>
               <input 
@@ -2617,7 +2846,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         <div className="priority-queue-label">Priority Queue:</div>
         <div className="priority-queue-content">
           {priorityQueue.length === 0 ? (
-            <span className="priority-queue-empty">Priority Queue is Empty...</span>
+            <span className="priority-queue-empty">No priority songs queued</span>
           ) : (
             <div className="priority-queue-ticker">
               {priorityQueue.map((item, idx) => (
@@ -3710,7 +3939,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                     <div style={{ fontSize: '32px', marginBottom: '12px' }}>🗑️</div>
                     <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Clear Queue</div>
                     <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                      Remove all videos from the current playback queue
+                      Remove all videos from the active queue and priority queue
                     </div>
                   </div>
 

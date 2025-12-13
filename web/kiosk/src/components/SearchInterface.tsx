@@ -27,7 +27,7 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
   const [selectedVideo, setSelectedVideo] = useState<SupabaseLocalVideo | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
-  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide' | 'all'>('hide'); // Filter for karaoke videos
+  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide' | 'all'>('all'); // Default to 'all' to show all songs initially
 
   // Helper to check if video is karaoke
   const isKaraokeVideo = (video: SupabaseLocalVideo): boolean => {
@@ -49,20 +49,38 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
 
   // Debounced search - show ALL videos when query is empty (browse mode)
   useEffect(() => {
+    if (!playerId) {
+      console.warn('[SearchInterface] ⚠️ No playerId provided, skipping search');
+      return;
+    }
+
+    console.log('[SearchInterface] 🔍 Starting search with playerId:', playerId);
+
     const timer = setTimeout(async () => {
       setIsLoading(true);
       try {
         if (searchQuery.trim().length < 2) {
           // Browse mode: show ALL videos from the player's database
+          console.log('[SearchInterface] 📚 Browse mode - Loading ALL videos for player:', playerId);
           const allVideos = await getAllLocalVideos(playerId, 1000, 0);
+          console.log('[SearchInterface] ✅ Loaded', allVideos?.length || 0, 'videos');
+          if (allVideos.length === 0) {
+            console.error('[SearchInterface] ❌ NO VIDEOS FOUND! Check:');
+            console.error('  1. Is the Electron Player running?');
+            console.error('  2. Has the Electron Player indexed videos? (Check Tools tab)');
+            console.error('  3. Does the playerId match? (Kiosk:', playerId, ')');
+            console.error('  4. Check Supabase local_videos table for this playerId');
+          }
           setResults(allVideos || []);
         } else {
           // Search mode: search for matching videos
+          console.log('[SearchInterface] 🔎 Search mode - Searching for:', searchQuery, 'playerId:', playerId);
           const searchResults = await searchLocalVideos(searchQuery, playerId, 1000);
+          console.log('[SearchInterface] ✅ Found', searchResults?.length || 0, 'results');
           setResults(searchResults || []);
         }
       } catch (error) {
-        console.error('[SearchInterface] Search error:', error);
+        console.error('[SearchInterface] ❌ Search error:', error);
         // Don't clear results on error - keep existing results if available
         // Only set empty if we don't have any results yet
         if (results.length === 0) {
@@ -221,22 +239,35 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
               ))}
             </VideoGrid>
           </>
-        ) : searchQuery.length >= 2 && !isLoading ? (
+        ) : !isLoading && results.length === 0 ? (
           <div className="text-center py-12">
-            <div className="kiosk-card bg-red-900/80 text-red-200 mb-4">
-              <h2 className="text-lg font-bold mb-2">No music database found for this Player</h2>
-              <p>Please check the Player ID or try again later.</p>
-            </div>
-            <p className="text-gray-400 text-lg">No songs found for "{searchQuery}"</p>
-            <p className="text-gray-500 text-sm mt-2">Try a different search term</p>
+            {searchQuery.length >= 2 ? (
+              <>
+                <div className="kiosk-card bg-red-900/80 text-red-200 mb-4">
+                  <h2 className="text-lg font-bold mb-2">No songs found</h2>
+                  <p>No results match your search query.</p>
+                </div>
+                <p className="text-gray-400 text-lg">No songs found for "{searchQuery}"</p>
+                <p className="text-gray-500 text-sm mt-2">Try a different search term or clear the search to browse all songs</p>
+              </>
+            ) : (
+              <>
+                <div className="kiosk-card bg-yellow-900/80 text-yellow-200 mb-4">
+                  <h2 className="text-lg font-bold mb-2">No music database found for this Player</h2>
+                  <p>Please check the Player ID or ensure the Electron Player is running and has indexed videos.</p>
+                </div>
+                <p className="text-gray-400 text-lg">No songs available to browse</p>
+                <p className="text-gray-500 text-sm mt-2">Make sure the Player ID is correct and the player has indexed its music library</p>
+              </>
+            )}
           </div>
-        ) : (
+        ) : !isLoading ? (
           <div className="text-center py-12">
             <Search size={64} className="text-gray-600 mx-auto mb-4" />
             <p className="text-gray-400 text-lg">Browse all songs or search for your favorites</p>
             <p className="text-gray-500 text-sm mt-2">Use the keyboard below to search, or browse all songs</p>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Keyboard */}

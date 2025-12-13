@@ -381,6 +381,14 @@ function KioskApp() {
   // Get UI mode from URL parameter (stable across renders)
   const uiMode = useMemo(() => getUIMode(), []);
 
+  // Log playerId on mount for debugging
+  useEffect(() => {
+    console.log('[KioskApp] 🎯 Kiosk initialized with playerId:', playerId);
+    if (!playerId) {
+      console.error('[KioskApp] ❌ CRITICAL: No playerId provided to Kiosk!');
+    }
+  }, [playerId]);
+
   // Load initial player state
   useEffect(() => {
     const loadState = async () => {

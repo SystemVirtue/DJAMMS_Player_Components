@@ -70,7 +70,7 @@ export const ConnectionsTab: React.FC<ConnectionsTabProps> = ({ playerId }) => {
   // Check Supabase connection status
   const checkSupabaseStatus = useCallback(() => {
     const supabaseService = getSupabaseService();
-    const isOnline = supabaseService.initialized && supabaseService.isOnline;
+    const isOnline = supabaseService.initialized && supabaseService.online;
     setConnectionStatus(prev => ({
       ...prev,
       supabase: isOnline ? 'online' : 'offline'
@@ -86,7 +86,7 @@ export const ConnectionsTab: React.FC<ConnectionsTabProps> = ({ playerId }) => {
 
     try {
       const supabaseService = getSupabaseService();
-      if (!supabaseService.initialized || !supabaseService.isOnline) {
+      if (!supabaseService.initialized || !supabaseService.online) {
         setConnectionStatus(prev => ({
           ...prev,
           webAdmin: { status: 'offline' },
@@ -253,12 +253,15 @@ export const ConnectionsTab: React.FC<ConnectionsTabProps> = ({ playerId }) => {
 
   // Format timestamp
   const formatTime = (date: Date) => {
+    // Use type assertion for fractionalSecondDigits as it's not in older TypeScript lib types
+    // but is supported in modern browsers/runtimes
     return date.toLocaleTimeString('en-US', { 
       hour12: false, 
       hour: '2-digit', 
       minute: '2-digit', 
-      second: '2-digit'
-    }) + '.' + date.getMilliseconds().toString().padStart(3, '0');
+      second: '2-digit',
+      fractionalSecondDigits: 3
+    } as Intl.DateTimeFormatOptions & { fractionalSecondDigits?: number });
   };
 
   // Get color for event type

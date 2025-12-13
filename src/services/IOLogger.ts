@@ -6,7 +6,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 
-export type IOEventType = 'supabase' | 'web-admin' | 'web-kiosk' | 'error';
+export type IOEventType = 'supabase' | 'web-admin' | 'web-kiosk' | 'error' | 'video-player' | 'local-admin';
 
 export interface IOEvent {
   id: string;

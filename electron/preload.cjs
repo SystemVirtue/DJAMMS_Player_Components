@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Player Settings Updates (sends settings to main process for window positioning)
   sendPlayerSettings: (settings) => ipcRenderer.send('player-settings-updated', settings),
 
+  // Debug logging
+  writeDebugLog: (logData) => ipcRenderer.invoke('write-debug-log', logData),
+  
   // Settings
   getSetting: (key) => ipcRenderer.invoke('get-setting', key),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
