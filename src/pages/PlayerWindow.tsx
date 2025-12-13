@@ -571,6 +571,36 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onQueueShuffle: () => {
       console.log('[PlayerWindow] Supabase queue_shuffle command received');
+      
+      // #region agent log
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:572',message:'WEBADMIN shuffle command received',data:{queueLength:queueRef.current?.length||0,currentIndex:queueIndexRef.current,isElectron:!!isElectron,hasSendQueueCommand:!!(window as any).electronAPI?.sendQueueCommand},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'}).catch(()=>{});
+      }
+      // #endregion
+      
+      // CRITICAL FIX: When WEBADMIN sends shuffle, we must ALSO shuffle the main process queue
+      // The main process queue is what actually plays videos - React state is just for display
+      // Without this, the display shows shuffled order but playback uses original order
+      if (isElectron && (window as any).electronAPI?.sendQueueCommand) {
+        // Send shuffle command to main process (same as player's own shuffle button)
+        // The main process will shuffle its queue and broadcast the updated state back
+        (window as any).electronAPI.sendQueueCommand({ action: 'shuffle_queue', payload: { keepFirst: true } });
+        console.log('[PlayerWindow] ✅ Shuffle command sent to main process queue');
+        
+        // #region agent log
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+          (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:590',message:'Shuffle command sent to main process',data:{action:'shuffle_queue',keepFirst:true},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'}).catch(()=>{});
+        }
+        // #endregion
+        
+        // Don't shuffle React state here - let main process broadcast the shuffled state
+        // This ensures React state and main process queue stay in sync
+        return;
+      }
+      
+      // Fallback: If not Electron or sendQueueCommand unavailable, shuffle React state only
+      // (This should rarely happen, but provides backward compatibility)
+      console.warn('[PlayerWindow] ⚠️ Electron API not available - shuffling React state only (may cause desync)');
       setQueue(prev => {
         // Keep the current video at index 0, shuffle the rest
         const currentIdx = queueIndexRef.current;
