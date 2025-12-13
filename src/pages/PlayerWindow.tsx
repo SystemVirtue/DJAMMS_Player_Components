@@ -1792,7 +1792,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const syncStateRef = useRef({
     isSyncing: false, // Prevents concurrent/recursive syncs
     lastSyncedHash: '', // Tracks last synced queue hash for change detection
-    lastMainProcessHash: '' // Tracks last queue from main process to prevent recursion
+    lastFullStateHash: '', // Tracks full state hash (queue + other state) for change detection
+    lastMainProcessHash: '', // Tracks last queue from main process to prevent recursion
+    lastSkipLogTime: 0, // Throttles skip log messages to reduce spam
+    lastVideoId: '' // Tracks last video ID for change detection
   });
   
   // Keep refs in sync with state
@@ -2317,8 +2320,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     
     // Prevent concurrent/recursive syncs
     if (syncStateRef.current.isSyncing) {
-      console.log('[PlayerWindow] Skipping syncState - sync already in progress');
-      return;
+      return; // Silently skip - no need to log every time
     }
     
     // Create a hash of queue state to detect if it actually changed
@@ -2328,34 +2330,47 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       queueIndex
     });
     
+    // Create a hash of other state that might trigger syncs
+    const otherStateHash = JSON.stringify({
+      currentVideo: currentVideo?.id || null,
+      isPlaying,
+      playbackTime: Math.floor(playbackTime), // Round to avoid micro-changes
+      volume: Math.round(volume)
+    });
+    
+    // Combine hashes for full state comparison
+    const fullStateHash = `${queueHash}|${otherStateHash}`;
+    
     // State-based detection: Skip sync if current queue matches what we just received from main process
     // This prevents syncing back to Supabase what we just received from main process
+    // IMPORTANT: Clear lastMainProcessHash after sync completes to allow future syncs
     if (queueHash === syncStateRef.current.lastMainProcessHash && syncStateRef.current.lastMainProcessHash !== '') {
-      console.log('[PlayerWindow] Skipping syncState - queue matches last main process update (state-based detection)');
+      // Only log occasionally to reduce spam (every 5 seconds max)
+      const now = Date.now();
+      if (!syncStateRef.current.lastSkipLogTime || (now - syncStateRef.current.lastSkipLogTime) > 5000) {
+        console.log('[PlayerWindow] Skipping syncState - queue matches last main process update (state-based detection)');
+        syncStateRef.current.lastSkipLogTime = now;
+      }
       return;
     }
     
     // Skip syncing empty queues on initial load (prevents overwriting Supabase with empty queue)
     // Only sync empty queues if we've previously synced a non-empty queue (explicit clear)
     const queueIsEmpty = queue.length === 0 && priorityQueue.length === 0;
-    const hasQueueItems = queue.length > 0 || priorityQueue.length > 0;
     
     // If queue is empty and we haven't synced a non-empty queue yet, skip sync (prevents overwriting Supabase on startup)
     if (queueIsEmpty && syncStateRef.current.lastSyncedHash === '') {
-      console.log('[PlayerWindow] ⏭️ Skipping sync - queue is empty and we haven\'t synced a non-empty queue yet (initial load)');
-      return;
+      return; // Silently skip initial empty queue
     }
     
-    // Skip if queue hasn't actually changed (prevents unnecessary syncs)
-    if (queueHash === syncStateRef.current.lastSyncedHash && !currentVideo && !isPlaying) {
-      // Only skip if nothing else changed - but if video or playing state changed, still sync
-      const otherStateChanged = currentVideo || isPlaying;
-      if (!otherStateChanged) {
-        return;
-      }
+    // Skip if state hasn't actually changed (prevents unnecessary syncs)
+    // Compare both queue hash and other state hash
+    const lastFullStateHash = syncStateRef.current.lastFullStateHash || '';
+    if (fullStateHash === lastFullStateHash) {
+      return; // State hasn't changed, skip sync
     }
     
-    console.log(`[PlayerWindow] 📤 Syncing queue to Supabase: ${queue.length} active, ${priorityQueue.length} priority items`);
+    console.log(`[PlayerWindow] 📤 Syncing state to Supabase: ${queue.length} active, ${priorityQueue.length} priority items, queueIndex: ${queueIndex}`);
     
     // Set syncing flag to prevent recursion
     syncStateRef.current.isSyncing = true;
@@ -2364,19 +2379,46 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     const prevQueueIndex = queueIndexRef.current;
     const queueAdvanced = prevQueueIndex !== queueIndex;
     
+    // Detect if queue content changed (not just index)
+    const prevQueueHash = syncStateRef.current.lastSyncedHash || '';
+    const queueContentChanged = queueHash !== prevQueueHash;
+    
     // Update refs BEFORE calling syncState to prevent re-triggering
     queueIndexRef.current = queueIndex;
     syncStateRef.current.lastSyncedHash = queueHash;
+    syncStateRef.current.lastFullStateHash = fullStateHash;
+    
+    // Clear lastMainProcessHash after we've determined we need to sync
+    // This allows future syncs even if the queue matches what we received from main process
+    // (e.g., if user makes changes after receiving main process update)
+    syncStateRef.current.lastMainProcessHash = '';
+    
+    // Determine if we need immediate sync:
+    // - Queue advanced (queueIndex changed)
+    // - Queue content changed (items added/removed/reordered)
+    // - Current video changed (now playing changed)
+    const needsImmediateSync = queueAdvanced || queueContentChanged || (currentVideo && currentVideo.id !== syncStateRef.current.lastVideoId);
+    
+    // Track last video ID for change detection
+    if (currentVideo) {
+      syncStateRef.current.lastVideoId = currentVideo.id;
+    }
     
     try {
-      if (queueAdvanced) {
+      if (needsImmediateSync) {
         // #region agent log
         if (isElectron && (window as any).electronAPI?.writeDebugLog) {
-          (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2444',message:'queueIndex changed in useEffect',data:{prevIndex:prevQueueIndex,newIndex:queueIndex,queueLength:queue.length,currentVideoTitle:currentVideo?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'}).catch(()=>{});
+          (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2380',message:'queue or video changed, forcing immediate sync',data:{prevIndex:prevQueueIndex,newIndex:queueIndex,queueLength:queue.length,queueContentChanged,queueAdvanced,currentVideoTitle:currentVideo?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'}).catch(()=>{});
         }
         // #endregion
-        console.log(`[PlayerWindow] Queue advanced in useEffect: ${prevQueueIndex} → ${queueIndex}, forcing immediate sync`);
-        // Force immediate sync for queue advancement
+        if (queueAdvanced) {
+          console.log(`[PlayerWindow] Queue advanced: ${prevQueueIndex} → ${queueIndex}, forcing immediate sync`);
+        } else if (queueContentChanged) {
+          console.log(`[PlayerWindow] Queue content changed, forcing immediate sync`);
+        } else {
+          console.log(`[PlayerWindow] Current video changed, forcing immediate sync`);
+        }
+        // Force immediate sync for queue/video changes to ensure Web Admin sees updates immediately
         syncState({
           status: isPlaying ? 'playing' : 'paused',
           isPlaying,
@@ -2388,7 +2430,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           queueIndex
         }, true); // immediate = true
       } else {
-        // Normal sync (debounced) for other state changes
+        // Normal sync (debounced) for other state changes (playback position, volume, etc.)
         syncState({
           status: isPlaying ? 'playing' : 'paused',
           isPlaying,
