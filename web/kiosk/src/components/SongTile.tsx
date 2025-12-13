@@ -25,7 +25,12 @@ export const SongTile: React.FC<SongTileProps> = ({
   const [isPressed, setIsPressed] = useState(false);
   
   const thumbnailUrl = getThumbnailUrl(video, thumbnailsPath);
-  const hasThumbnail = thumbnailUrl && !thumbnailError;
+  // Only allow valid protocols (djamms://, http://, https://) - never file://
+  const isValidUrl = thumbnailUrl && 
+    (thumbnailUrl.startsWith('djamms://') || 
+     thumbnailUrl.startsWith('http://') || 
+     thumbnailUrl.startsWith('https://'));
+  const hasThumbnail = isValidUrl && !thumbnailError;
   
   const handleQueue = () => {
     onQueue(video);
@@ -56,7 +61,7 @@ export const SongTile: React.FC<SongTileProps> = ({
         }}
       >
         {/* Hidden image for error detection */}
-        {thumbnailUrl && !thumbnailError && (
+        {hasThumbnail && (
           <img
             src={thumbnailUrl}
             alt=""

@@ -21,7 +21,12 @@ export function VideoResultCard({ video, isSelected, onClick }: VideoResultCardP
   const playlist = video.metadata ? getPlaylistDisplayName((video.metadata as any).playlist || '') : '';
   const thumbnailsPath = getThumbnailsPath();
   const thumbnailUrl = getThumbnailUrl(video, thumbnailsPath);
-  const hasThumbnail = thumbnailUrl && !thumbnailError;
+  // Only allow valid protocols (djamms://, http://, https://) - never file://
+  const isValidUrl = thumbnailUrl && 
+    (thumbnailUrl.startsWith('djamms://') || 
+     thumbnailUrl.startsWith('http://') || 
+     thumbnailUrl.startsWith('https://'));
+  const hasThumbnail = isValidUrl && !thumbnailError;
   
   // Format duration from seconds to mm:ss
   const formatDuration = (seconds: number | null): string => {
@@ -45,7 +50,7 @@ export function VideoResultCard({ video, isSelected, onClick }: VideoResultCardP
           backgroundPosition: 'center'
         }}
       >
-        {thumbnailUrl && !thumbnailError && (
+        {hasThumbnail && (
           <img
             src={thumbnailUrl}
             alt=""

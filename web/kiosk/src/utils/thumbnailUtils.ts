@@ -37,31 +37,24 @@ export function extractYouTubeId(filename: string): string | null {
 /**
  * Construct thumbnail path from YouTube ID and thumbnails folder path
  * Format: {thumbnailsPath}/{youtubeId}.thumb.250.png
- * Returns file:// URL for web browser compatibility
+ * Returns djamms:// protocol URL for Electron, or empty string for web (thumbnails not accessible)
  */
 export function getThumbnailPath(youtubeId: string, thumbnailsPath: string): string {
   if (!youtubeId || !thumbnailsPath) return '';
   
-  // Ensure thumbnailsPath doesn't end with slash
-  const cleanPath = thumbnailsPath.replace(/\/$/, '');
-  const fullPath = `${cleanPath}/${youtubeId}.thumb.250.png`;
-  
-  // For web browsers, we need to use file:// protocol
-  // Note: This may not work in all browsers due to security restrictions
-  // The component will handle 404s gracefully with fallback to black background
-  if (fullPath.startsWith('http://') || fullPath.startsWith('https://') || fullPath.startsWith('file://')) {
-    return fullPath;
+  // Check if we're in Electron (has electronAPI)
+  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+    // Ensure thumbnailsPath doesn't end with slash
+    const cleanPath = thumbnailsPath.replace(/\/$/, '');
+    const fullPath = `${cleanPath}/${youtubeId}.thumb.250.png`;
+    // Use djamms:// protocol for Electron
+    return `djamms://${fullPath}`;
   }
   
-  // Convert to file:// URL
-  // Encode path segments to handle spaces and special characters
-  const pathParts = fullPath.split('/');
-  const encodedParts = pathParts.map((part, index) => {
-    // Don't encode the first empty string (before leading /)
-    if (index === 0 && part === '') return '';
-    return encodeURIComponent(part);
-  });
-  return `file://${encodedParts.join('/')}`;
+  // For web browsers, we can't access local files directly via file:// protocol
+  // Return empty string - components will show black background
+  // In the future, thumbnails could be served via HTTP server
+  return '';
 }
 
 /**
@@ -77,17 +70,23 @@ export function checkThumbnailExists(path: string): Promise<boolean> {
       return;
     }
     
+    // In web browsers, we can't access local files via file:// protocol
+    // Only allow http/https or djamms:// protocols
+    if (typeof window !== 'undefined' && !(window as any).electronAPI) {
+      // Web browser context - only allow http/https URLs
+      if (!path.startsWith('http://') && !path.startsWith('https://')) {
+        resolve(false);
+        return;
+      }
+    }
+    
     const img = new Image();
     
     img.onload = () => resolve(true);
     img.onerror = () => resolve(false);
     
-    // For local file paths, we need to use file:// protocol or serve via HTTP
-    // In a web context, thumbnails should be served via HTTP server
-    // For now, we'll try to load it and let the browser handle 404s
-    img.src = path.startsWith('http') || path.startsWith('file://') 
-      ? path 
-      : `file://${path}`;
+    // Use the path as-is (should be djamms:// for Electron or http/https for web)
+    img.src = path;
     
     // Timeout after 2 seconds
     setTimeout(() => resolve(false), 2000);
