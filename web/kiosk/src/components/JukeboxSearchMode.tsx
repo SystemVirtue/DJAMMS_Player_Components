@@ -152,13 +152,13 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
       if (query.length < 2) {
         // Browse mode: show ALL videos from the player's database
         console.log('[JukeboxSearchMode] Loading all videos for player:', playerId);
-        const allVideos = await getAllLocalVideos(playerId, 1000, 0);
+        const allVideos = await getAllLocalVideos(playerId, null, 0);
         console.log('[JukeboxSearchMode] Loaded', allVideos?.length || 0, 'videos');
         setSearchResults(allVideos || []);
       } else {
         // Search mode: search for matching videos
         console.log('[JukeboxSearchMode] Searching for:', query, 'playerId:', playerId);
-        const results = await searchLocalVideos(query, playerId, 1000);
+        const results = await searchLocalVideos(query, playerId, null);
         console.log('[JukeboxSearchMode] Found', results?.length || 0, 'results');
         setSearchResults(results || []);
       }

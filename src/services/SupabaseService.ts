@@ -539,6 +539,12 @@ class SupabaseService {
         updateData.now_playing_video = state.currentVideo 
           ? this.videoToNowPlaying(state.currentVideo)
           : null;
+      } else {
+        // Preserve now_playing_video from last synced state if not provided
+        // This prevents clearing now_playing_video when only other fields change
+        if (this.lastSyncedState?.now_playing_video !== undefined) {
+          updateData.now_playing_video = this.lastSyncedState.now_playing_video;
+        }
       }
 
       if (state.currentPosition !== undefined) {
@@ -559,8 +565,9 @@ class SupabaseService {
       if (state.activeQueue !== undefined) {
         updateData.active_queue = state.activeQueue.map(v => this.videoToQueueItem(v));
       } else {
-        // Only preserve if activeQueue was not provided at all (undefined)
-        // This prevents clearing the queue when syncState is called without queue data
+        // CRITICAL: Always preserve active_queue from lastSyncedState if it exists
+        // This ensures Web Admin receives queue data in every Realtime update, even when only other fields change
+        // Without this, partial updates (e.g., only now_playing_video) would not include active_queue
         if (this.lastSyncedState?.active_queue) {
           updateData.active_queue = this.lastSyncedState.active_queue;
         }
@@ -596,9 +603,26 @@ class SupabaseService {
       // This ensures Web Admin always sees the current queue state
       const hasQueueData = updateData.active_queue !== undefined || updateData.priority_queue !== undefined;
       
-      // Only update if something changed OR if we have queue data to sync
-      if (Object.keys(updateData).length <= 1 && !hasQueueData) {
-        return; // Only last_updated and no queue data, skip
+      // Also check if now_playing_video is provided (important for Web Admin display)
+      const hasNowPlaying = updateData.now_playing_video !== undefined;
+      
+      // CRITICAL: Always include active_queue in updates if it exists in lastSyncedState
+      // This ensures Web Admin receives queue data in every Realtime update, even for partial updates
+      // Without this, updates that only change now_playing_video would not include active_queue
+      if (!hasQueueData && this.lastSyncedState?.active_queue) {
+        updateData.active_queue = this.lastSyncedState.active_queue;
+        logger.debug('[SupabaseService] Including active_queue from lastSyncedState to ensure Web Admin receives it');
+      }
+      if (!hasQueueData && this.lastSyncedState?.priority_queue) {
+        updateData.priority_queue = this.lastSyncedState.priority_queue;
+      }
+      
+      // Re-check hasQueueData after adding from lastSyncedState
+      const finalHasQueueData = updateData.active_queue !== undefined || updateData.priority_queue !== undefined;
+      
+      // Only update if something changed OR if we have queue/now_playing data to sync
+      if (Object.keys(updateData).length <= 1 && !finalHasQueueData && !hasNowPlaying) {
+        return; // Only last_updated and no meaningful data, skip
       }
 
       // Skip sync if we're currently processing a remote update (prevents recursion loop)
@@ -651,15 +675,27 @@ class SupabaseService {
           // If queue content AND order haven't changed, check if other fields changed
           if (!activeQueueContentChanged && !activeQueueOrderChanged && 
               !priorityQueueContentChanged && !priorityQueueOrderChanged) {
-            // Check if other fields changed
+            // Check if other fields changed (including now_playing_video, status, etc.)
             const otherFieldsChanged = Object.keys(updateData).some(key => {
+              // Skip queue fields and last_updated in this check (already handled above)
               if (key === 'active_queue' || key === 'priority_queue' || key === 'last_updated') return false;
-              return !isEqual(this.lastSyncedState?.[key as keyof SupabasePlayerState], updateData[key as keyof SupabasePlayerState]);
+              // Check if field value actually changed (deep equality for objects like now_playing_video)
+              const lastValue = this.lastSyncedState?.[key as keyof SupabasePlayerState];
+              const newValue = updateData[key as keyof SupabasePlayerState];
+              return !isEqual(lastValue, newValue);
             });
             
-            if (!otherFieldsChanged) {
-              logger.debug('[SupabaseService] Skipping state sync - queue content and order unchanged');
+            // IMPORTANT: Even if nothing changed, we should still sync if we have queue data
+            // This ensures Web Admin always receives the current queue state in Realtime updates
+            // Only skip if truly no queue data AND no other fields changed
+            if (!otherFieldsChanged && !hasQueueData) {
+              logger.debug('[SupabaseService] Skipping state sync - queue content and order unchanged, no other fields changed');
               return;
+            }
+            
+            // If we have queue data (even if unchanged), we should sync to ensure Web Admin receives it
+            if (hasQueueData) {
+              logger.debug('[SupabaseService] Syncing state - including queue data to ensure Web Admin receives current state');
             }
           }
           
@@ -1126,11 +1162,13 @@ class SupabaseService {
           mergedPriorityQueue = uniquePriorityQueue;
         }
 
-        // Update lastSyncedState with merged queues
+        // Update lastSyncedState with merged queues and all other fields from remote update
+        // This ensures now_playing_video and other fields are preserved
         this.lastSyncedState = {
           ...this.lastSyncedState,
-          active_queue: mergedActiveQueue,
-          priority_queue: mergedPriorityQueue,
+          ...newState, // Include all fields from remote update (now_playing_video, status, etc.)
+          active_queue: mergedActiveQueue, // Use merged active queue
+          priority_queue: mergedPriorityQueue, // Use merged priority queue
           last_updated: remoteUpdatedAt
         };
 

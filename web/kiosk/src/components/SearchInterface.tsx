@@ -62,7 +62,7 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
         if (searchQuery.trim().length < 2) {
           // Browse mode: show ALL videos from the player's database
           console.log('[SearchInterface] 📚 Browse mode - Loading ALL videos for player:', playerId);
-          const allVideos = await getAllLocalVideos(playerId, 1000, 0);
+          const allVideos = await getAllLocalVideos(playerId, null, 0);
           console.log('[SearchInterface] ✅ Loaded', allVideos?.length || 0, 'videos');
           if (allVideos.length === 0) {
             console.error('[SearchInterface] ❌ NO VIDEOS FOUND! Check:');
@@ -75,7 +75,7 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
         } else {
           // Search mode: search for matching videos
           console.log('[SearchInterface] 🔎 Search mode - Searching for:', searchQuery, 'playerId:', playerId);
-          const searchResults = await searchLocalVideos(searchQuery, playerId, 1000);
+          const searchResults = await searchLocalVideos(searchQuery, playerId, null);
           console.log('[SearchInterface] ✅ Found', searchResults?.length || 0, 'results');
           setResults(searchResults || []);
         }

@@ -174,3 +174,4 @@ export const ModernKiosk: React.FC<ModernKioskProps> = ({
   );
 };
 
+

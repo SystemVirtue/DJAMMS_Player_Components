@@ -4,23 +4,87 @@ const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store').default || require('electron-store');
 
+// ============================================================================
+// FILE-BASED LOGGING FOR CURSOR AGENT ACCESS
+// ============================================================================
+const LOGS_DIR = path.join(__dirname, '..', 'logs');
+const MAIN_LOG = path.join(LOGS_DIR, 'electron-main.log');
+const RENDERER_LOG = path.join(LOGS_DIR, 'electron-renderer.log');
+const COMBINED_LOG = path.join(LOGS_DIR, 'combined.log');
+
+// Ensure logs directory exists
+if (!fs.existsSync(LOGS_DIR)) {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
+
+// Helper to write to log files
+function writeToLogFile(logPath, level, ...args) {
+  try {
+    const timestamp = new Date().toISOString();
+    const message = args.map(arg => {
+      if (typeof arg === 'object') {
+        try {
+          return JSON.stringify(arg, null, 2);
+        } catch {
+          return String(arg);
+        }
+      }
+      return String(arg);
+    }).join(' ');
+    const logLine = `[${timestamp}] [${level.toUpperCase()}] ${message}\n`;
+    fs.appendFileSync(logPath, logLine, 'utf8');
+    // Also append to combined log
+    fs.appendFileSync(COMBINED_LOG, `[${timestamp}] [${level.toUpperCase()}] [${path.basename(logPath)}] ${message}\n`, 'utf8');
+  } catch (error) {
+    // Silently fail if log files can't be written
+  }
+}
+
 // Safe console logging to prevent EPIPE errors
 // Wrap console methods to catch EPIPE errors when stdout/stderr are closed
 const originalLog = console.log;
 const originalError = console.error;
 const originalWarn = console.warn;
 
+// Helper to safely write to console streams
+const safeConsoleWrite = (stream, originalMethod, args) => {
+  try {
+    // Check stream state before writing
+    if (!stream || stream.destroyed || !stream.writable) {
+      return false;
+    }
+    
+    // Attempt the write
+    originalMethod.apply(console, args);
+    return true;
+  } catch (err) {
+    // Ignore EPIPE, ENOTCONN, and other stream errors
+    if (err.code === 'EPIPE' || err.code === 'ENOTCONN' || err.code === 'ECONNRESET') {
+      return false;
+    }
+    // Re-throw unexpected errors
+    throw err;
+  }
+};
+
 console.log = (...args) => {
   try {
-    if (process.stdout.writable && !process.stdout.destroyed) {
-      originalLog.apply(console, args);
+    // Try to write to stdout, but don't fail if it's closed
+    safeConsoleWrite(process.stdout, originalLog, args);
+    
+    // Always write to log file (this should never fail with EPIPE)
+    try {
+      writeToLogFile(MAIN_LOG, 'log', ...args);
+    } catch (logErr) {
+      // Silently ignore log file errors
     }
   } catch (err) {
-    // Ignore EPIPE errors (broken pipe - stdout/stderr closed)
-    if (err.code !== 'EPIPE' && err.code !== 'ENOTCONN') {
-      // Only try to log other errors if stderr is available
+    // Catch any unexpected errors and ignore them
+    // EPIPE errors are already handled in safeConsoleWrite
+    if (err.code !== 'EPIPE' && err.code !== 'ENOTCONN' && err.code !== 'ECONNRESET') {
+      // Only log unexpected errors if we can
       try {
-        if (process.stderr.writable && !process.stderr.destroyed) {
+        if (process.stderr && !process.stderr.destroyed && process.stderr.writable) {
           originalError.apply(console, ['[Console Log Error]', err.message]);
         }
       } catch {}
@@ -30,29 +94,74 @@ console.log = (...args) => {
 
 console.error = (...args) => {
   try {
-    if (process.stderr.writable && !process.stderr.destroyed) {
-      originalError.apply(console, args);
+    // Try to write to stderr, but don't fail if it's closed
+    safeConsoleWrite(process.stderr, originalError, args);
+    
+    // Always write to log file
+    try {
+      writeToLogFile(MAIN_LOG, 'error', ...args);
+    } catch (logErr) {
+      // Silently ignore log file errors
     }
   } catch (err) {
-    // Ignore EPIPE errors (broken pipe - stderr closed)
-    if (err.code !== 'EPIPE' && err.code !== 'ENOTCONN') {
-      // Silently fail - can't log if streams are closed
-    }
+    // Ignore all errors - can't log if streams are closed
+    // EPIPE errors are already handled in safeConsoleWrite
   }
 };
 
 console.warn = (...args) => {
   try {
-    if (process.stdout.writable && !process.stdout.destroyed) {
-      originalWarn.apply(console, args);
+    // Try to write to stdout, but don't fail if it's closed
+    safeConsoleWrite(process.stdout, originalWarn, args);
+    
+    // Also write to log file
+    try {
+      writeToLogFile(MAIN_LOG, 'warn', ...args);
+    } catch (logErr) {
+      // Silently ignore log file errors
     }
   } catch (err) {
-    // Ignore EPIPE errors (broken pipe - stdout closed)
-    if (err.code !== 'EPIPE' && err.code !== 'ENOTCONN') {
-      // Silently fail - can't log if streams are closed
-    }
+    // Ignore all errors - can't log if streams are closed
+    // EPIPE errors are already handled in safeConsoleWrite
   }
 };
+
+// Handle uncaught exceptions, especially EPIPE errors from console writes
+process.on('uncaughtException', (error) => {
+  // Silently ignore EPIPE errors (broken pipe - stdout/stderr closed)
+  if (error.code === 'EPIPE' || error.code === 'ENOTCONN' || error.code === 'ECONNRESET') {
+    // These are harmless - streams are closed, nothing we can do
+    return;
+  }
+  
+  // Log other uncaught exceptions to file (don't try console)
+  try {
+    writeToLogFile(MAIN_LOG, 'error', 'Uncaught Exception:', error.message, error.stack);
+  } catch (logErr) {
+    // Can't even log to file - silently fail
+  }
+  
+  // Re-throw non-EPIPE errors so they're still visible in dev tools
+  // but won't crash the app in production
+  if (process.env.NODE_ENV === 'development') {
+    throw error;
+  }
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  // Ignore EPIPE-related rejections
+  if (reason && typeof reason === 'object' && (reason.code === 'EPIPE' || reason.code === 'ENOTCONN' || reason.code === 'ECONNRESET')) {
+    return;
+  }
+  
+  // Log other rejections to file
+  try {
+    writeToLogFile(MAIN_LOG, 'error', 'Unhandled Rejection:', reason);
+  } catch (logErr) {
+    // Can't log - silently fail
+  }
+});
 
 // Initialize persistent storage
 const store = new Store({
@@ -70,7 +179,7 @@ const store = new Store({
 // NOTE: QueueManager is available but not yet fully integrated.
 // Current implementation uses queueState object directly for backward compatibility.
 // Future refactor: Replace queueState with QueueManager instance.
-const QueueManager = require('./queue-manager');
+const QueueManager = require('./queue-manager.cjs');
 
 // Keep global references to prevent garbage collection
 let mainWindow = null;
@@ -1301,6 +1410,11 @@ ipcMain.handle('write-debug-log', async (event, logData) => {
     console.error('[main] Failed to write debug log:', error);
     return { success: false, error: error.message };
   }
+});
+
+// Forward renderer console logs to file
+ipcMain.on('renderer-log', (event, { level, args }) => {
+  writeToLogFile(RENDERER_LOG, level, ...args);
 });
 
 // Settings/Store Operations

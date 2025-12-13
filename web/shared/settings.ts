@@ -47,3 +47,4 @@ export function setThumbnailsPath(path: string): void {
   setSettings({ thumbnailsPath: path });
 }
 
+

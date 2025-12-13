@@ -92,3 +92,4 @@ export const ModernKioskFooter: React.FC<ModernKioskFooterProps> = ({
   );
 };
 
+

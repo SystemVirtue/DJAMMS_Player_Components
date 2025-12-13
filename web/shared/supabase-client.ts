@@ -692,7 +692,7 @@ export const commands = {
 export async function searchLocalVideos(
   query: string,
   playerId: string = DEFAULT_PLAYER_ID,
-  limit: number = 50
+  limit: number | null = 50
 ): Promise<SupabaseLocalVideo[]> {
   // Minimum query length before searching
   const MIN_QUERY_LENGTH = 2;
@@ -707,7 +707,7 @@ export async function searchLocalVideos(
     const { data, error } = await supabase.rpc('search_videos', {
       search_query: trimmedQuery,
       scope: 'all',
-      result_limit: limit,
+      result_limit: limit || 10000, // Use large number if null (effectively unlimited)
       result_offset: 0,
       p_player_id: playerId
     });
@@ -775,14 +775,20 @@ export async function searchLocalVideos(
   
   const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
   
-  const { data, error } = await supabase
+  let queryBuilder = supabase
     .from('local_videos')
     .select('*')
     .eq('player_id', playerId)
     .eq('is_available', true)
     .or(orClauses)
-    .order('title')
-    .limit(limit);
+    .order('title');
+  
+  // Only apply limit if specified
+  if (limit !== null) {
+    queryBuilder = queryBuilder.limit(limit);
+  }
+  
+  const { data, error } = await queryBuilder;
 
   if (error) {
       console.error('[SupabaseClient] Error searching videos (ILIKE fallback):', error);

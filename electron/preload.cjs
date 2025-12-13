@@ -47,6 +47,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Debug logging
   writeDebugLog: (logData) => ipcRenderer.invoke('write-debug-log', logData),
   
+  // Send renderer logs to main process for file logging
+  send: (channel, data) => {
+    if (['renderer-log'].includes(channel)) {
+      ipcRenderer.send(channel, data);
+    } else {
+      console.warn(`[preload] Attempted to send to unauthorized channel: ${channel}`);
+    }
+  },
+  
   // Settings
   getSetting: (key) => ipcRenderer.invoke('get-setting', key),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
