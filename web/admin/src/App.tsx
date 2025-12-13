@@ -339,8 +339,8 @@ function AdminApp() {
       } else if (state.active_queue === undefined) {
         // CRITICAL FIX: When active_queue is undefined, it means the update didn't include it
         // This is a BUG - active_queue should ALWAYS be included in updates
-        // Instead of preserving stale data, we should fetch fresh state or log a warning
-        console.warn('[WebAdmin] ⚠️ WARNING: active_queue is undefined in update - this should not happen!');
+        // Fetch fresh state to get the current queue instead of preserving stale data
+        console.warn('[WebAdmin] ⚠️ WARNING: active_queue is undefined in update - fetching fresh state');
         console.warn('[WebAdmin] Update data:', {
           hasNowPlaying: !!state.now_playing_video,
           nowPlayingTitle: state.now_playing_video?.title,
@@ -348,11 +348,25 @@ function AdminApp() {
           isPlaying: state.is_playing,
           hasPriorityQueue: !!state.priority_queue
         });
-        // Don't preserve existing queue - it's likely stale
-        // Instead, try to fetch fresh state if we have a playerId
-        // For now, log the warning but don't change queue (to avoid breaking UI)
-        // TODO: Implement fetch of fresh state when active_queue is undefined
-        console.warn('[WebAdmin] ⚠️ Preserving existing queue (may be stale) - consider fetching fresh state');
+        // Fetch fresh state to get current active_queue
+        if (playerId) {
+          getPlayerState(playerId).then(freshState => {
+            if (freshState && freshState.active_queue !== undefined) {
+              console.log('[WebAdmin] ✅ Fetched fresh state with active_queue:', freshState.active_queue.length, 'items');
+              // Apply the fresh state (this will update active_queue)
+              applyState(freshState);
+            } else {
+              console.warn('[WebAdmin] ⚠️ Fresh state also missing active_queue - using empty array');
+              setActiveQueue([]);
+            }
+          }).catch(err => {
+            console.error('[WebAdmin] ❌ Failed to fetch fresh state:', err);
+            // Fallback: preserve existing queue if fetch fails (better than clearing it)
+            console.warn('[WebAdmin] ⚠️ Preserving existing queue due to fetch error');
+          });
+        } else {
+          console.warn('[WebAdmin] ⚠️ No playerId available - cannot fetch fresh state');
+        }
       } else {
         console.warn('[WebAdmin] active_queue is not an array:', state.active_queue, 'type:', typeof state.active_queue);
         setActiveQueue([]);

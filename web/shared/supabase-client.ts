@@ -242,12 +242,26 @@ export function subscribeToPlayerState(
           };
           console.log(`[SupabaseClient] Received Realtime update for player ${playerId}:`, logData);
           
-          // Log detailed info for debugging
+          // Log detailed info for debugging (throttle warnings to reduce spam)
           if (newState.active_queue === undefined) {
-            console.warn(`[SupabaseClient] ⚠️ Realtime update missing active_queue for player ${playerId}`);
+            const warningKey = `missing-queue-warning-${playerId}`;
+            const lastWarning = (window as any)[warningKey] || 0;
+            const now = Date.now();
+            // Only warn once per 10 seconds to reduce console spam
+            if (now - lastWarning > 10000) {
+              console.warn(`[SupabaseClient] ⚠️ Realtime update missing active_queue for player ${playerId}`);
+              (window as any)[warningKey] = now;
+            }
           }
           if (!newState.now_playing_video) {
-            console.warn(`[SupabaseClient] ⚠️ Realtime update missing now_playing_video for player ${playerId}`);
+            const warningKey = `missing-nowplaying-warning-${playerId}`;
+            const lastWarning = (window as any)[warningKey] || 0;
+            const now = Date.now();
+            // Only warn once per 10 seconds
+            if (now - lastWarning > 10000) {
+              console.warn(`[SupabaseClient] ⚠️ Realtime update missing now_playing_video for player ${playerId}`);
+              (window as any)[warningKey] = now;
+            }
           }
           
           lastPolledState = newState;
@@ -857,10 +871,21 @@ export async function getAllLocalVideos(
     const uniquePlayerIds = [...new Set(allPlayers.map(v => v.player_id))];
     console.log('[SupabaseClient] Found videos for player IDs:', uniquePlayerIds);
     if (!uniquePlayerIds.includes(playerId)) {
-      console.warn(`[SupabaseClient] ⚠️ WARNING: No videos found for playerId "${playerId}". Available player IDs:`, uniquePlayerIds);
+      // Only warn once per session to reduce console spam
+      // Videos may not be indexed yet - this is expected for new player IDs
+      const warningKey = `video-warning-${playerId}`;
+      if (!(window as any)[warningKey]) {
+        console.warn(`[SupabaseClient] ⚠️ No videos found for playerId "${playerId}". Available player IDs:`, uniquePlayerIds);
+        console.warn(`[SupabaseClient] 💡 Tip: Videos need to be indexed in the Electron app for this player ID`);
+        (window as any)[warningKey] = true;
+      }
     }
   } else if (!countError) {
-    console.warn('[SupabaseClient] ⚠️ WARNING: local_videos table is EMPTY - no videos indexed yet!');
+    // Only warn once to reduce spam
+    if (!(window as any)['empty-videos-warning']) {
+      console.warn('[SupabaseClient] ⚠️ WARNING: local_videos table is EMPTY - no videos indexed yet!');
+      (window as any)['empty-videos-warning'] = true;
+    }
   }
   
   // Build query - if limit is null, fetch all videos (no range limit)
