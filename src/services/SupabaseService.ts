@@ -197,6 +197,9 @@ class SupabaseService {
 
       this.isInitialized = true;
       this.isOnline = true;
+      // Set connection status to 'connected' after successful initialization
+      // This allows queue syncs to proceed immediately instead of being queued
+      this.setConnectionStatus('connected');
       logger.info(`SupabaseService initialized for player: ${this.playerId}`);
       return true;
     } catch (error) {
