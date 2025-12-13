@@ -613,19 +613,21 @@ export async function insertCommand(
     insertPayload.issued_by = issuedBy;
     insertPayload.issued_at = new Date().toISOString();
 
-    supabase
-      .from('admin_commands')
-      .insert(insertPayload)
-      .then(({ error }) => {
-        // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist, 23502 = not-null constraint)
-        // These are non-critical since broadcasting via Realtime channel works fine
-        if (error && error.code !== '42P01' && error.code !== 'PGRST204' && error.code !== '23502') {
-          console.warn('[SupabaseClient] DB insert failed:', error.message);
-        }
-      })
-      .catch(() => {
-        // Silently ignore any other errors - broadcasting already succeeded
-      });
+    // Fire and forget - don't await, just log errors
+    Promise.resolve(
+      supabase
+        .from('admin_commands')
+        .insert(insertPayload)
+        .then(({ error }) => {
+          // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist, 23502 = not-null constraint)
+          // These are non-critical since broadcasting via Realtime channel works fine
+          if (error && error.code !== '42P01' && error.code !== 'PGRST204' && error.code !== '23502') {
+            console.warn('[SupabaseClient] DB insert failed:', error.message);
+          }
+        })
+    ).catch(() => {
+      // Silently ignore any other errors - broadcasting already succeeded
+    });
 
     return true;
   } catch (err) {
