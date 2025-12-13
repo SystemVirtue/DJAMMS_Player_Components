@@ -408,11 +408,7 @@ export async function sendCommandAndWait(
     
     const commandChannel = await getCommandChannel(playerId);
     
-    await commandChannel.httpSend({
-      type: 'broadcast',
-      event: 'command',
-      payload: { command, timestamp: new Date().toISOString() }
-    });
+    await commandChannel.httpSend('command', { command, timestamp: new Date().toISOString() });
     
     console.log(`[SupabaseClient] ✅ Command ${commandType} broadcast sent (${commandId})`);
 
@@ -587,11 +583,7 @@ export async function insertCommand(
     
     const commandChannel = await getCommandChannel(playerId);
     
-    await commandChannel.httpSend({
-      type: 'broadcast',
-      event: 'command',
-      payload: { command, timestamp: new Date().toISOString() }
-    });
+    await commandChannel.httpSend('command', { command, timestamp: new Date().toISOString() });
     
     console.log(`[SupabaseClient] ✅ Command ${commandType} broadcast sent`);
 

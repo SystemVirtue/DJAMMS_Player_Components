@@ -568,8 +568,10 @@ class SupabaseService {
         // CRITICAL: Always preserve active_queue from lastSyncedState if it exists
         // This ensures Web Admin receives queue data in every Realtime update, even when only other fields change
         // Without this, partial updates (e.g., only now_playing_video) would not include active_queue
-        if (this.lastSyncedState?.active_queue) {
+        // Check for both existence and non-null (empty arrays are valid)
+        if (this.lastSyncedState?.active_queue !== undefined && this.lastSyncedState?.active_queue !== null) {
           updateData.active_queue = this.lastSyncedState.active_queue;
+          logger.debug('[SupabaseService] Preserving active_queue from lastSyncedState for partial update');
         }
       }
 
@@ -588,7 +590,8 @@ class SupabaseService {
         updateData.priority_queue = uniquePriorityQueue.map(v => this.videoToQueueItem(v));
       } else {
         // Only preserve if priorityQueue was not provided at all (undefined)
-        if (this.lastSyncedState?.priority_queue) {
+        // Check for both existence and non-null (empty arrays are valid)
+        if (this.lastSyncedState?.priority_queue !== undefined && this.lastSyncedState?.priority_queue !== null) {
           updateData.priority_queue = this.lastSyncedState.priority_queue;
         }
       }
@@ -599,29 +602,26 @@ class SupabaseService {
       //   updateData.queue_index = state.queueIndex;
       // }
 
-      // Always include queue data if we have it, even if nothing else changed
-      // This ensures Web Admin always sees the current queue state
+      // CRITICAL: ALWAYS include active_queue and priority_queue in updates if they exist in lastSyncedState
+      // This ensures Web Admin receives queue data in EVERY Realtime update, even for partial updates
+      // This is a fallback in case the above logic didn't catch it (defensive programming)
+      if (updateData.active_queue === undefined && this.lastSyncedState?.active_queue !== undefined && this.lastSyncedState?.active_queue !== null) {
+        updateData.active_queue = this.lastSyncedState.active_queue;
+        logger.debug('[SupabaseService] Fallback: Including active_queue from lastSyncedState to ensure Web Admin receives it');
+      }
+      if (updateData.priority_queue === undefined && this.lastSyncedState?.priority_queue !== undefined && this.lastSyncedState?.priority_queue !== null) {
+        updateData.priority_queue = this.lastSyncedState.priority_queue;
+        logger.debug('[SupabaseService] Fallback: Including priority_queue from lastSyncedState to ensure Web Admin receives it');
+      }
+      
+      // Check if we have queue data after all the above logic
       const hasQueueData = updateData.active_queue !== undefined || updateData.priority_queue !== undefined;
       
       // Also check if now_playing_video is provided (important for Web Admin display)
       const hasNowPlaying = updateData.now_playing_video !== undefined;
       
-      // CRITICAL: Always include active_queue in updates if it exists in lastSyncedState
-      // This ensures Web Admin receives queue data in every Realtime update, even for partial updates
-      // Without this, updates that only change now_playing_video would not include active_queue
-      if (!hasQueueData && this.lastSyncedState?.active_queue) {
-        updateData.active_queue = this.lastSyncedState.active_queue;
-        logger.debug('[SupabaseService] Including active_queue from lastSyncedState to ensure Web Admin receives it');
-      }
-      if (!hasQueueData && this.lastSyncedState?.priority_queue) {
-        updateData.priority_queue = this.lastSyncedState.priority_queue;
-      }
-      
-      // Re-check hasQueueData after adding from lastSyncedState
-      const finalHasQueueData = updateData.active_queue !== undefined || updateData.priority_queue !== undefined;
-      
       // Only update if something changed OR if we have queue/now_playing data to sync
-      if (Object.keys(updateData).length <= 1 && !finalHasQueueData && !hasNowPlaying) {
+      if (Object.keys(updateData).length <= 1 && !hasQueueData && !hasNowPlaying) {
         return; // Only last_updated and no meaningful data, skip
       }
 
@@ -1850,11 +1850,7 @@ class SupabaseService {
         command_data: payload
       }, null, 2), 'broadcast');
       
-      await commandChannel.httpSend({
-        type: 'broadcast',
-        event: 'command',
-        payload: { command, timestamp: new Date().toISOString() }
-      });
+      await commandChannel.httpSend('command', { command, timestamp: new Date().toISOString() });
       
       // Log successful send
       await getIOLogger().logReceived('web-admin', JSON.stringify({
