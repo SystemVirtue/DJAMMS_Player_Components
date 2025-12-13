@@ -613,9 +613,9 @@ export async function insertCommand(
     insertPayload.issued_by = issuedBy;
     insertPayload.issued_at = new Date().toISOString();
 
-    supabase
+    Promise.resolve(supabase
       .from('admin_commands')
-      .insert(insertPayload)
+      .insert(insertPayload))
       .then(({ error }) => {
         // Suppress schema errors (PGRST204 = column not found, 42P01 = table doesn't exist, 23502 = not-null constraint)
         // These are non-critical since broadcasting via Realtime channel works fine
@@ -790,7 +790,7 @@ export async function searchLocalVideos(
  */
 export async function getAllLocalVideos(
   playerId: string = DEFAULT_PLAYER_ID,
-  limit: number = 1000,
+  limit: number | null = null, // null = fetch all, no limit
   offset: number = 0
 ): Promise<SupabaseLocalVideo[]> {
   if (!playerId || playerId.trim() === '') {
@@ -798,7 +798,7 @@ export async function getAllLocalVideos(
     return [];
   }
 
-  console.log('[SupabaseClient] getAllLocalVideos called:', { playerId, limit, offset });
+  console.log('[SupabaseClient] getAllLocalVideos called:', { playerId, limit: limit || 'unlimited', offset });
   
   // First, check what player_ids exist in the database (for debugging)
   const { data: allPlayers, error: countError } = await supabase
@@ -816,13 +816,23 @@ export async function getAllLocalVideos(
     console.warn('[SupabaseClient] ⚠️ WARNING: local_videos table is EMPTY - no videos indexed yet!');
   }
   
-  const { data, error } = await supabase
+  // Build query - if limit is null, fetch all videos (no range limit)
+  let queryBuilder = supabase
     .from('local_videos')
     .select('*')
     .eq('player_id', playerId)
     .eq('is_available', true)
-    .order('title')
-    .range(offset, offset + limit - 1);
+    .order('title');
+  
+  // Only apply range if limit is specified
+  if (limit !== null) {
+    queryBuilder = queryBuilder.range(offset, offset + limit - 1);
+  } else if (offset > 0) {
+    // If no limit but offset specified, use a very large number for range end
+    queryBuilder = queryBuilder.range(offset, offset + 999999);
+  }
+  
+  const { data, error } = await queryBuilder;
 
   if (error) {
     console.error('[SupabaseClient] ❌ Error fetching all videos:', error);

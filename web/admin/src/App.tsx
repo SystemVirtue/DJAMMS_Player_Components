@@ -616,7 +616,8 @@ function AdminApp() {
     const loadAllVideos = async () => {
       try {
         console.log('[WebAdmin] Loading all videos for player:', playerId);
-        const videos = await getAllLocalVideos(playerId);
+        // Fetch all videos without limit (pass null to remove 1000 video restriction)
+        const videos = await getAllLocalVideos(playerId, null);
         console.log('[WebAdmin] Loaded', videos.length, 'videos');
         setAllVideos(videos);
         

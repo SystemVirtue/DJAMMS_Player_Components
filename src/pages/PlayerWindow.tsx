@@ -1795,6 +1795,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const isReceivingRemoteUpdateRef = useRef(false); // Flag to prevent sync loop when receiving remote updates
   const lastSyncedQueueRef = useRef<string>(''); // Track last synced queue to prevent duplicate syncs
   const lastMainProcessQueueRef = useRef<string>(''); // Track last queue state received from main process (for state-based sync detection)
+  const lastSkippedQueueRef = useRef<string>(''); // Track last queue hash we skipped to prevent log spam
   const hasSyncedNonEmptyQueueRef = useRef(false); // Track if we've ever synced a non-empty queue (prevents syncing empty queue on startup)
   
   // Keep refs in sync with state
@@ -2410,11 +2411,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     // State-based detection: Skip sync if current queue matches what we just received from main process
     // This prevents syncing back to Supabase what we just received from main process
     if (queueHash === lastMainProcessQueueRef.current && lastMainProcessQueueRef.current !== '') {
-      console.log('[PlayerWindow] Skipping syncState - queue matches last main process update (state-based detection)');
+      // Only log once per queue state change to prevent log spam
+      if (queueHash !== lastSkippedQueueRef.current) {
+        console.log('[PlayerWindow] Skipping syncState - queue matches last main process update (state-based detection)');
+        lastSkippedQueueRef.current = queueHash;
+      }
       // Still update refs to track state, but don't sync
       prevQueueIndexRef.current = queueIndex;
       lastSyncedQueueRef.current = queueHash;
       return;
+    }
+    
+    // Clear skipped queue ref when queue changes (so we can log again if needed)
+    if (queueHash !== lastSkippedQueueRef.current && lastSkippedQueueRef.current !== '') {
+      lastSkippedQueueRef.current = '';
     }
     
     // Skip syncing empty queues on initial load (prevents overwriting Supabase with empty queue)
