@@ -295,6 +295,39 @@ function AdminApp() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Load all settings from Electron store on startup
+  useEffect(() => {
+    const loadAllSettings = async () => {
+      if (typeof window !== 'undefined' && (window as any).electronAPI) {
+        try {
+          // Load player settings
+          const savedSettings = await (window as any).electronAPI.getSetting('playerSettings');
+          if (savedSettings) {
+            setSettings(prev => ({ ...prev, ...savedSettings }));
+          }
+          
+          // Load overlay settings
+          const savedOverlaySettings = await (window as any).electronAPI.getSetting('overlaySettings');
+          if (savedOverlaySettings) {
+            setOverlaySettings(prev => ({ ...prev, ...savedOverlaySettings }));
+          }
+          
+          // Load kiosk settings
+          const savedKioskSettings = await (window as any).electronAPI.getSetting('kioskSettings');
+          if (savedKioskSettings) {
+            setKioskSettings(prev => ({ ...prev, ...savedKioskSettings }));
+          }
+          
+          console.log('[WebAdmin] Loaded all settings from Electron store');
+        } catch (error) {
+          console.error('[WebAdmin] Error loading settings:', error);
+        }
+      }
+    };
+    
+    loadAllSettings();
+  }, []);
+
   // Subscribe to Supabase player_state updates
   useEffect(() => {
     // Helper to apply state
@@ -753,9 +786,17 @@ function AdminApp() {
   }, [playbackDuration, sendCommand]);
 
   // Send overlay settings to Electron when they change (debounced to prevent excessive commands)
+  // Also saves to Electron store for persistence
   const updateOverlaySetting = useCallback((key: string, value: number | boolean) => {
     setOverlaySettings(prev => {
       const updated = { ...prev, [key]: value };
+      
+      // Save to Electron store immediately
+      if (typeof window !== 'undefined' && (window as any).electronAPI) {
+        (window as any).electronAPI.setSetting('overlaySettings', updated).catch((err: any) => {
+          console.error('[WebAdmin] Failed to save overlay settings:', err);
+        });
+      }
       
       // Clear existing debounce timer
       if (overlaySettingsDebounceRef.current) {
@@ -772,13 +813,35 @@ function AdminApp() {
   }, [sendCommand]);
 
   // Update kiosk setting and send command
+  // Also saves to Electron store for persistence
   const updateKioskSetting = useCallback((key: string, value: string | number | boolean) => {
     setKioskSettings(prev => {
       const updated = { ...prev, [key]: value };
+      
+      // Save to Electron store immediately
+      if (typeof window !== 'undefined' && (window as any).electronAPI) {
+        (window as any).electronAPI.setSetting('kioskSettings', updated).catch((err: any) => {
+          console.error('[WebAdmin] Failed to save kiosk settings:', err);
+        });
+      }
+      
       sendCommand('kiosk_settings_update', updated);
       return updated;
     });
   }, [sendCommand]);
+
+  // Save settings to Electron store when they change (debounced)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).electronAPI) {
+      const timeoutId = setTimeout(() => {
+        (window as any).electronAPI.setSetting('playerSettings', settings).catch((err: any) => {
+          console.error('[WebAdmin] Failed to save player settings:', err);
+        });
+      }, 1000); // Debounce saves by 1 second
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [settings]);
 
   // Send blocking command - waits for Electron to acknowledge
   const sendBlockingCommand = useCallback(async (
@@ -1412,26 +1475,12 @@ function AdminApp() {
                           </td>
                         </tr>
                       ) : (() => {
-                        // EXACT COPY from Player's QueueTab.tsx (src/components/QueueTab.tsx lines 40-44)
-                        // Reorder queue: "up next" videos first (after queueIndex), then "already played" (before queueIndex)
-                        // The current video is NOT shown in this list - it's displayed in NOW PLAYING section
-                        const upNextVideos = activeQueue.slice(queueIndex + 1); // Videos after current
-                        const alreadyPlayedVideos = activeQueue.slice(0, queueIndex); // Videos before current
-                        const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
+                        // ARCHITECTURE: Index 0 is always now-playing - display only indices 1-end (up-next videos)
+                        // The current video (index 0) is NOT shown in this list - it's displayed in NOW PLAYING section
+                        const upNextVideos = activeQueue.slice(1); // Videos after index 0 (indices 1-end)
+                        // No "already played" videos - index 0 is now-playing, not shown here
                         
-                        // EXACT COPY from Player's QueueTab.tsx (lines 47-55)
-                        // Map to track original indices for click handling
-                        const getOriginalIndex = (reorderedIndex: number): number => {
-                          if (reorderedIndex < upNextVideos.length) {
-                            // It's in the "up next" section
-                            return queueIndex + 1 + reorderedIndex;
-                          } else {
-                            // It's in the "already played" section
-                            return reorderedIndex - upNextVideos.length;
-                          }
-                        };
-                        
-                        if (reorderedQueue.length === 0) {
+                        if (upNextVideos.length === 0) {
                           return (
                             <tr className="empty-state">
                               <td colSpan={5}>No more tracks in queue.</td>
@@ -1439,16 +1488,20 @@ function AdminApp() {
                           );
                         }
                         
-                        // EXACT COPY from Player's QueueTab.tsx (line 60-71)
-                        // Map over reorderedQueue using reorderedIndex (not displayIndex)
-                        return reorderedQueue.map((track, reorderedIndex) => {
+                        // Map to track original indices for click handling
+                        // Since we only show indices 1-end, originalIndex = reorderedIndex + 1
+                        const getOriginalIndex = (reorderedIndex: number): number => {
+                          return reorderedIndex + 1; // Add 1 because we're only showing indices 1-end
+                        };
+                        
+                        // Display only up-next videos (indices 1-end)
+                        return upNextVideos.map((track, reorderedIndex) => {
                           const originalIndex = getOriginalIndex(reorderedIndex);
-                          const isUpNext = reorderedIndex < upNextVideos.length;
                           
                           return (
                             <tr
                               key={`queue-${track.id}-${originalIndex}`}
-                              className={!isUpNext ? 'played' : ''}
+                              className=""
                               onClick={() => handleQueueItemClick(originalIndex)}
                               style={{ cursor: 'pointer' }}
                             >

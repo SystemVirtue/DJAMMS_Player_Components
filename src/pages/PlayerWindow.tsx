@@ -602,21 +602,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       // (This should rarely happen, but provides backward compatibility)
       console.warn('[PlayerWindow] ⚠️ Electron API not available - shuffling React state only (may cause desync)');
       setQueue(prev => {
-        // Keep the current video at index 0, shuffle the rest
-        const currentIdx = queueIndexRef.current;
-        const currentVideo = prev[currentIdx];
-        const otherVideos = prev.filter((_, idx) => idx !== currentIdx);
-        const shuffledOthers = shuffleArray(otherVideos);
-        // Put current video at index 0, shuffled rest after
-        const newQueue = [currentVideo, ...shuffledOthers];
-        setQueueIndex(0); // Current video is now at index 0
+        // ARCHITECTURE: Index 0 is always now-playing - keep index 0, shuffle the rest
+        if (prev.length <= 1) return prev; // Nothing to shuffle
+        
+        const first = prev[0]; // Keep index 0 (now-playing)
+        const rest = prev.slice(1); // Get indices 1-end
+        const shuffledRest = shuffleArray(rest);
+        // Reconstruct: index 0 stays the same, rest is shuffled
+        const newQueue = [first, ...shuffledRest];
         
         // Trigger immediate sync so Web Admin sees the shuffled queue right away
-        // We call syncState inside the setter to access the new queue value
         setTimeout(() => {
           syncState({
             activeQueue: newQueue,
-            queueIndex: 0
+            queueIndex: 0 // Always 0 - index 0 is now-playing
           }, true); // immediate = true to bypass debounce
         }, 0);
         
@@ -694,9 +693,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onQueueMove: (fromIndex: number, toIndex: number) => {
       console.log('[PlayerWindow] Supabase queue_move command received:', fromIndex, '->', toIndex);
+      
+      // ARCHITECTURE: Index 0 is always now-playing - prevent moving index 0
+      if (fromIndex === 0 || toIndex === 0) {
+        console.warn('[PlayerWindow] Cannot move index 0 (now-playing video)');
+        return;
+      }
+      
       setQueue(prev => {
         const newQueue = [...prev];
-        const currentIdx = queueIndexRef.current;
         
         // Validate indices
         if (fromIndex < 0 || fromIndex >= newQueue.length || toIndex < 0 || toIndex >= newQueue.length) {
@@ -706,26 +711,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         
         // Remove item from old position and insert at new position
         const [movedItem] = newQueue.splice(fromIndex, 1);
-        newQueue.splice(toIndex, 0, movedItem);
+        const adjustedTarget = fromIndex < toIndex ? toIndex - 1 : toIndex;
+        newQueue.splice(adjustedTarget, 0, movedItem);
         
-        // Adjust queueIndex if needed to keep current video playing
-        let newQueueIdx = currentIdx;
-        if (fromIndex === currentIdx) {
-          // Moving the current video
-          newQueueIdx = toIndex;
-        } else if (fromIndex < currentIdx && toIndex >= currentIdx) {
-          // Moving item from before current to after current
-          newQueueIdx = currentIdx - 1;
-        } else if (fromIndex > currentIdx && toIndex <= currentIdx) {
-          // Moving item from after current to before current
-          newQueueIdx = currentIdx + 1;
-        }
-        
-        setQueueIndex(newQueueIdx);
+        // ARCHITECTURE: Index 0 is always now-playing - queueIndex always 0
+        setQueueIndex(0);
         
         // Sync immediately
         setTimeout(() => {
-          syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true);
+          syncState({ activeQueue: newQueue, queueIndex: 0 }, true);
         }, 0);
         
         return newQueue;
@@ -742,25 +736,25 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         });
       } else {
         setQueue(prev => {
-          const currentIdx = queueIndexRef.current;
           const removeIdx = prev.findIndex(v => v.id === videoId);
           
-          // Don't remove if it's the currently playing video or not found
-          if (removeIdx === -1 || removeIdx === currentIdx) {
-            console.warn('[PlayerWindow] Cannot remove: video not found or currently playing');
+          // ARCHITECTURE: Index 0 is always now-playing - prevent removing index 0
+          if (removeIdx === -1) {
+            console.warn('[PlayerWindow] Cannot remove: video not found');
+            return prev;
+          }
+          
+          if (removeIdx === 0) {
+            console.warn('[PlayerWindow] Cannot remove index 0 (now-playing video)');
             return prev;
           }
           
           const newQueue = prev.filter(v => v.id !== videoId);
           
-          // Adjust queueIndex if removing item before current
-          let newQueueIdx = currentIdx;
-          if (removeIdx < currentIdx) {
-            newQueueIdx = currentIdx - 1;
-            setQueueIndex(newQueueIdx);
-          }
+          // ARCHITECTURE: Index 0 is always now-playing - queueIndex always 0
+          setQueueIndex(0);
           
-          setTimeout(() => syncState({ activeQueue: newQueue, queueIndex: newQueueIdx }, true), 0);
+          setTimeout(() => syncState({ activeQueue: newQueue, queueIndex: 0 }, true), 0);
           return newQueue;
         });
       }
@@ -1061,37 +1055,62 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           // Note: Supabase sync happens automatically via the useEffect hook when supabaseInitialized becomes true
           
           // Load all saved settings
+          // Load volume separately (it's stored separately)
           const savedVolume = await (window as any).electronAPI.getSetting('volume');
           if (savedVolume !== undefined) setVolume(Math.round(savedVolume * 100));
           
-          const savedDisplayId = await (window as any).electronAPI.getSetting('playerDisplayId');
-          const savedFullscreen = await (window as any).electronAPI.getSetting('playerWindowFullscreen');
-          const savedAutoShuffle = await (window as any).electronAPI.getSetting('autoShufflePlaylists');
-          const savedNormalize = await (window as any).electronAPI.getSetting('normalizeAudioLevels');
-          const savedEnablePlayer = await (window as any).electronAPI.getSetting('enableFullscreenPlayer');
-          const savedFadeDuration = await (window as any).electronAPI.getSetting('fadeDuration');
-          const savedCrossfadeMode = await (window as any).electronAPI.getSetting('crossfadeMode');
-          const savedForceAutoPlay = await (window as any).electronAPI.getSetting('forceAutoPlay');
-          const savedPlaylistsDir = await (window as any).electronAPI.getPlaylistsDirectory();
+          // Try loading settings as a group first (preferred method)
+          const savedPlayerSettings = await (window as any).electronAPI.getSetting('playerSettings');
+          if (savedPlayerSettings) {
+            // Load from grouped settings
+            setSettings(prev => ({ ...prev, ...savedPlayerSettings }));
+          } else {
+            // Fall back to individual settings (for backwards compatibility)
+            const savedDisplayId = await (window as any).electronAPI.getSetting('playerDisplayId');
+            const savedFullscreen = await (window as any).electronAPI.getSetting('playerWindowFullscreen');
+            const savedAutoShuffle = await (window as any).electronAPI.getSetting('autoShufflePlaylists');
+            const savedNormalize = await (window as any).electronAPI.getSetting('normalizeAudioLevels');
+            const savedEnablePlayer = await (window as any).electronAPI.getSetting('enableFullscreenPlayer');
+            const savedFadeDuration = await (window as any).electronAPI.getSetting('fadeDuration');
+            const savedCrossfadeMode = await (window as any).electronAPI.getSetting('crossfadeMode');
+            const savedForceAutoPlay = await (window as any).electronAPI.getSetting('forceAutoPlay');
+            const savedPlaylistsDir = await (window as any).electronAPI.getPlaylistsDirectory();
+            
+            setSettings(s => ({
+              ...s,
+              playerDisplayId: savedDisplayId ?? s.playerDisplayId,
+              playerFullscreen: savedFullscreen ?? s.playerFullscreen,
+              autoShufflePlaylists: savedAutoShuffle ?? s.autoShufflePlaylists,
+              normalizeAudioLevels: savedNormalize ?? s.normalizeAudioLevels,
+              enableFullscreenPlayer: savedEnablePlayer ?? s.enableFullscreenPlayer,
+              fadeDuration: savedFadeDuration ?? s.fadeDuration,
+              crossfadeMode: savedCrossfadeMode ?? s.crossfadeMode,
+              forceAutoPlay: savedForceAutoPlay ?? s.forceAutoPlay,
+              playlistsDirectory: savedPlaylistsDir ?? s.playlistsDirectory
+            }));
+          }
           
-          setSettings(s => ({
-            ...s,
-            playerDisplayId: savedDisplayId ?? s.playerDisplayId,
-            playerFullscreen: savedFullscreen ?? s.playerFullscreen,
-            autoShufflePlaylists: savedAutoShuffle ?? s.autoShufflePlaylists,
-            normalizeAudioLevels: savedNormalize ?? s.normalizeAudioLevels,
-            enableFullscreenPlayer: savedEnablePlayer ?? s.enableFullscreenPlayer,
-            fadeDuration: savedFadeDuration ?? s.fadeDuration,
-            crossfadeMode: savedCrossfadeMode ?? s.crossfadeMode,
-            forceAutoPlay: savedForceAutoPlay ?? s.forceAutoPlay,
-            playlistsDirectory: savedPlaylistsDir ?? s.playlistsDirectory
-          }));
+          // Extract values needed after loading
+          // These variables are set in the else block, so we need to get them from settings or declare them
+          let enablePlayerValue = settings.enableFullscreenPlayer;
+          let displayIdValue = settings.playerDisplayId;
+          let fullscreenValue = settings.playerFullscreen;
+          let autoShuffleValue = settings.autoShufflePlaylists;
+          
+          // If we loaded from grouped settings, extract from there
+          if (savedPlayerSettings) {
+            enablePlayerValue = savedPlayerSettings.enableFullscreenPlayer ?? enablePlayerValue;
+            displayIdValue = savedPlayerSettings.playerDisplayId ?? displayIdValue;
+            fullscreenValue = savedPlayerSettings.playerFullscreen ?? fullscreenValue;
+            autoShuffleValue = savedPlayerSettings.autoShufflePlaylists ?? autoShuffleValue;
+          }
+          // Otherwise, values were set in the else block above via setSettings
           
           // Open player window on startup if enabled
-          if (savedEnablePlayer && isElectron) {
+          if (enablePlayerValue && isElectron) {
             setTimeout(async () => {
               try {
-                await (window as any).electronAPI.createPlayerWindow(savedDisplayId ?? undefined, savedFullscreen ?? true);
+                await (window as any).electronAPI.createPlayerWindow(displayIdValue ?? undefined, fullscreenValue ?? true);
                 setPlayerWindowOpen(true);
               } catch (error) {
                 console.error('[PlayerWindow] Failed to open player window on startup:', error);
@@ -1175,7 +1194,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               console.log('[PlayerWindow] Auto-loading playlist:', playlistToLoad);
               setActivePlaylist(playlistToLoad);
               const playlistTracks = loadedPlaylists[playlistToLoad] || [];
-              const shouldShuffle = savedAutoShuffle ?? true;
+              const shouldShuffle = autoShuffleValue ?? true;
               const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
               
               // Load playlist into main process queue
@@ -2045,11 +2064,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     
     const unsubscribe = (window as any).electronAPI.onQueueState?.((state: any) => {
       if (state) {
+        // ARCHITECTURE: Index 0 is always now-playing - no queueIndex needed
         // Store the queue state we're about to set (for state-based sync detection)
         const mainProcessQueueHash = JSON.stringify({
-          activeQueue: (state.activeQueue || []).map((v: Video) => v.id),
-          priorityQueue: (state.priorityQueue || []).map((v: Video) => v.id),
-          queueIndex: state.queueIndex
+          activeQueue: (state.activeQueue || []).map((v: Video) => v.id), // Array preserves order
+          priorityQueue: (state.priorityQueue || []).map((v: Video) => v.id) // Array preserves order
         });
         
         // CRITICAL: Don't set lastMainProcessHash yet - we'll set it AFTER we check if we need explicit sync
@@ -2084,107 +2103,85 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         // Check if queue content OR ORDER changed (for shuffle/move detection) - only if queues have content
         // CRITICAL: Must include FULL ID SEQUENCE (not just IDs) to detect order changes (shuffle, move)
         // JSON.stringify of array preserves order, so this will detect both content AND order changes
+        // ARCHITECTURE: Index 0 is always now-playing - no queueIndex in hash
         const newQueueHash = JSON.stringify({
           activeQueue: (state.activeQueue || queueRef.current).map((v: Video) => v.id), // Array preserves order
-          priorityQueue: (state.priorityQueue || priorityQueueRef.current).map((v: Video) => v.id), // Array preserves order
-          queueIndex: state.queueIndex
+          priorityQueue: (state.priorityQueue || priorityQueueRef.current).map((v: Video) => v.id) // Array preserves order
         });
         // CRITICAL: Only consider queueContentChanged if queues are NOT empty
         // When both queues are empty, queueContentChanged is meaningless and causes infinite loops
         // This hash comparison detects BOTH content changes (add/remove) AND order changes (shuffle/move)
         const queueContentChanged = bothQueuesEmpty ? false : (prevQueueHash !== newQueueHash);
         
+        // ARCHITECTURE: Index 0 is always now-playing
+        // Use activeQueue[0] as the current video (not queueIndex)
+        const newVideo: Video | null = (state.activeQueue && state.activeQueue.length > 0) 
+          ? state.activeQueue[0]  // Index 0 is always now-playing
+          : (state.currentVideo || state.nowPlaying || null); // Fallback to nowPlaying if queue empty
+        
         // CRITICAL: Prevent infinite loops - check if we're already syncing or if this matches what we just synced
         const isAlreadySyncing = syncStateRef.current.isSyncing;
         const matchesLastSynced = mainProcessQueueHash === syncStateRef.current.lastMainProcessHash;
         
-        if (typeof state.queueIndex === 'number') {
-          const prevIndex = queueIndexRef.current;
-          // #region agent log
-          if (isElectron && (window as any).electronAPI?.writeDebugLog) {
-            (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2062',message:'onQueueState received queueIndex',data:{prevIndex,newIndex:state.queueIndex,activeQueueLength:state.activeQueue?.length,nowPlayingTitle:state.nowPlaying?.title},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C,E'}).catch(()=>{});
+        // ARCHITECTURE: Index 0 is always now-playing - always set queueIndex to 0
+        setQueueIndex(0);
+        queueIndexRef.current = 0;
+        
+        // Check if queue content changed (shuffle, move, add, remove)
+        // Also check if current video changed (index 0 changed)
+        const prevVideoId = currentVideoRef.current?.id || currentVideoRef.current?.src;
+        const newVideoId = newVideo?.id || newVideo?.src;
+        const videoChanged = prevVideoId !== newVideoId;
+        
+        // AGGRESSIVE FIX: When both queues are empty, completely skip sync
+        // Also add debounce: don't sync if we synced within the last 1000ms
+        const now = Date.now();
+        const recentlySynced = (now - syncStateRef.current.lastSyncTime) < 1000;
+        
+        // CRITICAL: Sync if queue content changed OR current video changed (index 0 changed)
+        const shouldSync = !isAlreadySyncing && 
+                          !matchesLastSynced &&
+                          !recentlySynced &&
+                          !bothQueuesEmpty &&
+                          (queueContentChanged || videoChanged);
+        
+        if (shouldSync) {
+          const changeType = videoChanged ? 'video changed (advanced)' : (queueContentChanged ? 'content changed (shuffle/move)' : 'updated');
+          console.log(`[PlayerWindow] Queue ${changeType} - explicitly syncing with full queue data to WEBADMIN`);
+          
+          // CRITICAL: Clear any pending debounce timeout
+          if (syncStateRef.current.syncDebounceTimeout) {
+            clearTimeout(syncStateRef.current.syncDebounceTimeout);
+            syncStateRef.current.syncDebounceTimeout = null;
           }
-          // #endregion
-          setQueueIndex(state.queueIndex);
-          queueIndexRef.current = state.queueIndex;
           
-          // CRITICAL FIX: When queueIndex changes (SKIP) or queue content changes (SHUFFLE),
-          // we MUST explicitly sync with the full queue data to ensure WEBADMIN receives it
-          // This matches the behavior of WEBADMIN-triggered shuffle which explicitly calls syncState
-          // CRITICAL: If both queues are empty, ONLY sync if queueIndex actually changed (skip detection)
-          // NEVER sync based on queueContentChanged when both queues are empty (prevents infinite loop)
-          const queueIndexChanged = prevIndex !== state.queueIndex;
+          // CRITICAL: Set lastMainProcessHash IMMEDIATELY to prevent recursion
+          syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
+          syncStateRef.current.isExplicitSync = true;
+          syncStateRef.current.lastSyncTime = now;
           
-          // AGGRESSIVE FIX: When both queues are empty, completely skip sync unless queueIndex changed
-          // This prevents the infinite loop where empty queue state changes trigger syncs
-          // Also add debounce: don't sync if we synced within the last 1000ms
-          const now = Date.now();
-          const recentlySynced = (now - syncStateRef.current.lastSyncTime) < 1000;
-          
-          // CRITICAL: If both queues are empty, NEVER sync based on queueContentChanged
-          // Only sync if queueIndex actually changed (which indicates a skip command)
-          const shouldSync = !isAlreadySyncing && 
-                            !matchesLastSynced &&
-                            !recentlySynced &&
-                            (bothQueuesEmpty 
-                              ? queueIndexChanged  // ONLY sync on queueIndex change when empty (skip command)
-                              : (queueIndexChanged || queueContentChanged)); // Normal sync when queues have content
-          
-          if (shouldSync) {
-            const changeType = queueIndexChanged ? 'advanced' : (queueContentChanged ? 'content changed (shuffle)' : 'updated');
+          // Explicitly sync with full queue data - this ensures WEBADMIN receives active_queue
+          syncStateRef.current.syncDebounceTimeout = setTimeout(() => {
+            syncState({
+              activeQueue: state.activeQueue || queueRef.current,
+              priorityQueue: state.priorityQueue || priorityQueueRef.current,
+              queueIndex: 0, // Always 0 - index 0 is now-playing
+              currentVideo: newVideo,
+              isPlaying: state.isPlaying !== undefined ? state.isPlaying : isPlaying,
+              status: state.isPlaying ? 'playing' : 'paused'
+            }, true); // immediate = true to bypass debounce
             
-            // Only log if not both queues empty (reduce spam)
-            if (!bothQueuesEmpty || queueIndexChanged) {
-              console.log(`[PlayerWindow] Queue ${changeType}: ${prevIndex} → ${state.queueIndex} - explicitly syncing with full queue data to WEBADMIN`);
-            }
-            
-            // CRITICAL: Clear any pending debounce timeout
-            if (syncStateRef.current.syncDebounceTimeout) {
-              clearTimeout(syncStateRef.current.syncDebounceTimeout);
+            setTimeout(() => {
+              syncStateRef.current.isExplicitSync = false;
               syncStateRef.current.syncDebounceTimeout = null;
-            }
-            
-            // CRITICAL: Set lastMainProcessHash IMMEDIATELY to prevent recursion
-            // This must happen BEFORE the sync to prevent the sync from triggering another queue state update
-            syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
-            syncStateRef.current.isExplicitSync = true; // Flag to indicate we're doing explicit sync
-            syncStateRef.current.lastSyncTime = now; // Track when we're syncing
-            
-            // Explicitly sync with full queue data - this ensures WEBADMIN receives active_queue
-            // Use setTimeout to ensure state updates have been applied, but use the state data directly
-            syncStateRef.current.syncDebounceTimeout = setTimeout(() => {
-              syncState({
-                activeQueue: state.activeQueue || queueRef.current,
-                priorityQueue: state.priorityQueue || priorityQueueRef.current,
-                queueIndex: state.queueIndex,
-                currentVideo: state.currentVideo || state.nowPlaying || currentVideoRef.current,
-                isPlaying: state.isPlaying !== undefined ? state.isPlaying : isPlaying,
-                status: state.isPlaying ? 'playing' : 'paused'
-              }, true); // immediate = true to bypass debounce
-              
-              // AFTER explicit sync completes, clear the explicit sync flag
-              // lastMainProcessHash was already set above to prevent recursion
-              setTimeout(() => {
-                syncStateRef.current.isExplicitSync = false; // Clear the flag
-                syncStateRef.current.syncDebounceTimeout = null;
-              }, 200); // Increased delay to ensure sync completes
-            }, 0);
-          } else {
-            // No explicit sync needed - set lastMainProcessHash IMMEDIATELY to prevent useEffect from syncing
-            // This is the normal case where queue didn't change, so we don't want to sync
-            // CRITICAL: Always set this to prevent infinite loops, even when we skip syncing
-            // Set it immediately (not in setTimeout) to prevent race conditions
-            syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
-          }
+            }, 200);
+          }, 0);
         } else {
-          // queueIndex not provided - just set the hash normally
+          // No explicit sync needed - set lastMainProcessHash IMMEDIATELY
           syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
         }
         
-        // Handle current video change - always use nowPlaying from main process (authoritative)
-        // Never derive from queueIndex to avoid desync issues
-        const newVideo: Video | null = state.currentVideo || state.nowPlaying || null;
-        
+        // ARCHITECTURE: Index 0 is always now-playing - update currentVideo from activeQueue[0]
         if (newVideo) {
           const newVideoId = newVideo.id || newVideo.src;
           const wasCurrentVideoNull = !currentVideoRef.current;
@@ -2194,19 +2191,22 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           const shouldUpdate = videoChanged || wasCurrentVideoNull;
           
           if (shouldUpdate) {
-            console.log('[PlayerWindow] Queue state update - new video:', newVideo.title, wasCurrentVideoNull ? '(was null, restoring)' : '(changed)');
+            console.log('[PlayerWindow] Queue state update - new video (index 0):', newVideo.title, wasCurrentVideoNull ? '(was null, restoring)' : '(changed)');
             setCurrentVideo(newVideo);
             currentVideoRef.current = newVideo;
             previousVideoId = newVideoId;
             
-            // Send play command if playing
-            if (state.isPlaying && newVideo) {
+            // CRITICAL: Set isPlaying state BEFORE sending play command to ensure state is synchronized
+            if (state.isPlaying) {
+              setIsPlaying(true);
               console.log('🎬 [PlayerWindow] Queue state update - Sending play command (isPlaying=true)');
               setTimeout(() => {
                 if (newVideo) {
                   sendPlayCommand(newVideo);
                 }
               }, 50);
+            } else {
+              setIsPlaying(false);
             }
             
             // Update refs for debounce checks
@@ -2227,7 +2227,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           // Otherwise preserve current video (may be transitioning)
         }
         
-        if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
+        // Update isPlaying state if not already set above
+        if (typeof state.isPlaying === 'boolean' && !newVideo) {
+          setIsPlaying(state.isPlaying);
+        }
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
       }
     });
@@ -2249,16 +2252,32 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setQueueIndex(state.queueIndex);
           queueIndexRef.current = state.queueIndex;
         }
-        if (state.currentVideo || state.nowPlaying) {
+        // ARCHITECTURE: Index 0 is always now-playing - use activeQueue[0] as current video
+        // CRITICAL: Set isPlaying BEFORE sending play command to ensure state synchronization
+        if (typeof state.isPlaying === 'boolean') {
+          setIsPlaying(state.isPlaying);
+        }
+        
+        if (state.activeQueue && state.activeQueue.length > 0) {
+          const video = state.activeQueue[0]; // Index 0 is now-playing
+          setCurrentVideo(video);
+          currentVideoRef.current = video;
+          previousVideoId = video.id || video.src;
+          if (state.isPlaying) {
+            console.log('🎬 [PlayerWindow] Initial state - Sending play command (isPlaying=true):', video.title);
+            sendPlayCommand(video);
+          }
+        } else if (state.currentVideo || state.nowPlaying) {
+          // Fallback to nowPlaying if queue is empty
           const video = state.currentVideo || state.nowPlaying;
           setCurrentVideo(video);
           currentVideoRef.current = video;
           previousVideoId = video.id || video.src;
           if (state.isPlaying) {
+            console.log('🎬 [PlayerWindow] Initial state - Sending play command (isPlaying=true):', video.title);
             sendPlayCommand(video);
           }
         }
-        if (typeof state.isPlaying === 'boolean') setIsPlaying(state.isPlaying);
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
         
         // Check if active queue is empty/null - if so, poll Supabase
@@ -2389,6 +2408,21 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     console.log('[PlayerWindow] Saving kiosk settings:', kioskSettings);
     (window as any).electronAPI.setSetting('kioskSettings', kioskSettings);
   }, [isElectron, kioskSettings]);
+
+  // Save all player settings to Electron store when they change (debounced)
+  // This ensures settings are saved even if changed directly via setSettings
+  useEffect(() => {
+    if (!isElectron) return;
+    
+    const timeoutId = setTimeout(() => {
+      // Save entire settings object to ensure all settings are persisted
+      (window as any).electronAPI.setSetting('playerSettings', settings).catch((err: any) => {
+        console.error('[PlayerWindow] Failed to save player settings:', err);
+      });
+    }, 1000); // Debounce saves by 1 second
+    
+    return () => clearTimeout(timeoutId);
+  }, [isElectron, settings]);
 
   // Force Auto-Play logic: Auto-resume if paused >2s, skip if no video >2s
   useEffect(() => {
