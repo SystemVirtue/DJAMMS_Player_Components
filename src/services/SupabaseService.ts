@@ -145,15 +145,29 @@ class SupabaseService {
   /**
    * Initialize the Supabase service
    * @param playerId - Optional player ID (defaults to DEFAULT_PLAYER_ID)
+   * @param forceReinit - If true, re-initialize even if already initialized (for player ID changes)
    */
-  public async initialize(playerId?: string): Promise<boolean> {
-    if (this.isInitialized) {
+  public async initialize(playerId?: string, forceReinit: boolean = false): Promise<boolean> {
+    const newPlayerId = playerId || DEFAULT_PLAYER_ID;
+    
+    // If already initialized with the same player ID, skip
+    if (this.isInitialized && !forceReinit && this.playerId === newPlayerId) {
+      logger.info('[SupabaseService] Already initialized with same player ID');
+      return true;
+    }
+    
+    // If player ID changed, we need to re-initialize
+    if (this.isInitialized && this.playerId !== newPlayerId) {
+      logger.info(`[SupabaseService] Player ID changed from ${this.playerId} to ${newPlayerId} - re-initializing`);
+      await this.shutdown();
+      this.isInitialized = false;
+    } else if (this.isInitialized && !forceReinit) {
       logger.info('[SupabaseService] Already initialized');
       return true;
     }
 
     try {
-      this.playerId = playerId || DEFAULT_PLAYER_ID;
+      this.playerId = newPlayerId;
       
       // Create Supabase client with consistent configuration
       // Using direct createClient for now (can be migrated to shared factory later)

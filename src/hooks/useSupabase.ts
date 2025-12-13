@@ -156,7 +156,10 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     try {
       // Reset handlers flag when re-initializing (playerId might have changed)
       handlersRegisteredRef.current = false;
-      const success = await serviceRef.current.initialize(playerId);
+      // Force re-init if player ID changed
+      const currentPlayerId = serviceRef.current.getPlayerId();
+      const forceReinit = currentPlayerId !== (playerId || '');
+      const success = await serviceRef.current.initialize(playerId, forceReinit);
       setIsInitialized(success);
       setIsOnline(success);
       return success;
