@@ -436,7 +436,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Initialize Supabase with Player ID (even if it's "DJAMMS_DEMO" - allows app to continue)
   const { isInitialized: supabaseInitialized, isOnline: supabaseOnline, syncState } = useSupabase({
     playerId: playerId && playerId.trim() !== '' ? playerId : DEFAULT_PLAYER_ID, // Pass player ID (use default if not set)
-    autoInit: !!(isElectron && playerIdInitialized && playerId && playerId.trim() !== ''), // Initialize if Player ID is set (including DJAMMS_DEMO)
+    autoInit: !!(isElectron && playerIdInitialized), // Initialize if Player ID is initialized (including DJAMMS_DEMO)
     onPlay: (video?: QueueVideoItem, queueIndex?: number) => {
       console.log('[PlayerWindow] Supabase play command received:', video?.title, 'queueIndex:', queueIndex);
       
@@ -925,11 +925,24 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           console.log('[PlayerWindow] Player ID validated - playlists unchanged, skipping reload');
         }
 
-        // Upload search data to Supabase once we have a client
-        // Note: The other useEffect will handle indexing when playlists change
+        // CRITICAL: When player ID changes, we MUST re-index videos with the new player ID
+        // Even if playlists haven't changed, we need to upload them to Supabase with the new player_id
         if (supabaseInitialized && loadedPlaylists && Object.keys(loadedPlaylists).length > 0) {
-          console.log('[PlayerWindow] Player ID validated - will sync to Supabase via playlist change effect');
-          // Don't index here - let the playlist change effect handle it to avoid double indexing
+          console.log('[PlayerWindow] Player ID changed - re-indexing videos with new player ID:', playerId);
+          setIsProcessing(true);
+          setProcessingProgress({ current: 0, total: 0 });
+          getSupabaseService().indexLocalVideos(
+            loadedPlaylists,
+            (current, total) => {
+              setProcessingProgress({ current, total });
+            },
+            true // forceIndex = true to ensure videos are uploaded with new player ID
+          ).finally(() => {
+            setIsProcessing(false);
+            setProcessingProgress({ current: 0, total: 0 });
+            indexingCompleteRef.current = true;
+            console.log('[PlayerWindow] ✅ Videos re-indexed with new player ID');
+          });
         } else {
           // If Supabase is not initialized, mark as complete (no indexing needed)
           indexingCompleteRef.current = true;
@@ -1796,7 +1809,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     lastMainProcessHash: '', // Tracks last queue from main process to prevent recursion
     lastSkipLogTime: 0, // Throttles skip log messages to reduce spam
     lastVideoId: '', // Tracks last video ID for change detection
-    isExplicitSync: false // Flag to indicate we're doing an explicit sync (prevents useEffect from skipping)
+    isExplicitSync: false, // Flag to indicate we're doing an explicit sync (prevents useEffect from skipping)
+    lastSyncTime: 0, // Tracks when we last synced to prevent rapid successive syncs
+    syncDebounceTimeout: null as NodeJS.Timeout | null // Debounce timeout for syncs
   });
   
   // Keep refs in sync with state
@@ -2029,13 +2044,26 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           priorityQueueRef.current = state.priorityQueue;
         }
         
-        // Check if queue content changed (for shuffle detection)
+        // CRITICAL: Check if both queues are empty FIRST to prevent any sync logic when empty
+        const bothQueuesEmpty = (!state.activeQueue || state.activeQueue.length === 0) && 
+                                 (!state.priorityQueue || state.priorityQueue.length === 0) &&
+                                 (!queueRef.current || queueRef.current.length === 0) &&
+                                 (!priorityQueueRef.current || priorityQueueRef.current.length === 0);
+        
+        // Check if queue content changed (for shuffle detection) - only if queues have content
         const newQueueHash = JSON.stringify({
           activeQueue: (state.activeQueue || queueRef.current).map((v: Video) => v.id),
           priorityQueue: (state.priorityQueue || priorityQueueRef.current).map((v: Video) => v.id),
           queueIndex: state.queueIndex
         });
-        const queueContentChanged = prevQueueHash !== newQueueHash;
+        // CRITICAL: Only consider queueContentChanged if queues are NOT empty
+        // When both queues are empty, queueContentChanged is meaningless and causes infinite loops
+        const queueContentChanged = bothQueuesEmpty ? false : (prevQueueHash !== newQueueHash);
+        
+        // CRITICAL: Prevent infinite loops - check if we're already syncing or if this matches what we just synced
+        const isAlreadySyncing = syncStateRef.current.isSyncing;
+        const matchesLastSynced = mainProcessQueueHash === syncStateRef.current.lastMainProcessHash;
+        
         if (typeof state.queueIndex === 'number') {
           const prevIndex = queueIndexRef.current;
           // #region agent log
@@ -2049,22 +2077,48 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           // CRITICAL FIX: When queueIndex changes (SKIP) or queue content changes (SHUFFLE),
           // we MUST explicitly sync with the full queue data to ensure WEBADMIN receives it
           // This matches the behavior of WEBADMIN-triggered shuffle which explicitly calls syncState
-          // We check both queueIndex change AND queueContentChanged (set above) to catch all cases
-          if (prevIndex !== state.queueIndex || queueContentChanged) {
-            const queueIndexChanged = prevIndex !== state.queueIndex;
+          // CRITICAL: If both queues are empty, ONLY sync if queueIndex actually changed (skip detection)
+          // NEVER sync based on queueContentChanged when both queues are empty (prevents infinite loop)
+          const queueIndexChanged = prevIndex !== state.queueIndex;
+          
+          // AGGRESSIVE FIX: When both queues are empty, completely skip sync unless queueIndex changed
+          // This prevents the infinite loop where empty queue state changes trigger syncs
+          // Also add debounce: don't sync if we synced within the last 1000ms
+          const now = Date.now();
+          const recentlySynced = (now - syncStateRef.current.lastSyncTime) < 1000;
+          
+          // CRITICAL: If both queues are empty, NEVER sync based on queueContentChanged
+          // Only sync if queueIndex actually changed (which indicates a skip command)
+          const shouldSync = !isAlreadySyncing && 
+                            !matchesLastSynced &&
+                            !recentlySynced &&
+                            (bothQueuesEmpty 
+                              ? queueIndexChanged  // ONLY sync on queueIndex change when empty (skip command)
+                              : (queueIndexChanged || queueContentChanged)); // Normal sync when queues have content
+          
+          if (shouldSync) {
             const changeType = queueIndexChanged ? 'advanced' : (queueContentChanged ? 'content changed (shuffle)' : 'updated');
             
-            console.log(`[PlayerWindow] Queue ${changeType}: ${prevIndex} → ${state.queueIndex} - explicitly syncing with full queue data to WEBADMIN`);
+            // Only log if not both queues empty (reduce spam)
+            if (!bothQueuesEmpty || queueIndexChanged) {
+              console.log(`[PlayerWindow] Queue ${changeType}: ${prevIndex} → ${state.queueIndex} - explicitly syncing with full queue data to WEBADMIN`);
+            }
             
-            // CRITICAL: Clear lastMainProcessHash BEFORE explicit sync AND mark that we're doing explicit sync
-            // This prevents the useEffect from skipping the sync after we explicitly trigger it
-            // The explicit sync should be the one that goes through, not the useEffect
-            syncStateRef.current.lastMainProcessHash = '';
+            // CRITICAL: Clear any pending debounce timeout
+            if (syncStateRef.current.syncDebounceTimeout) {
+              clearTimeout(syncStateRef.current.syncDebounceTimeout);
+              syncStateRef.current.syncDebounceTimeout = null;
+            }
+            
+            // CRITICAL: Set lastMainProcessHash IMMEDIATELY to prevent recursion
+            // This must happen BEFORE the sync to prevent the sync from triggering another queue state update
+            syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
             syncStateRef.current.isExplicitSync = true; // Flag to indicate we're doing explicit sync
+            syncStateRef.current.lastSyncTime = now; // Track when we're syncing
             
             // Explicitly sync with full queue data - this ensures WEBADMIN receives active_queue
             // Use setTimeout to ensure state updates have been applied, but use the state data directly
-            setTimeout(() => {
+            syncStateRef.current.syncDebounceTimeout = setTimeout(() => {
               syncState({
                 activeQueue: state.activeQueue || queueRef.current,
                 priorityQueue: state.priorityQueue || priorityQueueRef.current,
@@ -2074,16 +2128,18 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 status: state.isPlaying ? 'playing' : 'paused'
               }, true); // immediate = true to bypass debounce
               
-              // AFTER explicit sync completes, set lastMainProcessHash to prevent useEffect from syncing again
-              // This ensures we don't double-sync, but the explicit sync already went through
+              // AFTER explicit sync completes, clear the explicit sync flag
+              // lastMainProcessHash was already set above to prevent recursion
               setTimeout(() => {
-                syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
                 syncStateRef.current.isExplicitSync = false; // Clear the flag
+                syncStateRef.current.syncDebounceTimeout = null;
               }, 200); // Increased delay to ensure sync completes
             }, 0);
           } else {
-            // No explicit sync needed - set lastMainProcessHash to prevent useEffect from syncing
+            // No explicit sync needed - set lastMainProcessHash IMMEDIATELY to prevent useEffect from syncing
             // This is the normal case where queue didn't change, so we don't want to sync
+            // CRITICAL: Always set this to prevent infinite loops, even when we skip syncing
+            // Set it immediately (not in setTimeout) to prevent race conditions
             syncStateRef.current.lastMainProcessHash = mainProcessQueueHash;
           }
         } else {

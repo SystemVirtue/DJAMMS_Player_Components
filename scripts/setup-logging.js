@@ -6,8 +6,12 @@
  * real-time logs from Electron main, renderer, and Vite dev server.
  */
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const LOGS_DIR = path.join(__dirname, '..', 'logs');
 const MAIN_LOG = path.join(LOGS_DIR, 'electron-main.log');

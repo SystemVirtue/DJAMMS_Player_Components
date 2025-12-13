@@ -348,12 +348,21 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
     };
   }, [isInitialized]);
 
-  // Auto-initialize on mount
+  // Auto-initialize on mount and when playerId changes
   const hasInitializedRef = useRef(false);
   const lastAutoInitRef = useRef(false);
+  const lastPlayerIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    // Only initialize when autoInit changes from false to true
-    if (autoInit && !lastAutoInitRef.current && !hasInitializedRef.current) {
+    // Re-initialize if playerId changed (even if already initialized)
+    const playerIdChanged = playerId !== lastPlayerIdRef.current;
+    if (playerIdChanged && playerId) {
+      lastPlayerIdRef.current = playerId;
+      console.log(`[useSupabase] Player ID changed to ${playerId} - re-initializing`);
+      hasInitializedRef.current = false; // Reset to allow re-initialization
+    }
+    
+    // Only initialize when autoInit changes from false to true OR playerId changed
+    if (autoInit && (playerIdChanged || (!lastAutoInitRef.current && !hasInitializedRef.current))) {
       hasInitializedRef.current = true;
       lastAutoInitRef.current = true;
       initialize();
@@ -368,7 +377,7 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
       // Note: We don't fully shutdown here as the service is a singleton
       // and may be used by other components. The main app handles final shutdown.
     };
-  }, [autoInit]); // Only depend on autoInit, not initialize
+  }, [autoInit, playerId, initialize]); // Watch playerId and initialize
 
   return {
     isInitialized,

@@ -403,6 +403,8 @@ function createMainWindow() {
   mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
     const levelStr = level === 0 ? 'log' : level === 1 ? 'warn' : 'error';
     console.log(`[Renderer ${levelStr}]`, message);
+    // Also write to log file
+    writeToLogFile(RENDERER_LOG, levelStr, message);
   });
 
   // Save window bounds on resize
@@ -493,7 +495,10 @@ function createFullscreenWindow(displayId, fullscreen = true) {
   
   // Forward console messages from fullscreen window to main process
   fullscreenWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    console.log(`[FullscreenWindow ${level}]:`, message);
+    const levelStr = level === 0 ? 'log' : level === 1 ? 'warn' : 'error';
+    console.log(`[FullscreenWindow ${levelStr}]:`, message);
+    // Also write to log file
+    writeToLogFile(RENDERER_LOG, levelStr, `[FullscreenWindow] ${message}`);
   });
 
   fullscreenWindow.on('closed', () => {

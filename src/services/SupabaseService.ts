@@ -142,13 +142,25 @@ class SupabaseService {
    * @param playerId - Optional player ID (defaults to DEFAULT_PLAYER_ID)
    */
   public async initialize(playerId?: string): Promise<boolean> {
-    if (this.isInitialized) {
-      logger.info('[SupabaseService] Already initialized');
+    const newPlayerId = playerId || DEFAULT_PLAYER_ID;
+    
+    // If already initialized but player ID changed, we need to re-initialize
+    if (this.isInitialized && this.playerId !== newPlayerId) {
+      logger.info(`[SupabaseService] Player ID changed from ${this.playerId} to ${newPlayerId} - re-initializing`);
+      this.isInitialized = false;
+      this.isOnline = false;
+      // Clear existing subscriptions
+      if (this.commandChannel) {
+        this.commandChannel.unsubscribe();
+        this.commandChannel = null;
+      }
+    } else if (this.isInitialized) {
+      logger.info('[SupabaseService] Already initialized with same player ID');
       return true;
     }
 
     try {
-      this.playerId = playerId || DEFAULT_PLAYER_ID;
+      this.playerId = newPlayerId;
       
       // Create Supabase client with consistent configuration
       // Using direct createClient for now (can be migrated to shared factory later)
@@ -2157,9 +2169,14 @@ class SupabaseService {
     const localVideoCount = Object.values(playlists).reduce((total, videos) => total + videos.length, 0);
     
     // Check if indexing is needed by comparing counts (unless forced)
+    // CRITICAL: Always log the player ID being used for indexing
+    logger.info(`[SupabaseService] Starting video indexing for player: ${this.playerId}, local videos: ${localVideoCount}`);
+    
     if (!forceIndex && localVideoCount > 0) {
       const supabaseCount = await this.getLocalVideosCount();
-      if (supabaseCount === localVideoCount) {
+      logger.info(`[SupabaseService] Count check - Supabase has ${supabaseCount} videos for player ${this.playerId}, local has ${localVideoCount}`);
+      
+      if (supabaseCount === localVideoCount && supabaseCount > 0) {
         logger.info(`[SupabaseService] Index already up-to-date (${localVideoCount} videos). Skipping indexing.`);
         if (onProgress) {
           // Report completion immediately
@@ -2171,6 +2188,8 @@ class SupabaseService {
       } else {
         logger.info(`[SupabaseService] Index mismatch: Supabase has ${supabaseCount} videos, playlists have ${localVideoCount}. Re-indexing...`);
       }
+    } else if (forceIndex) {
+      logger.info(`[SupabaseService] Force indexing requested - will index ${localVideoCount} videos for player ${this.playerId}`);
     }
 
     this.indexingInProgress = true;
