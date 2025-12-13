@@ -613,11 +613,12 @@ class SupabaseService {
         }
       }
 
-      // Note: queue_index column may not exist in all database schemas
-      // Only include it if we're confident the column exists (skip for now to avoid errors)
-      // if (state.queueIndex !== undefined) {
-      //   updateData.queue_index = state.queueIndex;
-      // }
+      // CRITICAL: Include queue_index to track current position in active_queue
+      // This is essential for WEBADMIN to display the correct queue order
+      // The queue_index column exists in the database schema (added in migration 20241204_add_queue_index.sql)
+      if (state.queueIndex !== undefined) {
+        updateData.queue_index = state.queueIndex;
+      }
 
       // CRITICAL: ALWAYS include active_queue and priority_queue in updates if they exist in lastSyncedState
       // This ensures Web Admin receives queue data in EVERY Realtime update, even for partial updates
