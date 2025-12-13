@@ -30,6 +30,9 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJ
 export const DEFAULT_PLAYER_ID = import.meta.env.VITE_DEFAULT_PLAYER_ID || 'DJAMMS_DEMO';
 export const MIN_PLAYER_ID_LENGTH = 6;
 
+// Video file extensions for filtering
+const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'];
+
 // LocalStorage key for saved player ID
 const PLAYER_ID_STORAGE_KEY = 'djamms_player_id';
 
@@ -723,7 +726,14 @@ export async function searchLocalVideos(
     }
 
     // If RPC returns player_id, filter client-side to be safe
-    const filtered = (data || []).filter((row: any) => !row.player_id || row.player_id === playerId);
+    // Also filter to only show video files
+    const filtered = (data || []).filter((row: any) => {
+      // Filter by player_id
+      if (row.player_id && row.player_id !== playerId) return false;
+      // Filter by video file extension
+      const filename = (row.filename || '').toLowerCase();
+      return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
+    });
     return filtered;
   } catch (rpcError: any) {
     // Always fall back to ILIKE search if RPC fails
@@ -779,7 +789,17 @@ export async function searchLocalVideos(
     return [];
   }
 
-  return data || [];
+  // Filter results client-side to ensure only video files
+  const filteredData = (data || []).filter(video => {
+    const filename = (video.filename || '').toLowerCase();
+    return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
+  });
+  
+  if (data && data.length > filteredData.length) {
+    console.warn('[SupabaseClient] ⚠️ Search filtered out', data.length - filteredData.length, 'non-video files/folders');
+  }
+  
+  return filteredData;
   }
 }
 
@@ -817,12 +837,18 @@ export async function getAllLocalVideos(
   }
   
   // Build query - if limit is null, fetch all videos (no range limit)
+  // Filter to only show actual video files (exclude folders and non-video files)
   let queryBuilder = supabase
     .from('local_videos')
     .select('*')
     .eq('player_id', playerId)
     .eq('is_available', true)
     .order('title');
+  
+  // Filter by filename extension - only show video files
+  // Use OR condition to match any video extension
+  const extensionFilters = VIDEO_EXTENSIONS.map(ext => `filename.ilike.%${ext}`);
+  queryBuilder = queryBuilder.or(extensionFilters.join(','));
   
   // Only apply range if limit is specified
   if (limit !== null) {
@@ -845,11 +871,20 @@ export async function getAllLocalVideos(
     return [];
   }
 
-  console.log('[SupabaseClient] ✅ getAllLocalVideos returned', data?.length || 0, 'videos for playerId:', playerId);
-  if (data && data.length > 0) {
-    console.log('[SupabaseClient] Sample video:', { title: data[0].title, artist: data[0].artist, player_id: data[0].player_id });
+  // Filter results client-side to ensure only video files (double-check)
+  const filteredData = (data || []).filter(video => {
+    const filename = (video.filename || '').toLowerCase();
+    return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
+  });
+  
+  console.log('[SupabaseClient] ✅ getAllLocalVideos returned', filteredData.length, 'videos (filtered from', data?.length || 0, 'total) for playerId:', playerId);
+  if (filteredData.length > 0) {
+    console.log('[SupabaseClient] Sample video:', { title: filteredData[0].title, artist: filteredData[0].artist, filename: filteredData[0].filename });
   }
-  return data || [];
+  if (data && data.length > filteredData.length) {
+    console.warn('[SupabaseClient] ⚠️ Filtered out', data.length - filteredData.length, 'non-video files/folders');
+  }
+  return filteredData;
 }
 
 /**

@@ -8,6 +8,9 @@ import {
   FallbackBackground,
   SearchInterface,
   JukeboxSearchMode,
+  JukeboxKiosk,
+  ModernKiosk,
+  SleekKiosk,
   NowPlaying,
   ComingUpTicker,
   CreditsDisplay
@@ -20,6 +23,7 @@ import {
   onConnectionChange
 } from '@shared/supabase-client';
 import { initializePingHandler, cleanupPingHandler } from '@shared/ping-handler';
+import { getThumbnailsPath } from '@shared/settings';
 import {
   getPlayerId,
   setPlayerId,
@@ -449,15 +453,14 @@ function KioskApp() {
 
   return (
     <div className="min-h-screen bg-slate-900 relative">
-      {/* Jukebox Mode - Full screen takeover */}
+      {/* Sleek Kiosk Mode - Modern wireframe-inspired design */}
       {uiMode === 'jukebox' ? (
-        <JukeboxSearchMode
+        <SleekKiosk
           nowPlaying={playerState?.now_playing_video || null}
-          credits={credits}
-          onCreditsChange={setCredits}
-          onSongQueued={handleSongRequested}
-          isFreePlay={true}
+          activeQueue={playerState?.active_queue || []}
           playerId={playerId}
+          thumbnailsPath={getThumbnailsPath()}
+          onSongQueued={handleSongRequested}
         />
       ) : (
         <>

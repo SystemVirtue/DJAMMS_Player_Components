@@ -28,6 +28,7 @@ import { ConnectPlayerModal, usePlayer, PlayerIdBadge } from '@shared/ConnectPla
 import { cleanVideoTitle } from '@shared/video-utils';
 import { shuffleArray } from '@shared/array-utils';
 import { initializePingHandler, cleanupPingHandler } from '@shared/ping-handler';
+import { getThumbnailsPath, setThumbnailsPath, getSettings } from '@shared/settings';
 
 // Helper to strip YouTube Playlist ID prefix from folder name
 // Handles both underscore and dot separators: PLxxxxxx_Name or PLxxxxxx.Name
@@ -1688,6 +1689,52 @@ function AdminApp() {
                     </div>
                     <p className="setting-description" style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                       Connected to Electron Player. Disconnect to change Player ID.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="settings-section">
+                  <h2><span className="section-icon">📚</span> Library</h2>
+                  <p className="section-description">Configure library folder paths</p>
+                  
+                  <div className="setting-item">
+                    <label>Path to PLAYLISTS Folder</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={getSettings().playlistsPath || '/Users/mikeclarkin/Music/DJAMMS/PLAYLISTS'}
+                        readOnly
+                        style={{ flex: 1, fontSize: '14px' }}
+                      />
+                      <button className="action-btn" disabled>
+                        <span className="material-symbols-rounded">folder</span>
+                        Select Folder
+                      </button>
+                    </div>
+                    <p className="setting-description" style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      Path to the PLAYLISTS folder containing your music library
+                    </p>
+                  </div>
+                  
+                  <div className="setting-item">
+                    <label>Path to THUMBNAILS Folder</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={getThumbnailsPath()}
+                        onChange={(e) => setThumbnailsPath(e.target.value)}
+                        style={{ flex: 1, fontSize: '14px' }}
+                        placeholder="/Users/mikeclarkin/Music/DJAMMS/THUMBNAILS"
+                      />
+                      <button className="action-btn" disabled>
+                        <span className="material-symbols-rounded">folder</span>
+                        Select Folder
+                      </button>
+                    </div>
+                    <p className="setting-description" style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      Path to the THUMBNAILS folder containing video thumbnails (e.g., youtubeId.thumb.250.png)
                     </p>
                   </div>
                 </div>

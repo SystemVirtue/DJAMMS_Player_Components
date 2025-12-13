@@ -1,0 +1,126 @@
+.browse-bar {
+  height: 100px;
+  background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-top: 1px solid rgba(0, 217, 255, 0.2);
+  gap: 20px;
+}
+
+.browse-bar-alphabet {
+  flex: 0 0 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.browse-bar-alphabet-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.browse-bar-letter {
+  width: 60px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  color: #FFFFFF;
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.browse-bar-letter:hover:not(.disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 10px rgba(0, 217, 255, 0.5);
+}
+
+.browse-bar-letter.active {
+  background: #00D9FF;
+  color: #000000;
+  border-color: #00D9FF;
+  box-shadow: 0 0 15px rgba(0, 217, 255, 0.8);
+}
+
+.browse-bar-letter.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.browse-bar-search-btn {
+  width: 100px;
+  height: 90px;
+  background: transparent;
+  border: 3px solid #00D9FF;
+  border-radius: 12px;
+  color: #00D9FF;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 10px rgba(0, 217, 255, 0.3);
+}
+
+.browse-bar-search-btn:hover {
+  background: rgba(0, 217, 255, 0.1);
+  box-shadow: 0 0 20px rgba(0, 217, 255, 0.6);
+  transform: scale(1.05);
+}
+
+.browse-bar-search-btn:active {
+  transform: scale(0.95);
+}
+
+.browse-bar-search-label {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.browse-bar-filters {
+  flex: 0 0 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.browse-bar-filter {
+  width: 120px;
+  height: 40px;
+  background: transparent;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.browse-bar-filter:hover {
+  border-color: #00D9FF;
+  background: rgba(0, 217, 255, 0.1);
+}
+
+.browse-bar-filter.active {
+  background: #00D9FF;
+  border-color: #00D9FF;
+  color: #000000;
+  box-shadow: 0 0 10px rgba(0, 217, 255, 0.5);
+}
+

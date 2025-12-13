@@ -2,6 +2,9 @@ export { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS, FallbackBackground } fro
 export { SearchKeyboard } from './SearchKeyboard';
 export { SearchInterface } from './SearchInterface';
 export { JukeboxSearchMode } from './JukeboxSearchMode';
+export { JukeboxKiosk } from './JukeboxKiosk';
+export { ModernKiosk } from './ModernKiosk';
+export { SleekKiosk } from './SleekKiosk';
 export { VideoResultCard, VideoGrid } from './VideoResultCard';
 export { NowPlaying } from './NowPlaying';
 export { ComingUpTicker } from './ComingUpTicker';

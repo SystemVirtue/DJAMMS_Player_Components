@@ -1,0 +1,130 @@
+.search-keyboard-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.search-keyboard-modal-content {
+  background: #1a1a1a;
+  border-top: 3px solid #1DB954;
+  border-radius: 20px 20px 0 0;
+  padding: 20px;
+  width: 100%;
+  max-width: 1280px;
+  position: relative;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.search-keyboard-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 60px;
+  height: 60px;
+  background: rgba(255, 75, 75, 0.2);
+  border: 3px solid #FF4B4B;
+  border-radius: 12px;
+  color: #FF4B4B;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.search-keyboard-modal-close:hover {
+  background: rgba(255, 75, 75, 0.3);
+  transform: scale(1.1);
+}
+
+.search-keyboard-modal-close:active {
+  transform: scale(0.95);
+}
+
+.search-keyboard-modal-keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  padding-top: 20px;
+}
+
+.search-keyboard-modal-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.search-keyboard-modal-key {
+  min-width: 100px;
+  min-height: 100px;
+  background: #121212;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  color: #FFFFFF;
+  font-size: 32px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.search-keyboard-modal-key:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.search-keyboard-modal-key:active {
+  transform: scale(0.95);
+  background: rgba(29, 185, 84, 0.2);
+  border-color: #1DB954;
+}
+
+.search-keyboard-modal-key-space {
+  min-width: 250px; /* 2.5x width */
+}
+
+.search-keyboard-modal-key-clear {
+  background: rgba(255, 75, 75, 0.2);
+  border-color: #FF4B4B;
+  color: #FF4B4B;
+  font-size: 24px;
+}
+
+.search-keyboard-modal-key-clear:hover {
+  background: rgba(255, 75, 75, 0.3);
+}
+
+.search-keyboard-modal-key-backspace {
+  min-width: 100px;
+}
+

@@ -66,10 +66,18 @@ const store = new Store({
   }
 });
 
+// QueueManager - Centralized queue state management
+// NOTE: QueueManager is available but not yet fully integrated.
+// Current implementation uses queueState object directly for backward compatibility.
+// Future refactor: Replace queueState with QueueManager instance.
+const QueueManager = require('./queue-manager');
+
 // Keep global references to prevent garbage collection
 let mainWindow = null;
 let fullscreenWindow = null;
 let adminConsoleWindow = null;
+
+// Queue state (can be replaced with QueueManager instance in future)
 let queueState = {
   activeQueue: [],
   priorityQueue: [],

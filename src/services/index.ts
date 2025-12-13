@@ -10,6 +10,4 @@ export type { YouTubeVideo, YouTubeSearchResult, YouTubeSearchOptions } from './
 export { SupabaseService, getSupabaseService } from './SupabaseService';
 export type { CommandHandler } from './SupabaseService';
 
-// Queue management service
-export { QueueService, getQueueService } from './QueueService';
-export type { QueueState, RotateResult } from './QueueService';
+// Queue management service - removed (unused, queue managed in main.cjs)

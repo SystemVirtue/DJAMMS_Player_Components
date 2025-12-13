@@ -1,0 +1,50 @@
+.modern-kiosk {
+  width: 1280px;
+  height: 1024px;
+  background: #121212;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: 'Montserrat', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #FFFFFF;
+}
+
+.modern-kiosk-content {
+  flex: 1;
+  height: 724px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: #121212;
+}
+
+.modern-kiosk-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 24px;
+}
+
+.modern-kiosk-loading-spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid rgba(29, 185, 84, 0.2);
+  border-top-color: #1DB954;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.modern-kiosk-loading p {
+  font-size: 24px;
+  color: rgba(255, 255, 255, 0.7);
+}
+

@@ -1,0 +1,63 @@
+.sleek-kiosk-keyboard {
+  width: 1280px;
+  height: 192px;
+  background: #000000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+  border-top: 2px solid rgba(29, 185, 84, 0.3);
+}
+
+.sleek-kiosk-keyboard-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+}
+
+.sleek-kiosk-key {
+  width: 70px;
+  height: 70px;
+  background: #FFFFFF;
+  border: 3px solid rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  color: #000000;
+  font-size: 28px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.sleek-kiosk-key:hover {
+  background: #1DB954;
+  border-color: #1DB954;
+  color: #000000;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(29, 185, 84, 0.4);
+}
+
+.sleek-kiosk-key:active {
+  transform: translateY(0) scale(0.95);
+  background: #1ed760;
+}
+
+.sleek-kiosk-key-special {
+  background: rgba(255, 51, 51, 0.1);
+  border-color: #FF3333;
+  color: #FF3333;
+  font-size: 24px;
+}
+
+.sleek-kiosk-key-special:hover {
+  background: rgba(255, 51, 51, 0.2);
+  border-color: #FF3333;
+  color: #FF3333;
+}
+

@@ -66,12 +66,8 @@ class SupabaseService {
   private playerStateChannel: RealtimeChannel | null = null; // Realtime subscription for player_state updates
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private stateSyncTimeout: ReturnType<typeof setTimeout> | null = null;
-  private commandPollInterval: ReturnType<typeof setInterval> | null = null;
   private indexingInProgress: boolean = false;
   private broadcastChannelStatus: 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'CLOSED' | 'TIMED_OUT' | 'UNKNOWN' = 'UNKNOWN';
-  private pollingBackoffMs = 2000; // Start with 2 seconds, increase on errors
-  private emptyPollCount = 0; // Track consecutive empty polls
-  private readonly MAX_EMPTY_POLLS = 3; // After 3 empty polls, increase interval
   
   // Schema fix tracking - prevent repeated attempts
   private schemaFixAttempted: boolean = false;
@@ -83,7 +79,6 @@ class SupabaseService {
   
   // Error tracking to suppress spam during long runtime
   private consecutiveStateSyncErrors = 0;
-  private consecutiveCommandPollErrors = 0;
   private lastErrorLogTime = 0;
   private readonly ERROR_SUPPRESSION_MS = 60000; // Only log errors once per minute
   
@@ -224,11 +219,7 @@ class SupabaseService {
       this.heartbeatInterval = null;
     }
 
-    // Stop command polling
-    if (this.commandPollInterval) {
-      clearInterval(this.commandPollInterval);
-      this.commandPollInterval = null;
-    }
+    // Command polling removed - using Broadcast channel only
 
     // Cancel pending state sync
     if (this.stateSyncTimeout) {
@@ -761,7 +752,12 @@ class SupabaseService {
           queue_length: updateData.active_queue?.length,
           priority_length: updateData.priority_queue?.length
         });
-        this.lastSyncedState = updateData;
+        // Merge updateData into lastSyncedState to preserve all fields from previous syncs
+        // This ensures comparisons use complete state, not just fields from most recent update
+        this.lastSyncedState = {
+          ...this.lastSyncedState,
+          ...updateData
+        } as Partial<SupabasePlayerState>;
         
         // Update lastQueueUpdateTime if queue data was synced
         // Use the actual updated_at from database (set by trigger) for accurate conflict resolution
@@ -871,107 +867,24 @@ class SupabaseService {
         this.broadcastChannelStatus = status as typeof this.broadcastChannelStatus;
         if (status === 'SUBSCRIBED') {
           logger.info('[SupabaseService] ✅ Broadcast command listener SUBSCRIBED - ready to receive commands');
-          // Disable polling when Broadcast is working
-          this.stopCommandPoll();
-          this.pollingBackoffMs = 2000; // Reset backoff on successful subscription
         } else if (status === 'CHANNEL_ERROR') {
           logger.error('[SupabaseService] ❌ Broadcast channel ERROR:', err);
-          // Re-enable polling with exponential backoff
-          this.startCommandPoll();
+          logger.warn('[SupabaseService] ⚠️ Command delivery may be delayed - Broadcast channel failed');
         } else if (status === 'TIMED_OUT') {
           logger.warn('[SupabaseService] ⚠️ Broadcast channel TIMED_OUT');
-          // Re-enable polling
-          this.startCommandPoll();
         } else if (status === 'CLOSED') {
           logger.warn('[SupabaseService] ⚠️ Broadcast channel CLOSED');
-          // Re-enable polling
-          this.startCommandPoll();
         } else {
           logger.debug(`[SupabaseService] Broadcast channel status: ${status}`);
         }
       });
 
     // Delay initial pending commands check to let Broadcast handle immediate delivery
-    // Reduced from 3s to 500ms - deduplication prevents race conditions
+    // Process any pending commands that may have been queued before Broadcast was ready
+    // This is a one-time check, not polling
     setTimeout(async () => {
       await this.processPendingCommands();
     }, 500);
-    
-    // Only start polling if Broadcast is not SUBSCRIBED
-    // Polling will be started automatically if Broadcast fails
-    if (this.broadcastChannelStatus !== 'SUBSCRIBED') {
-      setTimeout(() => this.startCommandPoll(), 1000);
-    }
-  }
-
-  /**
-   * Start periodic polling for pending commands as a fallback mechanism
-   * Only runs when Broadcast channel is not SUBSCRIBED
-   * Uses exponential backoff on errors
-   */
-  private startCommandPoll(): void {
-    // Don't start if already polling
-    if (this.commandPollInterval) return;
-    
-    // Don't poll if Broadcast is working
-    if (this.broadcastChannelStatus === 'SUBSCRIBED') {
-      logger.debug('[SupabaseService] Skipping poll start - Broadcast is SUBSCRIBED');
-      return;
-    }
-
-    logger.debug(`[SupabaseService] Starting command poll (interval: ${this.pollingBackoffMs}ms)`);
-    this.commandPollInterval = setInterval(async () => {
-      // Double-check status before polling
-      if (this.broadcastChannelStatus === 'SUBSCRIBED') {
-        // If Broadcast is subscribed and we've had empty polls, stop polling entirely
-        if (this.emptyPollCount >= this.MAX_EMPTY_POLLS) {
-          logger.debug('[SupabaseService] Broadcast SUBSCRIBED and no pending commands - stopping poll');
-          this.stopCommandPoll();
-          return;
-        }
-      }
-      
-      // Process commands and check if any were found
-      const hadCommands = await this.processPendingCommands();
-      
-      if (!hadCommands) {
-        // No commands found - increment empty poll count
-        this.emptyPollCount++;
-        
-        // Increase interval after multiple empty polls
-        if (this.emptyPollCount >= this.MAX_EMPTY_POLLS) {
-          const newInterval = Math.min(this.pollingBackoffMs * 2, 30000); // Max 30 seconds
-          if (newInterval !== this.pollingBackoffMs) {
-            logger.debug(`[SupabaseService] No commands found after ${this.emptyPollCount} polls - increasing interval to ${newInterval}ms`);
-            this.pollingBackoffMs = newInterval;
-            // Restart polling with new interval
-            this.stopCommandPoll();
-            this.startCommandPoll();
-          }
-        }
-      } else {
-        // Commands found - reset empty poll count and interval
-        if (this.emptyPollCount > 0) {
-          logger.debug('[SupabaseService] Commands found - resetting poll interval');
-          this.emptyPollCount = 0;
-          this.pollingBackoffMs = 2000; // Reset to 2 seconds
-          // Restart polling with faster interval
-          this.stopCommandPoll();
-          this.startCommandPoll();
-        }
-      }
-    }, this.pollingBackoffMs);
-  }
-
-  /**
-   * Stop command polling
-   */
-  private stopCommandPoll(): void {
-    if (this.commandPollInterval) {
-      clearInterval(this.commandPollInterval);
-      this.commandPollInterval = null;
-      logger.debug('[SupabaseService] Stopped command polling');
-    }
   }
 
   /**
@@ -1572,7 +1485,9 @@ class SupabaseService {
   }
 
   /**
-   * Process any pending commands (catch-up after reconnect)
+   * Process any pending commands (one-time catch-up on startup/reconnect)
+   * This is NOT polling - it's a single check to catch commands that may have been
+   * queued before Broadcast channel was ready. Broadcast channel is the primary delivery method.
    * @returns true if commands were found and processed, false otherwise
    */
   private async processPendingCommands(): Promise<boolean> {
@@ -1600,38 +1515,9 @@ class SupabaseService {
     }) || [];
 
     if (error) {
-      this.consecutiveCommandPollErrors++;
-      const now = Date.now();
-      const shouldLog = (now - this.lastErrorLogTime) > this.ERROR_SUPPRESSION_MS;
-      
-      // Exponential backoff on errors (max 30 seconds)
-      this.pollingBackoffMs = Math.min(this.pollingBackoffMs * 1.5, 30000);
-      
-      // Suppress 500 errors during long runtime - likely database issues, not app bugs
-      if (error.code === '500' || error.message?.includes('500') || error.message?.includes('Internal Server Error')) {
-        if (shouldLog || this.consecutiveCommandPollErrors === 1) {
-          logger.debug(`[SupabaseService] Error fetching pending commands (500 error - non-critical) [${this.consecutiveCommandPollErrors} consecutive]`);
-          this.lastErrorLogTime = now;
-        }
-      } else {
-        if (shouldLog || this.consecutiveCommandPollErrors === 1) {
-          logger.warn(`[SupabaseService] Error fetching pending commands (non-critical) [${this.consecutiveCommandPollErrors} consecutive]:`, error.message || error);
-          this.lastErrorLogTime = now;
-        }
-      }
-      
-      // Restart polling with new backoff interval
-      this.stopCommandPoll();
-      this.startCommandPoll();
+      // Log error but don't retry (Broadcast is primary, this is just a one-time catch-up)
+      logger.warn('[SupabaseService] Error fetching pending commands (non-critical):', error.message || error);
       return false; // Error occurred, no commands processed
-    }
-    
-    // Reset error counter on success
-    if (this.consecutiveCommandPollErrors > 0) {
-      logger.debug(`[SupabaseService] Command poll recovered after ${this.consecutiveCommandPollErrors} errors`);
-      this.consecutiveCommandPollErrors = 0;
-      // Reset backoff on success
-      this.pollingBackoffMs = 2000;
     }
 
     if (pendingCommands && pendingCommands.length > 0) {
