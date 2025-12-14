@@ -746,6 +746,7 @@ export async function searchLocalVideos(
   }
   
   // Prefer PostgreSQL FTS RPC for consistent relevance across clients
+  // However, if RPC fails (400, schema mismatch, etc.), silently fall back to improved ILIKE search
   try {
     const { data, error } = await supabase.rpc('search_videos', {
       search_query: trimmedQuery,
@@ -756,18 +757,31 @@ export async function searchLocalVideos(
     });
 
     if (error) {
-      // Suppress known schema mismatch errors (42804 = type mismatch, PGRST203 = function not found, 400 = bad request)
-      // These are non-critical since we have ILIKE fallback - don't log them as errors
+      // Suppress known errors (400 = bad request, 42804 = type mismatch, PGRST203 = function not found)
+      // These are non-critical since we have improved ILIKE fallback with relevance scoring
       const errorCode = error.code?.toString() || '';
-      const isKnownError = errorCode === '42804' || errorCode === 'PGRST203' || errorCode === '400' || 
-                          error.message?.includes('structure of query does not match') ||
-                          error.message?.includes('Returned type jsonb does not match');
-      if (!isKnownError) {
-        console.warn('[SupabaseClient] FTS search_videos RPC failed, falling back to ILIKE:', error);
+      const errorMessage = error.message?.toLowerCase() || '';
+      const isKnownError = 
+        errorCode === '42804' || 
+        errorCode === 'PGRST203' || 
+        errorCode === '400' ||
+        errorMessage.includes('structure of query') ||
+        errorMessage.includes('does not match') ||
+        errorMessage.includes('jsonb') ||
+        errorMessage.includes('function') && errorMessage.includes('not found');
+      
+      // Silently fall back to improved search - don't log known errors
+      if (isKnownError) {
+        // RPC not available or incompatible - use improved ILIKE search with relevance scoring
+        return await searchLocalVideosWithRelevance(trimmedQuery, playerId, limit);
       }
+      
+      // Only log truly unexpected errors
+      console.warn('[SupabaseClient] Unexpected RPC error, falling back to ILIKE:', error);
       throw error;
     }
 
+    // RPC succeeded - filter and return results
     // If RPC returns player_id, filter client-side to be safe
     // Also filter to only show video files
     const filtered = (data || []).filter((row: any) => {
@@ -777,35 +791,53 @@ export async function searchLocalVideos(
       const filename = (row.filename || '').toLowerCase();
       return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
     });
+    
+    // Apply relevance scoring to RPC results as well for consistency
+    if (filtered.length > 0) {
+      const words = trimmedQuery
+        .split(/\s+/)
+        .filter(word => word.length >= 2)
+        .map(word => word.replace(/[%_]/g, ''));
+      
+      if (words.length > 0) {
+        const hasTrailingSpace = trimmedQuery.endsWith(' ');
+        return scoreAndSortResults(filtered, words, hasTrailingSpace || words.length > 1);
+      }
+    }
+    
     return filtered;
   } catch (rpcError: any) {
-    // Always fall back to ILIKE search if RPC fails
-    // Suppress ALL logging for known schema mismatch errors (expected behavior, no need to log)
+    // Always fall back to improved ILIKE search with relevance scoring if RPC fails
+    // Suppress ALL logging for known errors (400, schema mismatch, etc.)
     const errorCode = String(rpcError?.code || '');
-    const errorMessage = String(rpcError?.message || '');
-    const errorDetails = String(rpcError?.details || '');
-    const errorString = JSON.stringify(rpcError || {});
+    const errorMessage = String(rpcError?.message || '').toLowerCase();
+    const errorDetails = String(rpcError?.details || '').toLowerCase();
+    const errorString = String(JSON.stringify(rpcError || {})).toLowerCase();
     
-    // Check for known schema mismatch errors - be very permissive and check all possible fields
+    // Check for known errors - be very permissive
     const isKnownError = 
       errorCode === '42804' || 
       errorCode === 'PGRST203' || 
       errorCode === '400' ||
-      errorMessage.toLowerCase().includes('structure of query') ||
-      errorMessage.toLowerCase().includes('does not match') ||
-      errorMessage.toLowerCase().includes('jsonb') ||
-      errorDetails.toLowerCase().includes('jsonb') ||
-      errorDetails.toLowerCase().includes('does not match') ||
-      errorString.toLowerCase().includes('structure of query') ||
-      errorString.toLowerCase().includes('jsonb does not match');
+      errorMessage.includes('structure of query') ||
+      errorMessage.includes('does not match') ||
+      errorMessage.includes('jsonb') ||
+      errorMessage.includes('function') && errorMessage.includes('not found') ||
+      errorMessage.includes('bad request') ||
+      errorDetails.includes('jsonb') ||
+      errorDetails.includes('does not match') ||
+      errorString.includes('structure of query') ||
+      errorString.includes('jsonb does not match') ||
+      errorString.includes('bad request');
     
     // COMPLETELY SILENT for known errors - no console output at all
-    // Only log truly unexpected errors that we haven't seen before
+    // These are expected when RPC doesn't exist or has schema mismatches
+    // Only log truly unexpected errors
     if (!isKnownError) {
-      console.debug('[SupabaseClient] RPC search failed, using ILIKE fallback:', rpcError);
+      console.debug('[SupabaseClient] Unexpected RPC error, using improved ILIKE fallback:', rpcError);
     }
-    // For known errors: silently continue to ILIKE fallback (no console output whatsoever)
-    // Improved word-aware search with relevance scoring
+    
+    // Silently fall back to improved word-aware search with relevance scoring
     return await searchLocalVideosWithRelevance(trimmedQuery, playerId, limit);
   }
 }
