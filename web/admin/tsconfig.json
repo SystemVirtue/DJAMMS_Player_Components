@@ -19,7 +19,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["../../DJAMMS_PLAYER_REACT_MIGRATION/web/shared/*"]
+      "@shared/*": ["./shared/*"]
     }
   },
   "include": ["src", "src/vite-env.d.ts"],
