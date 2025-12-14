@@ -1,7 +1,10 @@
 /**
  * Thumbnail utility functions for Kiosk UI
  * Handles YouTube ID extraction and thumbnail path construction
+ * For web browsers, uses Supabase Storage with IndexedDB caching
  */
+
+import { thumbnailCache } from '../services/thumbnailCache';
 
 /**
  * Extract YouTube ID from video filename
@@ -96,10 +99,14 @@ export function checkThumbnailExists(path: string): Promise<boolean> {
 /**
  * Get thumbnail URL for a video
  * Returns the thumbnail path, which can be used as img src
- * The browser will handle 404s naturally with onerror handlers
+ * For web browsers, uses Supabase Storage with caching
+ * For Electron, uses local file system with djamms:// protocol
  * Works with both SupabaseLocalVideo and QueueVideoItem
  */
-export function getThumbnailUrl(video: { filename?: string; path?: string; file_path?: string }, thumbnailsPath: string): string {
+export async function getThumbnailUrl(
+  video: { filename?: string; path?: string; file_path?: string }, 
+  thumbnailsPath: string
+): Promise<string> {
   const filename = video.filename || video.path || video.file_path || '';
   const actualFilename = filename.split('/').pop() || filename;
   const youtubeId = extractYouTubeId(actualFilename);
@@ -108,6 +115,42 @@ export function getThumbnailUrl(video: { filename?: string; path?: string; file_
     return ''; // Return empty string to indicate no thumbnail
   }
   
-  return getThumbnailPath(youtubeId, thumbnailsPath);
+  // Check if we're in Electron (has electronAPI)
+  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+    // For Electron, use existing djamms:// protocol
+    return getThumbnailPath(youtubeId, thumbnailsPath);
+  }
+  
+  // For web browsers, use Supabase Storage with cache
+  return await thumbnailCache.getThumbnailUrl(youtubeId);
+}
+
+/**
+ * Synchronous version for backwards compatibility
+ * Returns Supabase URL immediately (will be cached on first load)
+ */
+export function getThumbnailUrlSync(
+  video: { filename?: string; path?: string; file_path?: string }, 
+  thumbnailsPath: string
+): string {
+  const filename = video.filename || video.path || video.file_path || '';
+  const actualFilename = filename.split('/').pop() || filename;
+  const youtubeId = extractYouTubeId(actualFilename);
+  
+  if (!youtubeId) {
+    return '';
+  }
+  
+  // Check if we're in Electron
+  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+    return getThumbnailPath(youtubeId, thumbnailsPath);
+  }
+  
+  // For web, return Supabase URL (will be cached by browser)
+  // This is a fallback for components that can't use async
+  const { data } = supabase.storage
+    .from('thumbnails')
+    .getPublicUrl(`${youtubeId}.thumb.250.png`);
+  return data.publicUrl;
 }
 

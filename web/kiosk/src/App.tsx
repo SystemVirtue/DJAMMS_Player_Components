@@ -21,8 +21,10 @@ import {
   getPlayerState,
   subscribeToPlayerState,
   isPlayerOnline,
-  onConnectionChange
+  onConnectionChange,
+  getAllLocalVideos
 } from '@shared/supabase-client';
+import { thumbnailCache } from './services/thumbnailCache';
 import { initializePingHandler, cleanupPingHandler } from '@shared/ping-handler';
 import { getThumbnailsPath } from '@shared/settings';
 import {
@@ -464,6 +466,37 @@ function KioskApp() {
       return () => {
         cleanupPingHandler();
       };
+    }
+  }, [playerId]);
+
+  // Initialize thumbnail cache and start background download
+  useEffect(() => {
+    // Only initialize for web browsers (not Electron)
+    if (typeof window !== 'undefined' && !(window as any).electronAPI && playerId) {
+      const initializeThumbnailCache = async () => {
+        try {
+          console.log('[KioskApp] Initializing thumbnail cache...');
+          await thumbnailCache.initialize();
+          
+          // Get all videos and start background download
+          console.log('[KioskApp] Loading videos for thumbnail download...');
+          const videos = await getAllLocalVideos(playerId, null, 0);
+          
+          if (videos && videos.length > 0) {
+            console.log(`[KioskApp] Starting background download of ${videos.length} thumbnails...`);
+            // Start download in background (non-blocking)
+            thumbnailCache.downloadAllThumbnails(videos).catch(error => {
+              console.error('[KioskApp] Error downloading thumbnails:', error);
+            });
+          } else {
+            console.log('[KioskApp] No videos found for thumbnail download');
+          }
+        } catch (error) {
+          console.error('[KioskApp] Error initializing thumbnail cache:', error);
+        }
+      };
+      
+      initializeThumbnailCache();
     }
   }, [playerId]);
 

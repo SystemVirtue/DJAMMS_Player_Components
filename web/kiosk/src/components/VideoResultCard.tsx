@@ -1,12 +1,12 @@
 // VideoResultCard.tsx - Video search result card for Kiosk
 // Styled with obie-v5 aesthetic
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Music, Clock } from 'lucide-react';
 import type { SupabaseLocalVideo } from '@shared/types';
 import { getDisplayArtist, getPlaylistDisplayName } from '@shared/supabase-client';
 import { cleanVideoTitle } from '@shared/video-utils';
-import { getThumbnailUrl } from '../utils/thumbnailUtils';
+import { getThumbnailUrl, getThumbnailUrlSync } from '../utils/thumbnailUtils';
 import { getThumbnailsPath } from '@shared/settings';
 
 interface VideoResultCardProps {
@@ -17,15 +17,39 @@ interface VideoResultCardProps {
 
 export function VideoResultCard({ video, isSelected, onClick }: VideoResultCardProps) {
   const [thumbnailError, setThumbnailError] = useState(false);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string>('');
   const artist = getDisplayArtist(video.artist);
   const playlist = video.metadata ? getPlaylistDisplayName((video.metadata as any).playlist || '') : '';
   const thumbnailsPath = getThumbnailsPath();
-  const thumbnailUrl = getThumbnailUrl(video, thumbnailsPath);
-  // Only allow valid protocols (djamms://, http://, https://) - never file://
+  
+  // Load thumbnail URL (async for web, sync for Electron)
+  useEffect(() => {
+    const loadThumbnail = async () => {
+      try {
+        // Check if we're in Electron (synchronous)
+        if (typeof window !== 'undefined' && (window as any).electronAPI) {
+          const url = getThumbnailUrlSync(video, thumbnailsPath);
+          setThumbnailUrl(url);
+        } else {
+          // For web, use async cache
+          const url = await getThumbnailUrl(video, thumbnailsPath);
+          setThumbnailUrl(url);
+        }
+      } catch (error) {
+        console.error('[VideoResultCard] Error loading thumbnail:', error);
+        setThumbnailUrl('');
+      }
+    };
+    
+    loadThumbnail();
+  }, [video, thumbnailsPath]);
+  
+  // Only allow valid protocols (djamms://, http://, https://, blob:) - never file://
   const isValidUrl = thumbnailUrl && 
     (thumbnailUrl.startsWith('djamms://') || 
      thumbnailUrl.startsWith('http://') || 
-     thumbnailUrl.startsWith('https://'));
+     thumbnailUrl.startsWith('https://') ||
+     thumbnailUrl.startsWith('blob:'));
   const hasThumbnail = isValidUrl && !thumbnailError;
   
   // Format duration from seconds to mm:ss
