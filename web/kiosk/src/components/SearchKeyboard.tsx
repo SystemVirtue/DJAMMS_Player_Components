@@ -18,10 +18,11 @@ const QWERTY_ROWS = [
   ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
 ];
 
-// Number pad rows (2 rows)
+// Number pad rows (3 rows: 1-4, 5-8, 9-0-DONE)
 const NUMBER_ROWS = [
-  ['1', '2', '3', '4', '5'],
-  ['6', '7', '8', '9', '0'],
+  ['1', '2', '3', '4'],
+  ['5', '6', '7', '8'],
+  ['9', '0'],
 ];
 
 export function SearchKeyboard({ onKeyPress, onBackspace, onClear, onSubmit }: SearchKeyboardProps) {
@@ -93,9 +94,9 @@ export function SearchKeyboard({ onKeyPress, onBackspace, onClear, onSubmit }: S
           </div>
         </div>
         
-        {/* Right: Number pad (2 rows) */}
+        {/* Right: Number pad (3 rows: 1-4, 5-8, 9-0-DONE) */}
         <div className="flex flex-col gap-2">
-          {/* Number row 1: 1-5 */}
+          {/* Number row 1: 1-4 */}
           <div className="flex gap-2">
             {NUMBER_ROWS[0].map((key) => (
               <button
@@ -109,7 +110,7 @@ export function SearchKeyboard({ onKeyPress, onBackspace, onClear, onSubmit }: S
             ))}
           </div>
           
-          {/* Number row 2: 6-0 + CLOSE button */}
+          {/* Number row 2: 5-8 */}
           <div className="flex gap-2">
             {NUMBER_ROWS[1].map((key) => (
               <button
@@ -121,14 +122,38 @@ export function SearchKeyboard({ onKeyPress, onBackspace, onClear, onSubmit }: S
                 {key}
               </button>
             ))}
-            {/* CLOSE button matching number pad width */}
+          </div>
+          
+          {/* Number row 3: 9-0 + DONE button */}
+          <div className="flex gap-2">
+            {NUMBER_ROWS[2].map((key) => (
+              <button
+                key={key}
+                onClick={() => onKeyPress(key)}
+                className="keyboard-key"
+                style={{ minWidth: '80px' }}
+              >
+                {key}
+              </button>
+            ))}
+            {/* DONE button (dark red) - replaces CLOSE */}
             {onSubmit && (
               <button
                 onClick={onSubmit}
-                className="keyboard-key bg-red-600 hover:bg-red-700 text-white font-bold"
-                style={{ minWidth: '80px' }}
+                className="keyboard-key text-white font-bold border-2 border-red-600"
+                style={{ 
+                  minWidth: '80px',
+                  backgroundColor: '#8B0000', // Dark red
+                  borderColor: '#8B0000'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#A00000';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#8B0000';
+                }}
               >
-                CLOSE
+                DONE
               </button>
             )}
           </div>

@@ -68,7 +68,15 @@ export const ObieKiosk: React.FC<ObieKioskProps> = ({
 
       {/* Search Modal */}
       <Dialog open={showSearchModal} onOpenChange={setShowSearchModal}>
-        <div className="bg-slate-900/95 backdrop-blur-md border-4 border-yellow-400 rounded-xl w-[95vw] h-[90vh] max-w-7xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+        <div 
+          className="bg-slate-900/95 backdrop-blur-md border-4 border-yellow-400 rounded-xl overflow-hidden flex flex-col shadow-2xl"
+          style={{
+            width: 'calc(1280px - 30px)', // 1280px - 15px left - 15px right
+            height: 'calc(1024px - 15px - 15px - 60px)', // 1024px - 15px top - 15px bottom - ticker height
+            margin: '15px 15px calc(15px + 60px) 15px', // 15px top/left/right, 15px + ticker height bottom
+            boxSizing: 'border-box'
+          }}
+        >
           {/* Modal Header - Single row: SEARCH FOR MUSIC (25%) | Search Input (50%) | Filters (25%) */}
           <div className="flex items-center gap-4 p-4 border-b-2 border-yellow-400/50 bg-black/60">
             {/* Left: SEARCH FOR MUSIC text (25% width) */}

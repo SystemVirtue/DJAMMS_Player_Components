@@ -40,6 +40,7 @@ export function VideoResultCard({ video, isSelected, onClick }: VideoResultCardP
     <div
       onClick={onClick}
       className={`video-card p-4 ${isSelected ? 'video-card-selected' : ''}`}
+      style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
     >
       {/* Thumbnail with fallback */}
       <div 
@@ -96,13 +97,12 @@ interface VideoGridProps {
 }
 
 export function VideoGrid({ children }: VideoGridProps) {
-  // Convert children to array and limit to 8 videos (2 rows x 4 columns)
+  // Convert children to array - pagination is handled in parent
   const childrenArray = React.Children.toArray(children);
-  const limitedChildren = childrenArray.slice(0, 8);
   
   return (
-    <div className="grid grid-cols-4 gap-4 p-4" style={{ gridAutoRows: 'minmax(200px, auto)' }}>
-      {limitedChildren}
+    <div className="grid grid-cols-4 gap-4" style={{ gridTemplateRows: 'repeat(2, minmax(200px, 1fr))', gridAutoRows: 'minmax(200px, 1fr)' }}>
+      {childrenArray}
     </div>
   );
 }

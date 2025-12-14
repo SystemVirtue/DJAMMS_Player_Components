@@ -2,7 +2,7 @@
 // Styled with obie-v5 aesthetic
 
 import { useState, useEffect, useCallback } from 'react';
-import { Search, X, Loader2 } from 'lucide-react';
+import { Search, X, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SearchKeyboard } from './SearchKeyboard';
 import { VideoResultCard, VideoGrid } from './VideoResultCard';
 import { 
@@ -51,6 +51,7 @@ export function SearchInterface({
   const [selectedVideo, setSelectedVideo] = useState<SupabaseLocalVideo | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
 
   // Helper to check if video is karaoke
   const isKaraokeVideo = (video: SupabaseLocalVideo): boolean => {
@@ -262,8 +263,8 @@ export function SearchInterface({
     <div className="flex flex-col h-full">
       {renderSearchHeader()}
 
-      {/* Results Area */}
-      <div className="flex-1 overflow-y-auto px-6 pb-4">
+      {/* Results Area - Paginated Grid */}
+      <div className="flex-1 flex flex-col px-6 pb-4 overflow-hidden">
         {isLoading ? (
           <div className="text-center py-12">
             <Loader2 size={64} className="text-yellow-400 animate-spin mx-auto mb-4" />
@@ -273,21 +274,70 @@ export function SearchInterface({
           <>
             <div className="mb-4 text-gray-400 text-sm text-center">
               {searchQuery.trim().length < 2 ? (
-                <span>Showing {filteredResults.length} songs from library</span>
+                <span>Showing {filteredResults.length} songs from library (Page {currentPage + 1} of {totalPages})</span>
               ) : (
-                <span>Found {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''} for "{searchQuery}"</span>
+                <span>Found {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''} for "{searchQuery}" (Page {currentPage + 1} of {totalPages})</span>
               )}
             </div>
-            <VideoGrid>
-              {filteredResults.map(video => (
-                <VideoResultCard
-                  key={video.id}
-                  video={video}
-                  isSelected={selectedVideo?.id === video.id}
-                  onClick={() => handleVideoSelect(video)}
-                />
-              ))}
-            </VideoGrid>
+            <div className="flex-1 flex flex-col">
+              {/* Video Grid - 4 columns x 2 rows */}
+              <VideoGrid>
+                {paginatedResults.map(video => (
+                  <VideoResultCard
+                    key={video.id}
+                    video={video}
+                    isSelected={selectedVideo?.id === video.id}
+                    onClick={() => handleVideoSelect(video)}
+                  />
+                ))}
+              </VideoGrid>
+              
+              {/* Navigation Arrows - Positioned under bottom left and bottom right tiles */}
+              <div className="flex justify-between items-center mt-4 px-4">
+                <button
+                  onClick={handlePreviousPage}
+                  disabled={currentPage === 0}
+                  className="flex items-center justify-center w-16 h-16 rounded-lg font-bold text-white border-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: '#8B0000', // Dark red
+                    borderColor: '#8B0000'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!e.currentTarget.disabled) {
+                      e.currentTarget.style.backgroundColor = '#A00000';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!e.currentTarget.disabled) {
+                      e.currentTarget.style.backgroundColor = '#8B0000';
+                    }
+                  }}
+                >
+                  <ChevronLeft size={32} />
+                </button>
+                <button
+                  onClick={handleNextPage}
+                  disabled={currentPage >= totalPages - 1}
+                  className="flex items-center justify-center w-16 h-16 rounded-lg font-bold text-white border-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: '#8B0000', // Dark red
+                    borderColor: '#8B0000'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!e.currentTarget.disabled) {
+                      e.currentTarget.style.backgroundColor = '#A00000';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!e.currentTarget.disabled) {
+                      e.currentTarget.style.backgroundColor = '#8B0000';
+                    }
+                  }}
+                >
+                  <ChevronRight size={32} />
+                </button>
+              </div>
+            </div>
           </>
         ) : !isLoading && results.length === 0 ? (
           <div className="text-center py-12">
