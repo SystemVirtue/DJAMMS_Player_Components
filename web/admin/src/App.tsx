@@ -1125,6 +1125,49 @@ function AdminApp() {
     }));
   };
 
+  // Extract active playlist from current video or active queue
+  // This matches the Electron Player Admin logic
+  useEffect(() => {
+    let newActivePlaylist = '';
+    
+    // Method 1: Try to get playlist from current video's path
+    if (currentVideo?.path) {
+      const playlistFromPath = extractPlaylistFromPath(currentVideo.path);
+      if (playlistFromPath) {
+        newActivePlaylist = playlistFromPath;
+      }
+    }
+    
+    // Method 2: If no playlist from current video, try to get from active queue
+    // Check the current queue item (at queueIndex) or first item in queue
+    if (!newActivePlaylist && activeQueue.length > 0) {
+      // Try current queue index first
+      const currentQueueItem = activeQueue[queueIndex];
+      if (currentQueueItem?.playlist) {
+        newActivePlaylist = currentQueueItem.playlist;
+      } else if (activeQueue[0]?.playlist) {
+        // Fallback to first item in queue
+        newActivePlaylist = activeQueue[0].playlist;
+      } else {
+        // Try extracting from path of queue items
+        for (const item of activeQueue) {
+          if (item.path) {
+            const playlistFromPath = extractPlaylistFromPath(item.path);
+            if (playlistFromPath) {
+              newActivePlaylist = playlistFromPath;
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    // Only update if we found a playlist (don't clear if we can't find one)
+    if (newActivePlaylist) {
+      setActivePlaylist(newActivePlaylist);
+    }
+  }, [currentVideo, activeQueue, queueIndex]);
+
   // Get display name for active playlist
   const activePlaylistDisplayName = activePlaylist ? getPlaylistDisplayName(activePlaylist) : 'None';
   
