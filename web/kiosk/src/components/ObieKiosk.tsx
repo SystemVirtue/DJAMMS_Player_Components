@@ -40,7 +40,7 @@ export const ObieKiosk: React.FC<ObieKioskProps> = ({
   }, [onSongQueued]);
 
   return (
-    <div className="fixed inset-0 bg-black overflow-hidden">
+    <div className="fixed inset-0 overflow-hidden">
       {/* Background Playlist */}
       <BackgroundPlaylist assets={DEFAULT_BACKGROUND_ASSETS} />
       <FallbackBackground />

@@ -67,7 +67,7 @@ export function BackgroundPlaylist({
   };
 
   return (
-    <div className={`fixed inset-0 pointer-events-none ${fillScreen ? 'z-0' : 'z-10'}`}>
+    <div className={`fixed inset-0 pointer-events-none z-0`}>
       {currentAsset.type === 'image' ? (
         <img
           src={currentAsset.src}

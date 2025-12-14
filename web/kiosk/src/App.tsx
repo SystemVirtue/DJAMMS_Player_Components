@@ -481,12 +481,6 @@ function KioskApp() {
 
   return (
     <div className="min-h-screen bg-slate-900 relative">
-      {/* Video Background - Ping-pong playback at 80% speed */}
-      <VideoBackground 
-        src="/assets/background/Obie_Shield_Crest_Animation.mp4" 
-        playbackRate={0.8}
-      />
-      
       {/* Obie-v5 Kiosk Mode - Dark background with yellow accents */}
       {uiMode === 'jukebox' ? (
         <ObieKiosk
