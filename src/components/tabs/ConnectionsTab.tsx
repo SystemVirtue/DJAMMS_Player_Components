@@ -340,30 +340,8 @@ export const ConnectionsTab: React.FC<ConnectionsTabProps> = ({ playerId }) => {
             color: connectionStatus.supabase === 'online' ? '#00FF00' : '#FF0000',
             fontWeight: 600
           }}>
-            {connectionStatus.supabase === 'online' ? 'ONLINE' : 'OFFLINE'}
+            Supabase {connectionStatus.supabase === 'online' ? 'ONLINE' : 'OFFLINE'}
           </span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontWeight: 600 }}>Web Admin:</span>
-          {connectionStatus.webAdmin.status === 'online' ? (
-            <span style={{ color: '#00FF00', fontWeight: 600 }}>
-              {connectionStatus.webAdmin.ip || 'Connected'}
-            </span>
-          ) : (
-            <span style={{ color: '#FF0000', fontWeight: 600 }}>✗</span>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontWeight: 600 }}>Web Kiosk:</span>
-          {connectionStatus.webKiosk.status === 'online' ? (
-            <span style={{ color: '#00FF00', fontWeight: 600 }}>
-              {connectionStatus.webKiosk.ip || 'Connected'}
-            </span>
-          ) : (
-            <span style={{ color: '#FF0000', fontWeight: 600 }}>✗</span>
-          )}
         </div>
 
         <button

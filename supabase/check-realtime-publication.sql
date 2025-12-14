@@ -84,3 +84,4 @@ ORDER BY last_updated DESC;
 -- 2. Sync issue where queue wasn't synced but video was
 -- 3. Normal state if video finished and queue is empty
 
+

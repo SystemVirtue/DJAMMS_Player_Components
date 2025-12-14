@@ -268,3 +268,4 @@ All identified sync issues have been remediated. The fixes ensure:
 
 The system should now correctly sync `active_queue` and `now_playing_video` between ELECTRON and WEB-ADMIN/KIOSK.
 
+

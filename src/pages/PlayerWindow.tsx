@@ -1840,9 +1840,44 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const handleUpdateSetting = (key: keyof typeof settings, value: any) => {
     setSettings(prev => ({ ...prev, [key]: value }));
     if (isElectron) {
+      // Save individual setting immediately
       (window as any).electronAPI.setSetting(key, value);
+      // Also save entire settings object to ensure consistency
+      (window as any).electronAPI.setSetting('playerSettings', { ...settings, [key]: value }).catch((err: any) => {
+        console.error('[PlayerWindow] Failed to save player settings:', err);
+      });
     }
   };
+
+  // Helper to update overlay setting and save immediately
+  const handleUpdateOverlaySetting = useCallback((key: keyof typeof overlaySettings, value: any) => {
+    setOverlaySettings(prev => {
+      const updated = { ...prev, [key]: value };
+      // Save immediately when changed
+      if (isElectron) {
+        (window as any).electronAPI.setSetting('overlaySettings', updated).catch((err: any) => {
+          console.error('[PlayerWindow] Failed to save overlay settings:', err);
+        });
+        // Also send to player window immediately
+        (window as any).electronAPI.controlPlayerWindow('updateOverlaySettings', updated);
+      }
+      return updated;
+    });
+  }, [isElectron]);
+
+  // Helper to update kiosk setting and save immediately
+  const handleUpdateKioskSetting = useCallback((key: keyof typeof kioskSettings, value: any) => {
+    setKioskSettings(prev => {
+      const updated = { ...prev, [key]: value };
+      // Save immediately when changed
+      if (isElectron) {
+        (window as any).electronAPI.setSetting('kioskSettings', updated).catch((err: any) => {
+          console.error('[PlayerWindow] Failed to save kiosk settings:', err);
+        });
+      }
+      return updated;
+    });
+  }, [isElectron]);
 
   // Video end handler - called when Player Window notifies us video ended
   // Uses refs to avoid stale closure issues with IPC listener

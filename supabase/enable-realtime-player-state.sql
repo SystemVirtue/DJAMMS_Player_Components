@@ -134,3 +134,4 @@ WHERE tablename = 'player_state';
 --      b. RLS policies allow reads
 --      c. Supabase project has Realtime enabled (Dashboard > Settings > API)
 
+

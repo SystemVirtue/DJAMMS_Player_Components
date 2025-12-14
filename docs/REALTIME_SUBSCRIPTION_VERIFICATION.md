@@ -269,3 +269,4 @@ If Realtime fails, polling should activate:
 4. Check `player_id` matches between Electron and Web Admin
 5. Review sync issues remediation fixes
 
+

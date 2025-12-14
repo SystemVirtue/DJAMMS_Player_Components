@@ -152,18 +152,77 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
     if (video && playerRef.current) {
       const videoChanged = prevVideoRef.current?.id !== video.id;
       const wasPaused = !prevIsPlayingRef.current && isPlaying;
+      const isPlayingChanged = prevIsPlayingRef.current !== isPlaying;
 
       if (isPlaying) {
         if (videoChanged) {
           // New video - start playing from beginning
+          console.log('[FullscreenPlayer] New video detected, playing:', video.title);
           playerRef.current.playVideo(video);
         } else if (wasPaused) {
           // Same video, was paused, now resuming - resume playback
+          console.log('[FullscreenPlayer] Video was paused, resuming:', video.title);
           const activeVideo = playerRef.current.getActiveVideo();
           if (activeVideo) {
             activeVideo.play().catch((error: any) => {
-              console.error('Resume failed:', error);
+              console.error('[FullscreenPlayer] Resume failed:', error);
             });
+          }
+        } else {
+          // isPlaying is true - ensure video is actually playing
+          // This handles cases where isPlaying=true but video isn't playing
+          const activeVideo = playerRef.current.getActiveVideo();
+          if (activeVideo) {
+            // Check if video is actually paused (even though isPlaying=true)
+            const isActuallyPaused = activeVideo.paused;
+            const isNotReady = activeVideo.readyState < 2;
+            const hasNoSrc = !activeVideo.src || activeVideo.src === '';
+            
+            // If video changed but we're here (shouldn't happen), or if video isn't ready/playing
+            if (videoChanged || isActuallyPaused || isNotReady || hasNoSrc) {
+              if (videoChanged) {
+                // Video changed but we're in the else branch - play the new video
+                console.log('[FullscreenPlayer] Video changed in else branch, playing:', video.title);
+                playerRef.current.playVideo(video);
+              } else if (isActuallyPaused || isNotReady || hasNoSrc) {
+                // Video exists but isn't playing - start it
+                console.log('[FullscreenPlayer] isPlaying=true but video not playing, starting playback:', {
+                  videoTitle: video.title,
+                  paused: isActuallyPaused,
+                  readyState: activeVideo.readyState,
+                  hasSrc: !hasNoSrc,
+                  currentTime: activeVideo.currentTime
+                });
+                
+                if (hasNoSrc || activeVideo.readyState < 2) {
+                  // Video not loaded yet - use playVideo to load and play
+                  console.log('[FullscreenPlayer] Video not loaded, using playVideo:', video.title);
+                  playerRef.current.playVideo(video);
+                } else {
+                  // Video is loaded but paused - just play it
+                  activeVideo.play().catch((error: any) => {
+                    console.error('[FullscreenPlayer] Auto-play failed:', error);
+                    // Try muted play as fallback (autoplay policy)
+                    console.log('[FullscreenPlayer] Attempting muted play as fallback');
+                    activeVideo.muted = true;
+                    activeVideo.play().then(() => {
+                      console.log('[FullscreenPlayer] Muted play succeeded, unmuting after delay');
+                      setTimeout(() => {
+                        activeVideo.muted = false;
+                      }, 100);
+                    }).catch((mutedError: any) => {
+                      console.error('[FullscreenPlayer] Muted play also failed:', mutedError);
+                    });
+                  });
+                }
+              }
+            } else {
+              console.log('[FullscreenPlayer] Video is already playing, no action needed');
+            }
+          } else {
+            // No active video element - need to play the video
+            console.log('[FullscreenPlayer] isPlaying=true but no active video, playing video:', video.title);
+            playerRef.current.playVideo(video);
           }
         }
       } else {

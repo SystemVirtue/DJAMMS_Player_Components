@@ -37,34 +37,27 @@ export const QueueTab: React.FC<QueueTabProps> = ({
     );
   }
 
-  // Reorder queue: "up next" videos first (after currentIndex), then "already played" (before currentIndex)
-  // The current video is NOT shown in this list - it's displayed in NOW PLAYING section
-  const upNextVideos = queue.slice(currentIndex + 1); // Videos after current
-  const alreadyPlayedVideos = queue.slice(0, currentIndex); // Videos before current
-  const reorderedQueue = [...upNextVideos, ...alreadyPlayedVideos];
+  // ARCHITECTURE: Index 0 is always now-playing - display only indices 1-end (up-next videos)
+  // The current video (index 0) is NOT shown in this list - it's displayed in NOW PLAYING section
+  const upNextVideos = queue.slice(1); // Videos after index 0 (indices 1-end)
+  // No "already played" videos - index 0 is now-playing, not shown here
   
   // Map to track original indices for click handling
+  // Since we only show indices 1-end, originalIndex = reorderedIndex + 1
   const getOriginalIndex = (reorderedIndex: number): number => {
-    if (reorderedIndex < upNextVideos.length) {
-      // It's in the "up next" section
-      return currentIndex + 1 + reorderedIndex;
-    } else {
-      // It's in the "already played" section
-      return reorderedIndex - upNextVideos.length;
-    }
+    return reorderedIndex + 1; // Add 1 because we're only showing indices 1-end
   };
 
   return (
     <div className="tab-content">
       <div className="queue-list">
-        {reorderedQueue.map((video, reorderedIndex) => {
+        {upNextVideos.map((video, reorderedIndex) => {
           const originalIndex = getOriginalIndex(reorderedIndex);
-          const isUpNext = reorderedIndex < upNextVideos.length;
           
           return (
             <div
               key={`${video.id}-${originalIndex}`}
-              className={`queue-item ${!isUpNext ? 'played' : ''}`}
+              className="queue-item"
               onClick={() => onPlayVideo(originalIndex)}
             >
               <span className="queue-item-index">
