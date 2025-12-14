@@ -71,8 +71,8 @@ export const ObieKiosk: React.FC<ObieKioskProps> = ({
         <div 
           className="bg-slate-900/95 backdrop-blur-md border-4 border-yellow-400 rounded-xl overflow-hidden flex flex-col shadow-2xl"
           style={{
-            width: 'calc(1280px - 30px)', // 1280px - 15px left - 15px right
-            height: 'calc(1024px - 15px - 15px - 60px)', // 1024px - 15px top - 15px bottom - ticker height
+            width: '1250px', // 1280px - 15px left - 15px right
+            height: '934px', // 1024px - 15px top - 15px bottom - 60px ticker height
             margin: '15px 15px calc(15px + 60px) 15px', // 15px top/left/right, 15px + ticker height bottom
             boxSizing: 'border-box'
           }}
