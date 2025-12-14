@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: djamms-admin
+    env: static
+    rootDir: web/admin
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_ENV
+        value: production
