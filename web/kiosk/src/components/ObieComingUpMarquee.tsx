@@ -37,7 +37,7 @@ export const ObieComingUpMarquee: React.FC<ObieComingUpMarqueeProps> = ({
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-20 bg-black/80 border-t-2 border-yellow-400/50 py-3 overflow-hidden opacity-40">
+    <div className="fixed bottom-0 left-0 right-0 z-20 bg-black/80 border-t-2 border-yellow-400/50 py-3 overflow-hidden" style={{ opacity: 0.75 }}>
       <div className="flex items-center px-4">
         <div className="ticker-container flex-1">
           <div className="ticker-content">
