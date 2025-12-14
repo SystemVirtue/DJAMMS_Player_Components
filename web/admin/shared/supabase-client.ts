@@ -756,18 +756,32 @@ export async function searchLocalVideos(
     });
 
     if (error) {
-      // Suppress known schema mismatch errors (42804 = type mismatch, PGRST203 = function not found, 400 = bad request)
-      // These are non-critical since we have ILIKE fallback - don't log them as errors
+      // Suppress known errors (400 = bad request, 42804 = type mismatch, PGRST203 = function not found)
+      // These are non-critical since we have improved ILIKE fallback with relevance scoring
       const errorCode = error.code?.toString() || '';
-      const isKnownError = errorCode === '42804' || errorCode === 'PGRST203' || errorCode === '400' || 
-                          error.message?.includes('structure of query does not match') ||
-                          error.message?.includes('Returned type jsonb does not match');
-      if (!isKnownError) {
-        console.warn('[SupabaseClient] FTS search_videos RPC failed, falling back to ILIKE:', error);
+      const errorMessage = error.message?.toLowerCase() || '';
+      const isKnownError = 
+        errorCode === '42804' || 
+        errorCode === 'PGRST203' || 
+        errorCode === '400' ||
+        errorMessage.includes('structure of query') ||
+        errorMessage.includes('does not match') ||
+        errorMessage.includes('jsonb') ||
+        errorMessage.includes('function') && errorMessage.includes('not found') ||
+        errorMessage.includes('bad request');
+      
+      // Silently fall back to improved search - don't log known errors
+      if (isKnownError) {
+        // RPC not available or incompatible - use improved ILIKE search with relevance scoring
+        return await searchLocalVideosWithRelevance(trimmedQuery, playerId, limit);
       }
+      
+      // Only log truly unexpected errors
+      console.warn('[SupabaseClient] Unexpected RPC error, falling back to ILIKE:', error);
       throw error;
     }
 
+    // RPC succeeded - filter and return results
     // If RPC returns player_id, filter client-side to be safe
     // Also filter to only show video files
     const filtered = (data || []).filter((row: any) => {
@@ -777,79 +791,240 @@ export async function searchLocalVideos(
       const filename = (row.filename || '').toLowerCase();
       return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
     });
+    
+    // Apply relevance scoring to RPC results as well for consistency
+    if (filtered.length > 0) {
+      const words = trimmedQuery
+        .split(/\s+/)
+        .filter(word => word.length >= 2)
+        .map(word => word.replace(/[%_]/g, ''));
+      
+      if (words.length > 0) {
+        const hasTrailingSpace = trimmedQuery.endsWith(' ');
+        return scoreAndSortResults(filtered, words, hasTrailingSpace || words.length > 1);
+      }
+    }
+    
     return filtered;
   } catch (rpcError: any) {
-    // Always fall back to ILIKE search if RPC fails
-    // Suppress ALL logging for known schema mismatch errors (expected behavior, no need to log)
+    // Always fall back to improved ILIKE search with relevance scoring if RPC fails
+    // Suppress ALL logging for known errors (400, schema mismatch, etc.)
     const errorCode = String(rpcError?.code || '');
-    const errorMessage = String(rpcError?.message || '');
-    const errorDetails = String(rpcError?.details || '');
-    const errorString = JSON.stringify(rpcError || {});
+    const errorMessage = String(rpcError?.message || '').toLowerCase();
+    const errorDetails = String(rpcError?.details || '').toLowerCase();
+    const errorString = String(JSON.stringify(rpcError || {})).toLowerCase();
     
-    // Check for known schema mismatch errors - be very permissive and check all possible fields
+    // Check for known errors - be very permissive
     const isKnownError = 
       errorCode === '42804' || 
       errorCode === 'PGRST203' || 
       errorCode === '400' ||
-      errorMessage.toLowerCase().includes('structure of query') ||
-      errorMessage.toLowerCase().includes('does not match') ||
-      errorMessage.toLowerCase().includes('jsonb') ||
-      errorDetails.toLowerCase().includes('jsonb') ||
-      errorDetails.toLowerCase().includes('does not match') ||
-      errorString.toLowerCase().includes('structure of query') ||
-      errorString.toLowerCase().includes('jsonb does not match');
+      errorMessage.includes('structure of query') ||
+      errorMessage.includes('does not match') ||
+      errorMessage.includes('jsonb') ||
+      errorMessage.includes('function') && errorMessage.includes('not found') ||
+      errorMessage.includes('bad request') ||
+      errorDetails.includes('jsonb') ||
+      errorDetails.includes('does not match') ||
+      errorString.includes('structure of query') ||
+      errorString.includes('jsonb does not match') ||
+      errorString.includes('bad request');
     
     // COMPLETELY SILENT for known errors - no console output at all
-    // Only log truly unexpected errors that we haven't seen before
+    // These are expected when RPC doesn't exist or has schema mismatches
+    // Only log truly unexpected errors
     if (!isKnownError) {
-      console.debug('[SupabaseClient] RPC search failed, using ILIKE fallback:', rpcError);
+      console.debug('[SupabaseClient] Unexpected RPC error, using improved ILIKE fallback:', rpcError);
     }
-    // For known errors: silently continue to ILIKE fallback (no console output whatsoever)
-    // Fallback: legacy ILIKE search (any word in title OR artist), scoped to player
-    const MIN_WORD_LENGTH = 2;
-  const words = trimmedQuery
+    
+    // Silently fall back to improved word-aware search with relevance scoring
+    return await searchLocalVideosWithRelevance(trimmedQuery, playerId, limit);
+  }
+}
+
+/**
+ * Word-aware search with relevance scoring
+ * Prioritizes exact word matches over substring matches
+ * 
+ * Features:
+ * - Detects trailing spaces to indicate word completion
+ * - Uses word boundary matching for exact word matches
+ * - Scores results by relevance (exact word > substring, title > artist)
+ * - Sorts by score before returning
+ */
+async function searchLocalVideosWithRelevance(
+  query: string,
+  playerId: string,
+  limit: number | null
+): Promise<SupabaseLocalVideo[]> {
+  const MIN_WORD_LENGTH = 2;
+  
+  // Detect if query ends with space (word completion indicator)
+  const hasTrailingSpace = query.endsWith(' ');
+  const queryWithoutTrailingSpace = query.trim();
+  
+  // Split into words, handling trailing space
+  const words = queryWithoutTrailingSpace
     .split(/\s+/)
     .filter(word => word.length >= MIN_WORD_LENGTH)
     .map(word => word.replace(/[%_]/g, '')); // Escape SQL wildcards
   
   if (words.length === 0) {
-    words.push(trimmedQuery);
+    words.push(queryWithoutTrailingSpace);
   }
   
+  // Build search clauses: use ILIKE for broad matching, we'll score client-side
   const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
+  
+  // Fetch more results than needed for client-side relevance scoring
+  // This ensures we have enough candidates to score and sort
+  const fetchLimit = limit !== null ? Math.min(limit * 3, 500) : 500;
   
   let queryBuilder = supabase
     .from('local_videos')
     .select('*')
     .eq('player_id', playerId)
     .eq('is_available', true)
-    .or(orClauses)
-    .order('title');
+    .or(orClauses);
   
-  // Only apply limit if specified
-  if (limit !== null) {
-    queryBuilder = queryBuilder.limit(limit);
-  }
+  // Fetch more results for better relevance scoring
+  queryBuilder = queryBuilder.limit(fetchLimit);
   
   const { data, error } = await queryBuilder;
 
   if (error) {
-      console.error('[SupabaseClient] Error searching videos (ILIKE fallback):', error);
+    console.error('[SupabaseClient] Error searching videos (ILIKE fallback):', error);
     return [];
   }
 
   // Filter results client-side to ensure only video files
-  const filteredData = (data || []).filter(video => {
+  let filteredData = (data || []).filter(video => {
     const filename = (video.filename || '').toLowerCase();
     return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
   });
+  
+  // Apply relevance scoring and sorting
+  filteredData = scoreAndSortResults(filteredData, words, hasTrailingSpace || words.length > 1);
+  
+  // Apply final limit after sorting
+  if (limit !== null && filteredData.length > limit) {
+    filteredData = filteredData.slice(0, limit);
+  }
   
   if (data && data.length > filteredData.length) {
     console.warn('[SupabaseClient] ⚠️ Search filtered out', data.length - filteredData.length, 'non-video files/folders');
   }
   
   return filteredData;
-  }
+}
+
+/**
+ * Score and sort search results by relevance
+ * Higher score = better match
+ * 
+ * Scoring system:
+ * - Exact word match (word boundary) in title = 100 points
+ * - Exact word match (word boundary) in artist = 80 points
+ * - Substring match in title = 20 points
+ * - Substring match in artist = 10 points
+ * - Multiple word matches = bonus points
+ * - Title matches prioritized over artist matches
+ */
+function scoreAndSortResults(
+  videos: SupabaseLocalVideo[],
+  searchWords: string[],
+  requireWordBoundaries: boolean
+): SupabaseLocalVideo[] {
+  // Create word boundary regex for each search word
+  // \b matches word boundaries (start/end of word)
+  const createWordBoundaryRegex = (word: string) => {
+    // Escape special regex characters
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b${escaped}\\b`, 'i');
+  };
+  
+  return videos.map(video => {
+    const title = (video.title || '').toLowerCase();
+    const artist = (video.artist || '').toLowerCase();
+    
+    let score = 0;
+    let titleWordMatches = 0;
+    let artistWordMatches = 0;
+    
+    searchWords.forEach(word => {
+      const wordLower = word.toLowerCase();
+      const wordBoundaryRegex = createWordBoundaryRegex(wordLower);
+      
+      // Check for exact word match (word boundary)
+      const titleHasExactWord = wordBoundaryRegex.test(title);
+      const artistHasExactWord = wordBoundaryRegex.test(artist);
+      
+      if (titleHasExactWord) {
+        score += 100; // Exact word in title = highest priority
+        titleWordMatches++;
+      } else if (artistHasExactWord) {
+        score += 80; // Exact word in artist = high priority
+        artistWordMatches++;
+      } else if (requireWordBoundaries) {
+        // If word boundaries required but not found, heavily penalize
+        score -= 50;
+      }
+      
+      // Substring match (fallback) = lower priority
+      if (!titleHasExactWord && title.includes(wordLower)) {
+        score += 20; // Substring in title
+      }
+      if (!artistHasExactWord && artist.includes(wordLower)) {
+        score += 10; // Substring in artist
+      }
+    });
+    
+    // Bonus for multiple word matches in same field
+    if (searchWords.length > 1) {
+      const allWordsInTitle = searchWords.every(w => {
+        const regex = createWordBoundaryRegex(w.toLowerCase());
+        return regex.test(title);
+      });
+      const allWordsInArtist = searchWords.every(w => {
+        const regex = createWordBoundaryRegex(w.toLowerCase());
+        return regex.test(artist);
+      });
+      
+      if (allWordsInTitle) {
+        score += 50; // All words match in title
+      }
+      if (allWordsInArtist) {
+        score += 30; // All words match in artist
+      }
+    }
+    
+    // Title matches are more important than artist matches
+    if (titleWordMatches > artistWordMatches) {
+      score += 30;
+    }
+    
+    // Bonus for exact phrase match (all words in order)
+    if (searchWords.length > 1) {
+      const phrase = searchWords.map(w => w.toLowerCase()).join(' ');
+      if (title.includes(phrase)) {
+        score += 40; // Exact phrase in title
+      }
+      if (artist.includes(phrase)) {
+        score += 20; // Exact phrase in artist
+      }
+    }
+    
+    return { video, score };
+  })
+  .sort((a, b) => {
+    // Sort by score (descending), then by title (ascending) for consistency
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    return (a.video.title || '').localeCompare(b.video.title || '');
+  })
+  .map(item => item.video);
+}
 }
 
 /**
