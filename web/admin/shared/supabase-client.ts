@@ -1025,7 +1025,6 @@ function scoreAndSortResults(
   })
   .map(item => item.video);
 }
-}
 
 /**
  * Get all local videos (for browse)
