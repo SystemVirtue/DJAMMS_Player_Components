@@ -1,0 +1,121 @@
+.song-tile {
+  position: relative;
+  width: 296px;
+  height: 168px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  background: #000000;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.song-tile:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+}
+
+.song-tile.pressed {
+  transform: scale(0.98);
+}
+
+/* Artist Name - ABOVE image */
+.song-tile-artist-label {
+  background: #000000;
+  color: #FFFFFF;
+  padding: 6px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Image Container */
+.song-tile-image-container {
+  width: 100%;
+  height: 100px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.song-tile-thumbnail-loader {
+  display: none;
+}
+
+/* Song Title - BELOW image */
+.song-tile-title-label {
+  background: #000000;
+  color: #FFFFFF;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  min-height: 28px;
+  width: 100%;
+  box-sizing: border-box;
+  line-height: 1.3;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  /* Allow text to split over two lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Queue Button */
+.song-tile-queue-btn {
+  width: 100%;
+  height: 40px;
+  background: #1DB954;
+  color: #000000;
+  border: none;
+  border-radius: 0 0 10px 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(29, 185, 84, 0.4);
+  margin-top: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.song-tile-queue-btn:hover {
+  background: #1ed760;
+  box-shadow: 0 4px 12px rgba(29, 185, 84, 0.6);
+  transform: scale(1.02);
+}
+
+.song-tile-queue-btn:active {
+  transform: scale(0.98);
+}
+
+/* Letter Badge */
+.song-tile-letter-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 217, 255, 0.8);
+  color: #000000;
+  font-weight: bold;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  z-index: 2;
+}
+

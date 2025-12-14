@@ -1,0 +1,52 @@
+.modern-kiosk-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  background: #121212;
+  border-bottom: 2px solid rgba(29, 185, 84, 0.2);
+}
+
+.modern-kiosk-tab {
+  flex: 1;
+  min-width: 120px;
+  height: 100px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid transparent;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.modern-kiosk-tab:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(29, 185, 84, 0.3);
+}
+
+.modern-kiosk-tab.active {
+  background: rgba(29, 185, 84, 0.2);
+  border-color: #1DB954;
+  color: #1DB954;
+}
+
+.modern-kiosk-tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modern-kiosk-tab-label {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+
+
+

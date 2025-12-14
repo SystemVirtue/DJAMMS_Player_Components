@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Obie-v5 Kiosk Theme */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #0f172a;
+  color: #ffffff;
+  overflow: hidden;
+  min-height: 100vh;
+}
+
+/* Custom Scrollbar - Amber theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #f59e0b;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #d97706;
+}
+
+/* Kiosk Button Styles */
+.kiosk-btn {
+  @apply px-6 py-3 rounded-lg font-bold text-lg transition-all duration-200;
+  @apply bg-black/60 border-2 border-yellow-400 text-white;
+  @apply hover:bg-yellow-400/20 hover:scale-105;
+  @apply active:scale-95;
+  filter: drop-shadow(-3px -3px 6px rgba(0, 0, 0, 0.6));
+}
+
+.kiosk-btn:disabled {
+  @apply opacity-50 cursor-not-allowed hover:scale-100;
+}
+
+.kiosk-btn-primary {
+  @apply bg-amber-500 border-amber-400 text-black;
+  @apply hover:bg-amber-400;
+}
+
+/* Kiosk Card Styles */
+.kiosk-card {
+  @apply bg-black/60 border-2 border-yellow-400 rounded-lg p-4;
+  @apply backdrop-blur-sm shadow-lg;
+}
+
+/* Keyboard Key Styles */
+.keyboard-key {
+  @apply w-12 h-12 rounded-lg font-bold text-xl;
+  @apply bg-gradient-to-b from-slate-600 to-slate-700;
+  @apply border border-slate-500 text-white;
+  @apply hover:from-slate-500 hover:to-slate-600;
+  @apply active:from-slate-700 active:to-slate-800;
+  @apply transition-all duration-100;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
+.keyboard-key-wide {
+  @apply w-24;
+}
+
+.keyboard-key-space {
+  @apply w-64;
+}
+
+/* Video Result Card */
+.video-card {
+  @apply bg-slate-800/60 rounded-lg overflow-hidden cursor-pointer;
+  @apply border-2 border-transparent transition-all duration-200;
+  @apply hover:border-yellow-400 hover:scale-105;
+}
+
+.video-card-selected {
+  @apply border-amber-500 ring-2 ring-amber-500/50;
+}
+
+/* Coming Up Ticker */
+.ticker-container {
+  @apply overflow-hidden whitespace-nowrap;
+}
+
+.ticker-content {
+  @apply inline-flex gap-8 animate-scroll-left;
+}
+
+.ticker-item {
+  @apply inline-flex items-center gap-2 px-4 py-2 rounded-full;
+  @apply bg-slate-800/80 border border-yellow-400/50;
+}
+
+.ticker-item-priority {
+  @apply bg-amber-500/30 border-amber-400;
+}
+
+/* Marquee Animation */
+@keyframes scroll-left {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-scroll-left {
+  animation: scroll-left 30s linear infinite;
+}
+
+/* Fade in animation for toast */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}

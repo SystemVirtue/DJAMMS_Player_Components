@@ -1,0 +1,177 @@
+.modern-kiosk-footer {
+  width: 1280px;
+  height: 150px;
+  background: #121212;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 40px;
+  border-top: 2px solid rgba(29, 185, 84, 0.3);
+  gap: 40px;
+}
+
+.modern-kiosk-footer-btn {
+  min-width: 150px;
+  height: 80px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  color: #FFFFFF;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.modern-kiosk-footer-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: scale(1.05);
+}
+
+.modern-kiosk-footer-btn:active {
+  transform: scale(0.95);
+}
+
+.modern-kiosk-footer-btn-back {
+  border-color: #FF3333;
+  color: #FF3333;
+}
+
+.modern-kiosk-footer-btn-back:hover {
+  background: rgba(255, 51, 51, 0.2);
+  border-color: #FF3333;
+}
+
+.modern-kiosk-footer-btn-home {
+  border-color: #1DB954;
+  color: #1DB954;
+}
+
+.modern-kiosk-footer-btn-home:hover {
+  background: rgba(29, 185, 84, 0.2);
+  border-color: #1DB954;
+}
+
+.modern-kiosk-footer-btn-help {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.modern-kiosk-footer-volume {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 400px;
+}
+
+.modern-kiosk-volume-slider {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.modern-kiosk-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  background: #1DB954;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.modern-kiosk-volume-slider::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  background: #1DB954;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.modern-kiosk-volume-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #FFFFFF;
+  min-width: 60px;
+  text-align: right;
+}
+
+.modern-kiosk-help-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modern-kiosk-help-modal-content {
+  background: #1a1a1a;
+  border: 2px solid #1DB954;
+  border-radius: 16px;
+  padding: 40px;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+  color: #FFFFFF;
+}
+
+.modern-kiosk-help-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  color: #FFFFFF;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.modern-kiosk-help-modal-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.modern-kiosk-help-modal-content h2 {
+  font-size: 36px;
+  font-weight: 700;
+  color: #1DB954;
+  margin: 0 0 24px 0;
+}
+
+.modern-kiosk-help-content h3 {
+  font-size: 24px;
+  font-weight: 600;
+  color: #FFFFFF;
+  margin: 24px 0 12px 0;
+}
+
+.modern-kiosk-help-content p {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.6;
+  margin: 0 0 16px 0;
+}
+
+
+
+

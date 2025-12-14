@@ -1,0 +1,66 @@
+.modern-genres-view {
+  width: 100%;
+  height: 100%;
+  padding: 40px 50px;
+  overflow-y: auto;
+}
+
+.modern-genres-title {
+  font-size: 36px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin: 0 0 32px 0;
+  text-align: center;
+}
+
+.modern-genres-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.modern-genre-tile {
+  aspect-ratio: 1;
+  min-height: 200px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 3px solid var(--genre-color, #1DB954);
+  border-radius: 20px;
+  color: #FFFFFF;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.modern-genre-tile:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--genre-color, #1DB954);
+  transform: translateY(-8px) scale(1.05);
+  box-shadow: 0 8px 30px rgba(29, 185, 84, 0.4);
+}
+
+.modern-genre-tile:active {
+  transform: scale(0.98);
+}
+
+.modern-genre-icon {
+  font-size: 80px;
+  line-height: 1;
+}
+
+.modern-genre-name {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--genre-color, #1DB954);
+}
+
+
+
+

@@ -1,0 +1,98 @@
+.search-mode-footer {
+  height: 200px;
+  min-height: 200px;
+  background: #1a1a2e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border-top: 1px solid rgba(0, 217, 255, 0.2);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.search-mode-hide-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 75, 75, 0.2);
+  border: 2px solid #FF4B4B;
+  border-radius: 8px;
+  color: #FF4B4B;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.search-mode-hide-btn:hover {
+  background: rgba(255, 75, 75, 0.3);
+  transform: scale(1.1);
+}
+
+.search-mode-hide-btn:active {
+  transform: scale(0.95);
+}
+
+.search-mode-keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.search-mode-keyboard-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.search-mode-key {
+  width: 70px;
+  height: 60px;
+  background: #1a1a2e;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #FFFFFF;
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.search-mode-key:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.search-mode-key:active {
+  transform: scale(0.95);
+  background: rgba(0, 217, 255, 0.2);
+  border-color: #00D9FF;
+}
+
+.search-mode-key-space {
+  width: 175px; /* 2.5x width */
+}
+
+.search-mode-key-clear {
+  background: rgba(255, 75, 75, 0.2);
+  border-color: #FF4B4B;
+  color: #FF4B4B;
+}
+
+.search-mode-key-clear:hover {
+  background: rgba(255, 75, 75, 0.3);
+}
+
+.search-mode-key-backspace {
+  width: 70px;
+}
+
