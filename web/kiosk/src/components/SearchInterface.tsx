@@ -11,6 +11,7 @@ import {
   blockingCommands,
   localVideoToQueueItem 
 } from '@shared/supabase-client';
+import { videoCache } from '../services/videoCache';
 import { cleanVideoTitle } from '@shared/video-utils';
 import type { SupabaseLocalVideo, QueueVideoItem } from '@shared/types';
 
@@ -92,6 +93,7 @@ export function SearchInterface({
   }, [totalPages]);
 
   // Debounced search - show ALL videos when query is empty (browse mode)
+  // Uses video cache to avoid reloading on every open
   useEffect(() => {
     if (!playerId) {
       console.warn('[SearchInterface] ⚠️ No playerId provided, skipping search');
@@ -104,9 +106,9 @@ export function SearchInterface({
       setIsLoading(true);
       try {
         if (searchQuery.trim().length < 2) {
-          // Browse mode: show ALL videos from the player's database
-          console.log('[SearchInterface] 📚 Browse mode - Loading ALL videos for player:', playerId);
-          const allVideos = await getAllLocalVideos(playerId, null, 0);
+          // Browse mode: show ALL videos from cache or load once
+          console.log('[SearchInterface] 📚 Browse mode - Loading videos (using cache) for player:', playerId);
+          const allVideos = await videoCache.getOrLoadVideos(playerId, false);
           console.log('[SearchInterface] ✅ Loaded', allVideos?.length || 0, 'videos');
           if (allVideos.length === 0) {
             console.error('[SearchInterface] ❌ NO VIDEOS FOUND! Check:');
@@ -118,8 +120,45 @@ export function SearchInterface({
           setResults(allVideos || []);
         } else {
           // Search mode: search for matching videos
+          // For search, we need the full list to search against
+          // Get from cache if available, otherwise load
           console.log('[SearchInterface] 🔎 Search mode - Searching for:', searchQuery, 'playerId:', playerId);
-          const searchResults = await searchLocalVideos(searchQuery, playerId, null);
+          
+          // Get cached videos first (fast)
+          let videosToSearch = await videoCache.getCachedVideos(playerId);
+          
+          // If no cache, load and cache them
+          if (!videosToSearch || videosToSearch.length === 0) {
+            console.log('[SearchInterface] Cache miss - loading videos for search');
+            videosToSearch = await videoCache.getOrLoadVideos(playerId, false);
+          }
+          
+          // Perform client-side search on cached videos for better performance
+          // This is faster than server-side search when we have the full list cached
+          const searchLower = searchQuery.toLowerCase().trim();
+          const searchWords = searchLower.split(/\s+/).filter(w => w.length >= 2);
+          
+          let searchResults: SupabaseLocalVideo[] = [];
+          
+          if (searchWords.length > 0) {
+            // Word-aware search on cached videos
+            searchResults = videosToSearch.filter(video => {
+              const title = (video.title || '').toLowerCase();
+              const artist = (video.artist || '').toLowerCase();
+              const combined = `${title} ${artist}`.toLowerCase();
+              
+              // Check if all search words appear in title or artist
+              return searchWords.every(word => 
+                title.includes(word) || artist.includes(word) || combined.includes(word)
+              );
+            });
+            
+            // Apply relevance scoring (same as server-side)
+            searchResults = scoreSearchResults(searchResults, searchWords, searchQuery.endsWith(' '));
+          } else {
+            searchResults = videosToSearch;
+          }
+          
           console.log('[SearchInterface] ✅ Found', searchResults?.length || 0, 'results');
           setResults(searchResults || []);
         }
@@ -137,6 +176,78 @@ export function SearchInterface({
 
     return () => clearTimeout(timer);
   }, [searchQuery, playerId]);
+
+  // Helper function for client-side relevance scoring (same logic as server-side)
+  const scoreSearchResults = (
+    videos: SupabaseLocalVideo[],
+    searchWords: string[],
+    requireWordBoundaries: boolean
+  ): SupabaseLocalVideo[] => {
+    const createWordBoundaryRegex = (word: string) => {
+      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`\\b${escaped}\\b`, 'i');
+    };
+    
+    return videos.map(video => {
+      const title = (video.title || '').toLowerCase();
+      const artist = (video.artist || '').toLowerCase();
+      
+      let score = 0;
+      let titleWordMatches = 0;
+      let artistWordMatches = 0;
+      
+      searchWords.forEach(word => {
+        const wordLower = word.toLowerCase();
+        const wordBoundaryRegex = createWordBoundaryRegex(wordLower);
+        
+        const titleHasExactWord = wordBoundaryRegex.test(title);
+        const artistHasExactWord = wordBoundaryRegex.test(artist);
+        
+        if (titleHasExactWord) {
+          score += 100;
+          titleWordMatches++;
+        } else if (artistHasExactWord) {
+          score += 80;
+          artistWordMatches++;
+        } else if (requireWordBoundaries) {
+          score -= 50;
+        }
+        
+        if (!titleHasExactWord && title.includes(wordLower)) {
+          score += 20;
+        }
+        if (!artistHasExactWord && artist.includes(wordLower)) {
+          score += 10;
+        }
+      });
+      
+      if (searchWords.length > 1) {
+        const allWordsInTitle = searchWords.every(w => createWordBoundaryRegex(w.toLowerCase()).test(title));
+        const allWordsInArtist = searchWords.every(w => createWordBoundaryRegex(w.toLowerCase()).test(artist));
+        if (allWordsInTitle) score += 50;
+        if (allWordsInArtist) score += 30;
+      }
+      
+      if (titleWordMatches > artistWordMatches) {
+        score += 30;
+      }
+      
+      if (searchWords.length > 1) {
+        const phrase = searchWords.map(w => w.toLowerCase()).join(' ');
+        if (title.includes(phrase)) score += 40;
+        if (artist.includes(phrase)) score += 20;
+      }
+      
+      return { video, score };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return (a.video.title || '').localeCompare(b.video.title || '');
+    })
+    .map(item => item.video);
+  };
 
   const handleKeyPress = useCallback((key: string) => {
     if (onSearchQueryChange) {
