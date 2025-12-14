@@ -71,6 +71,26 @@ export function SearchInterface({
     }
   });
 
+  // Pagination: 8 items per page (4 columns x 2 rows)
+  const ITEMS_PER_PAGE = 8;
+  const totalPages = Math.ceil(filteredResults.length / ITEMS_PER_PAGE);
+  const startIndex = currentPage * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedResults = filteredResults.slice(startIndex, endIndex);
+
+  // Reset to page 0 when search query or filter changes
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [searchQuery, karaokeFilter]);
+
+  const handlePreviousPage = useCallback(() => {
+    setCurrentPage(prev => Math.max(0, prev - 1));
+  }, []);
+
+  const handleNextPage = useCallback(() => {
+    setCurrentPage(prev => Math.min(totalPages - 1, prev + 1));
+  }, [totalPages]);
+
   // Debounced search - show ALL videos when query is empty (browse mode)
   useEffect(() => {
     if (!playerId) {
