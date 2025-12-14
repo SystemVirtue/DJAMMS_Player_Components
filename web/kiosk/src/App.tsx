@@ -483,7 +483,7 @@ function KioskApp() {
     <div className="min-h-screen bg-slate-900 relative">
       {/* Video Background - Ping-pong playback at 80% speed */}
       <VideoBackground 
-        src="/Obie_Shield_Crest_Animation.mp4" 
+        src="/assets/background/Obie_Shield_Crest_Animation.mp4" 
         playbackRate={0.8}
       />
       
