@@ -7,7 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../shared'),
+      '@shared': path.resolve(__dirname, '../../web/shared'),
     },
     dedupe: ['@supabase/supabase-js', 'react', 'react-dom'],
   },
@@ -19,8 +19,8 @@ export default defineConfig({
     fs: {
       allow: [
         // Allow serving files from project root and shared
-        path.resolve(__dirname, '..'),
-        path.resolve(__dirname, '../shared'),
+        path.resolve(__dirname, '../..'),
+        path.resolve(__dirname, '../../web/shared'),
       ],
     },
   },
