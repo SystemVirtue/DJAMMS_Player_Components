@@ -16,7 +16,7 @@ export const ObieNowPlaying: React.FC<ObieNowPlayingProps> = ({ nowPlaying }) =>
   const artist = nowPlaying ? getDisplayArtist(nowPlaying.artist) : null;
 
   return (
-    <div className="fixed top-4 left-4 z-20">
+    <div className="fixed top-4 left-4 z-20 opacity-40">
       <div className="bg-black/60 border-2 border-yellow-400 rounded-lg p-3 shadow-lg max-w-xs">
         <div className="flex flex-col">
           <p className="text-white text-sm font-bold mb-1">NOW PLAYING</p>

@@ -13,7 +13,7 @@ interface ObieCreditsProps {
 
 export const ObieCredits: React.FC<ObieCreditsProps> = ({ isFreePlay, credits }) => {
   return (
-    <div className="fixed top-4 right-4 z-20">
+    <div className="fixed top-4 right-4 z-20 opacity-40">
       <div className="bg-black/60 border-2 border-yellow-400 rounded-lg p-3 shadow-lg">
         <div className="flex items-center gap-2">
           <Coins className="text-yellow-300 h-6 w-6" />

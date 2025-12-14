@@ -37,17 +37,17 @@ export const ObieComingUpMarquee: React.FC<ObieComingUpMarqueeProps> = ({
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-20 bg-black/80 border-t-2 border-yellow-400/50 py-3 overflow-hidden">
+    <div className="fixed bottom-0 left-0 right-0 z-20 bg-black/80 border-t-2 border-yellow-400/50 py-3 overflow-hidden opacity-40">
       <div className="flex items-center px-4">
-        <span className="text-yellow-400 font-bold text-sm tracking-wide mr-4 flex-shrink-0">
-          COMING UP NEXT ...
-        </span>
-        
         <div className="ticker-container flex-1">
           <div className="ticker-content">
             {/* Duplicate items for seamless loop, with spacer between sets */}
             {[0, 1].map((setIndex) => (
               <div key={setIndex} className="inline-flex items-center gap-8">
+                {/* "Coming Up ... " text at start of each set */}
+                <span className="text-white font-bold text-sm tracking-wide mr-4 flex-shrink-0">
+                  Coming Up ... 
+                </span>
                 {displayItems.map((item, index) => {
                   const artist = getDisplayArtist(item.artist);
                   return (

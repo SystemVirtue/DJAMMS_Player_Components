@@ -12,17 +12,19 @@ interface ObieSearchButtonProps {
 
 export const ObieSearchButton: React.FC<ObieSearchButtonProps> = ({ onClick }) => {
   return (
-    <div className="fixed inset-0 flex items-center justify-center z-10 pointer-events-none">
-      <button
-        onClick={onClick}
-        className="pointer-events-auto bg-black/60 border-4 border-yellow-400 rounded-xl px-12 py-8 shadow-2xl hover:bg-yellow-400/20 hover:scale-105 transition-all duration-200 flex items-center gap-4 group"
-      >
+    <div className="fixed left-0 right-0 z-10 pointer-events-none" style={{ bottom: '90px' }}>
+      <div className="flex items-center justify-center">
+        <button
+          onClick={onClick}
+          className="pointer-events-auto bg-black/60 border-4 border-yellow-400 rounded-xl px-12 py-8 shadow-2xl hover:bg-yellow-400/20 hover:scale-105 transition-all duration-200 flex items-center gap-4 group opacity-40"
+        >
         <Music2 className="text-yellow-400 h-12 w-12 group-hover:scale-110 transition-transform" />
         <span className="text-yellow-300 text-4xl font-bold tracking-wide">
           SEARCH FOR MUSIC
         </span>
         <Music2 className="text-yellow-400 h-12 w-12 group-hover:scale-110 transition-transform" />
-      </button>
+        </button>
+      </div>
     </div>
   );
 };
