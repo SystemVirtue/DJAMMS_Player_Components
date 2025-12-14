@@ -63,17 +63,21 @@ export function BackgroundPlaylist({
   const transitionStyle = {
     opacity: isTransitioning ? 0 : 1,
     transition: `opacity ${fadeDuration}s ease-in-out`,
-    zIndex: -1
   };
 
   return (
-    <div className={`fixed inset-0 pointer-events-none z-0`}>
+    <div className="fixed inset-0 pointer-events-none z-0">
       {currentAsset.type === 'image' ? (
         <img
           src={currentAsset.src}
           alt=""
           className={baseClasses}
           style={transitionStyle}
+          onError={(e) => {
+            console.error('Image failed to load:', currentAsset.src, e);
+            // Skip to next asset on error
+            handleVideoEnd();
+          }}
         />
       ) : (
         <video
@@ -84,11 +88,34 @@ export function BackgroundPlaylist({
           autoPlay
           muted
           playsInline
+          loop={false}
+          preload="auto"
           onEnded={handleVideoEnd}
           onError={(e) => {
-            console.error('Video failed to load:', currentAsset.src, e);
+            console.error('[BackgroundPlaylist] Video failed to load:', currentAsset.src, e);
             // Skip to next asset on error
             handleVideoEnd();
+          }}
+          onLoadedMetadata={(e) => {
+            const video = e.currentTarget;
+            console.log('[BackgroundPlaylist] Video loaded:', {
+              src: currentAsset.src,
+              duration: video.duration,
+              videoWidth: video.videoWidth,
+              videoHeight: video.videoHeight
+            });
+            // Ensure video plays
+            video.play().catch(err => {
+              console.error('[BackgroundPlaylist] Video play failed:', err);
+            });
+          }}
+          onCanPlay={() => {
+            const video = document.querySelector(`video[src="${currentAsset.src}"]`) as HTMLVideoElement;
+            if (video) {
+              video.play().catch(err => {
+                console.error('[BackgroundPlaylist] Video play on canplay failed:', err);
+              });
+            }
           }}
         />
       )}
@@ -132,7 +159,7 @@ export const DEFAULT_BACKGROUND_ASSETS: BackgroundAsset[] = [
 export function FallbackBackground() {
   return (
     <div 
-      className="fixed inset-0 z-0"
+      className="fixed inset-0 z-[-1]"
       style={{
         background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)'
       }}

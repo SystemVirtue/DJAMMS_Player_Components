@@ -6,7 +6,6 @@ import {
   BackgroundPlaylist,
   DEFAULT_BACKGROUND_ASSETS,
   FallbackBackground,
-  VideoBackground,
   SearchInterface,
   JukeboxSearchMode,
   JukeboxKiosk,
