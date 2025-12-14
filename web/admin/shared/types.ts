@@ -131,6 +131,7 @@ export interface SupabaseLocalVideo {
   title: string;
   artist: string | null;
   path: string;
+  filename: string | null;
   duration: number | null;
   is_available: boolean;
   metadata: Record<string, unknown> | null;

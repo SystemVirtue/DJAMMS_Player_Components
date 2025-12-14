@@ -20,10 +20,11 @@ export const ObieComingUpMarquee: React.FC<ObieComingUpMarqueeProps> = ({
   activeQueue,
   maxActiveItems = 3
 }) => {
-  // Combine priority queue (all items) + next N active queue items
+  // ARCHITECTURE: Index 0 is always now-playing - show indices 1, 2, 3 from active queue
+  // Combine priority queue (all items) + next N active queue items (skip index 0)
   const displayItems = [
     ...priorityQueue.map(item => ({ ...item, isPriority: true })),
-    ...activeQueue.slice(0, maxActiveItems).map(item => ({ ...item, isPriority: false }))
+    ...activeQueue.slice(1, maxActiveItems + 1).map(item => ({ ...item, isPriority: false }))
   ];
 
   if (displayItems.length === 0) {
