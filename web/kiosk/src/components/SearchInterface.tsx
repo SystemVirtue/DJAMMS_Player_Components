@@ -118,12 +118,20 @@ export function SearchInterface({
   }, [searchQuery, playerId]);
 
   const handleKeyPress = useCallback((key: string) => {
-    setSearchQuery(prev => prev + key);
-  }, []);
+    if (onSearchQueryChange) {
+      onSearchQueryChange(searchQuery + key);
+    } else {
+      setInternalSearchQuery(prev => prev + key);
+    }
+  }, [searchQuery, onSearchQueryChange]);
 
   const handleBackspace = useCallback(() => {
-    setSearchQuery(prev => prev.slice(0, -1));
-  }, []);
+    if (onSearchQueryChange) {
+      onSearchQueryChange(searchQuery.slice(0, -1));
+    } else {
+      setInternalSearchQuery(prev => prev.slice(0, -1));
+    }
+  }, [searchQuery, onSearchQueryChange]);
 
   const handleClear = useCallback(() => {
     if (onSearchQueryChange) {
