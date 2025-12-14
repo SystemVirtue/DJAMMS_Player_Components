@@ -805,51 +805,193 @@ export async function searchLocalVideos(
       console.debug('[SupabaseClient] RPC search failed, using ILIKE fallback:', rpcError);
     }
     // For known errors: silently continue to ILIKE fallback (no console output whatsoever)
-    // Fallback: legacy ILIKE search (any word in title OR artist), scoped to player
-    const MIN_WORD_LENGTH = 2;
-  const words = trimmedQuery
+    // Improved word-aware search with relevance scoring
+    return await searchLocalVideosWithRelevance(trimmedQuery, playerId, limit);
+  }
+}
+
+/**
+ * Word-aware search with relevance scoring
+ * Prioritizes exact word matches over substring matches
+ * 
+ * Features:
+ * - Detects trailing spaces to indicate word completion
+ * - Uses word boundary matching for exact word matches
+ * - Scores results by relevance (exact word > substring, title > artist)
+ * - Sorts by score before returning
+ */
+async function searchLocalVideosWithRelevance(
+  query: string,
+  playerId: string,
+  limit: number | null
+): Promise<SupabaseLocalVideo[]> {
+  const MIN_WORD_LENGTH = 2;
+  
+  // Detect if query ends with space (word completion indicator)
+  const hasTrailingSpace = query.endsWith(' ');
+  const queryWithoutTrailingSpace = query.trim();
+  
+  // Split into words, handling trailing space
+  const words = queryWithoutTrailingSpace
     .split(/\s+/)
     .filter(word => word.length >= MIN_WORD_LENGTH)
     .map(word => word.replace(/[%_]/g, '')); // Escape SQL wildcards
   
   if (words.length === 0) {
-    words.push(trimmedQuery);
+    words.push(queryWithoutTrailingSpace);
   }
   
+  // Build search clauses: use ILIKE for broad matching, we'll score client-side
   const orClauses = words.map(word => `title.ilike.%${word}%,artist.ilike.%${word}%`).join(',');
+  
+  // Fetch more results than needed for client-side relevance scoring
+  // This ensures we have enough candidates to score and sort
+  const fetchLimit = limit !== null ? Math.min(limit * 3, 500) : 500;
   
   let queryBuilder = supabase
     .from('local_videos')
     .select('*')
     .eq('player_id', playerId)
     .eq('is_available', true)
-    .or(orClauses)
-    .order('title');
+    .or(orClauses);
   
-  // Only apply limit if specified
-  if (limit !== null) {
-    queryBuilder = queryBuilder.limit(limit);
-  }
+  // Fetch more results for better relevance scoring
+  queryBuilder = queryBuilder.limit(fetchLimit);
   
   const { data, error } = await queryBuilder;
 
   if (error) {
-      console.error('[SupabaseClient] Error searching videos (ILIKE fallback):', error);
+    console.error('[SupabaseClient] Error searching videos (ILIKE fallback):', error);
     return [];
   }
 
   // Filter results client-side to ensure only video files
-  const filteredData = (data || []).filter(video => {
+  let filteredData = (data || []).filter(video => {
     const filename = (video.filename || '').toLowerCase();
     return VIDEO_EXTENSIONS.some(ext => filename.endsWith(ext.toLowerCase()));
   });
+  
+  // Apply relevance scoring and sorting
+  filteredData = scoreAndSortResults(filteredData, words, hasTrailingSpace || words.length > 1);
+  
+  // Apply final limit after sorting
+  if (limit !== null && filteredData.length > limit) {
+    filteredData = filteredData.slice(0, limit);
+  }
   
   if (data && data.length > filteredData.length) {
     console.warn('[SupabaseClient] ⚠️ Search filtered out', data.length - filteredData.length, 'non-video files/folders');
   }
   
   return filteredData;
-  }
+}
+
+/**
+ * Score and sort search results by relevance
+ * Higher score = better match
+ * 
+ * Scoring system:
+ * - Exact word match (word boundary) in title = 100 points
+ * - Exact word match (word boundary) in artist = 80 points
+ * - Substring match in title = 20 points
+ * - Substring match in artist = 10 points
+ * - Multiple word matches = bonus points
+ * - Title matches prioritized over artist matches
+ */
+function scoreAndSortResults(
+  videos: SupabaseLocalVideo[],
+  searchWords: string[],
+  requireWordBoundaries: boolean
+): SupabaseLocalVideo[] {
+  // Create word boundary regex for each search word
+  // \b matches word boundaries (start/end of word)
+  const createWordBoundaryRegex = (word: string) => {
+    // Escape special regex characters
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b${escaped}\\b`, 'i');
+  };
+  
+  return videos.map(video => {
+    const title = (video.title || '').toLowerCase();
+    const artist = (video.artist || '').toLowerCase();
+    
+    let score = 0;
+    let titleWordMatches = 0;
+    let artistWordMatches = 0;
+    
+    searchWords.forEach(word => {
+      const wordLower = word.toLowerCase();
+      const wordBoundaryRegex = createWordBoundaryRegex(wordLower);
+      
+      // Check for exact word match (word boundary)
+      const titleHasExactWord = wordBoundaryRegex.test(title);
+      const artistHasExactWord = wordBoundaryRegex.test(artist);
+      
+      if (titleHasExactWord) {
+        score += 100; // Exact word in title = highest priority
+        titleWordMatches++;
+      } else if (artistHasExactWord) {
+        score += 80; // Exact word in artist = high priority
+        artistWordMatches++;
+      } else if (requireWordBoundaries) {
+        // If word boundaries required but not found, heavily penalize
+        score -= 50;
+      }
+      
+      // Substring match (fallback) = lower priority
+      if (!titleHasExactWord && title.includes(wordLower)) {
+        score += 20; // Substring in title
+      }
+      if (!artistHasExactWord && artist.includes(wordLower)) {
+        score += 10; // Substring in artist
+      }
+    });
+    
+    // Bonus for multiple word matches in same field
+    if (searchWords.length > 1) {
+      const allWordsInTitle = searchWords.every(w => {
+        const regex = createWordBoundaryRegex(w.toLowerCase());
+        return regex.test(title);
+      });
+      const allWordsInArtist = searchWords.every(w => {
+        const regex = createWordBoundaryRegex(w.toLowerCase());
+        return regex.test(artist);
+      });
+      
+      if (allWordsInTitle) {
+        score += 50; // All words match in title
+      }
+      if (allWordsInArtist) {
+        score += 30; // All words match in artist
+      }
+    }
+    
+    // Title matches are more important than artist matches
+    if (titleWordMatches > artistWordMatches) {
+      score += 30;
+    }
+    
+    // Bonus for exact phrase match (all words in order)
+    if (searchWords.length > 1) {
+      const phrase = searchWords.map(w => w.toLowerCase()).join(' ');
+      if (title.includes(phrase)) {
+        score += 40; // Exact phrase in title
+      }
+      if (artist.includes(phrase)) {
+        score += 20; // Exact phrase in artist
+      }
+    }
+    
+    return { video, score };
+  })
+  .sort((a, b) => {
+    // Sort by score (descending), then by title (ascending) for consistency
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    return (a.video.title || '').localeCompare(b.video.title || '');
+  })
+  .map(item => item.video);
 }
 
 /**
