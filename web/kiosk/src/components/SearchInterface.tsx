@@ -126,10 +126,14 @@ export function SearchInterface({
   }, []);
 
   const handleClear = useCallback(() => {
-    setSearchQuery('');
+    if (onSearchQueryChange) {
+      onSearchQueryChange('');
+    } else {
+      setInternalSearchQuery('');
+    }
     setResults([]);
     setSelectedVideo(null);
-  }, []);
+  }, [onSearchQueryChange]);
 
   const handleVideoSelect = useCallback((video: SupabaseLocalVideo) => {
     setSelectedVideo(video);
@@ -151,7 +155,11 @@ export function SearchInterface({
         // Reset state
         setShowConfirm(false);
         setSelectedVideo(null);
-        setSearchQuery('');
+        if (onSearchQueryChange) {
+          onSearchQueryChange('');
+        } else {
+          setInternalSearchQuery('');
+        }
         setResults([]);
       } else {
         console.error('Failed to add song to queue:', result.error);
