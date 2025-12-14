@@ -1,7 +1,7 @@
 // VideoResultCard.tsx - Video search result card for Kiosk
 // Styled with obie-v5 aesthetic
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Music, Clock } from 'lucide-react';
 import type { SupabaseLocalVideo } from '@shared/types';
 import { getDisplayArtist, getPlaylistDisplayName } from '@shared/supabase-client';
@@ -96,9 +96,13 @@ interface VideoGridProps {
 }
 
 export function VideoGrid({ children }: VideoGridProps) {
+  // Convert children to array and limit to 8 videos (2 rows x 4 columns)
+  const childrenArray = React.Children.toArray(children);
+  const limitedChildren = childrenArray.slice(0, 8);
+  
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 p-4">
-      {children}
+    <div className="grid grid-cols-4 gap-4 p-4" style={{ gridAutoRows: 'minmax(200px, auto)' }}>
+      {limitedChildren}
     </div>
   );
 }

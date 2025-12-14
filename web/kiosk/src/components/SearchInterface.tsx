@@ -18,16 +18,39 @@ interface SearchInterfaceProps {
   onSongRequested?: (video: QueueVideoItem) => void;
   credits?: number; // For future implementation
   playerId: string; // Required - Player ID to search/queue against
+  showHeader?: boolean; // Whether to show search header and filters (default: true)
+  searchQuery?: string; // External search query control
+  onSearchQueryChange?: (query: string) => void; // External search query handler
+  karaokeFilter?: 'show' | 'hide' | 'all'; // External filter control
+  onKaraokeFilterChange?: (filter: 'show' | 'hide' | 'all') => void; // External filter handler
+  onClose?: () => void; // Close handler for keyboard CLOSE button
 }
 
-export function SearchInterface({ onSongRequested, credits = 999, playerId }: SearchInterfaceProps) {
-  const [searchQuery, setSearchQuery] = useState('');
+export function SearchInterface({ 
+  onSongRequested, 
+  credits = 999, 
+  playerId,
+  showHeader = true,
+  searchQuery: externalSearchQuery,
+  onSearchQueryChange,
+  karaokeFilter: externalKaraokeFilter,
+  onKaraokeFilterChange,
+  onClose
+}: SearchInterfaceProps) {
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const [internalKaraokeFilter, setInternalKaraokeFilter] = useState<'show' | 'hide' | 'all'>('all');
+  
+  // Use external state if provided, otherwise use internal state
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
+  const setSearchQuery = onSearchQueryChange || setInternalSearchQuery;
+  const karaokeFilter = externalKaraokeFilter !== undefined ? externalKaraokeFilter : internalKaraokeFilter;
+  const setKaraokeFilter = onKaraokeFilterChange || setInternalKaraokeFilter;
+  
   const [results, setResults] = useState<SupabaseLocalVideo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<SupabaseLocalVideo | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
-  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide' | 'all'>('all'); // Default to 'all' to show all songs initially
 
   // Helper to check if video is karaoke
   const isKaraokeVideo = (video: SupabaseLocalVideo): boolean => {
@@ -147,70 +170,81 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
 
   const hasCredits = credits > 0;
 
-  return (
-    <div className="flex flex-col h-full">
-      {/* Search Header */}
-      <div className="px-6 py-4">
-        <div className="kiosk-card">
-          <div className="flex items-center gap-4">
-            <Search size={24} className="text-yellow-400" />
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                value={searchQuery}
-                readOnly
-                placeholder="Type to search for songs..."
-                className="w-full bg-transparent text-white text-xl placeholder:text-gray-500 outline-none"
-              />
-              {searchQuery && (
-                <button 
-                  onClick={handleClear}
-                  className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
-                >
-                  <X size={20} />
-                </button>
-              )}
+  // Render search input and filters if showHeader is true
+  const renderSearchHeader = () => {
+    if (!showHeader) return null;
+    
+    return (
+      <>
+        {/* Search Header */}
+        <div className="px-6 py-4">
+          <div className="kiosk-card">
+            <div className="flex items-center gap-4">
+              <Search size={24} className="text-yellow-400" />
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  readOnly
+                  placeholder="Type to search for songs..."
+                  className="w-full bg-transparent text-white text-xl placeholder:text-gray-500 outline-none"
+                />
+                {searchQuery && (
+                  <button 
+                    onClick={handleClear}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                  >
+                    <X size={20} />
+                  </button>
+                )}
+              </div>
+              {isLoading && <Loader2 size={24} className="text-yellow-400 animate-spin" />}
             </div>
-            {isLoading && <Loader2 size={24} className="text-yellow-400 animate-spin" />}
           </div>
         </div>
-      </div>
 
-      {/* Filter Controls */}
-      <div className="px-6 py-2">
-        <div className="flex gap-2 justify-center">
-          <button
-            onClick={() => setKaraokeFilter('all')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              karaokeFilter === 'all'
-                ? 'bg-yellow-400 text-slate-900'
-                : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
-            }`}
-          >
-            All Songs
-          </button>
-          <button
-            onClick={() => setKaraokeFilter('hide')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              karaokeFilter === 'hide'
-                ? 'bg-yellow-400 text-slate-900'
-                : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
-            }`}
-          >
-            Hide Karaoke
-          </button>
-          <button
-            onClick={() => setKaraokeFilter('show')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              karaokeFilter === 'show'
-                ? 'bg-yellow-400 text-slate-900'
-                : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
-            }`}
-          >
-            Karaoke Only
-          </button>
+        {/* Filter Controls */}
+        <div className="px-6 py-2">
+          <div className="flex gap-2 justify-center">
+            <button
+              onClick={() => setKaraokeFilter('all')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                karaokeFilter === 'all'
+                  ? 'bg-yellow-400 text-slate-900'
+                  : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+              }`}
+            >
+              All Songs
+            </button>
+            <button
+              onClick={() => setKaraokeFilter('hide')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                karaokeFilter === 'hide'
+                  ? 'bg-yellow-400 text-slate-900'
+                  : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+              }`}
+            >
+              Hide Karaoke
+            </button>
+            <button
+              onClick={() => setKaraokeFilter('show')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                karaokeFilter === 'show'
+                  ? 'bg-yellow-400 text-slate-900'
+                  : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+              }`}
+            >
+              Karaoke Only
+            </button>
+          </div>
         </div>
-      </div>
+      </>
+    );
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {renderSearchHeader()}
 
       {/* Results Area */}
       <div className="flex-1 overflow-y-auto px-6 pb-4">
@@ -271,11 +305,12 @@ export function SearchInterface({ onSongRequested, credits = 999, playerId }: Se
       </div>
 
       {/* Keyboard */}
-      <div className="border-t border-yellow-400/30 bg-slate-900/80 backdrop-blur-sm">
+      <div className="border-t border-yellow-400/30 backdrop-blur-sm">
         <SearchKeyboard
           onKeyPress={handleKeyPress}
           onBackspace={handleBackspace}
           onClear={handleClear}
+          onSubmit={onClose}
         />
       </div>
 

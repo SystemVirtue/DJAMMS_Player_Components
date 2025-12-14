@@ -33,6 +33,8 @@ export const ObieKiosk: React.FC<ObieKioskProps> = ({
   onSongQueued
 }) => {
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [karaokeFilter, setKaraokeFilter] = useState<'show' | 'hide' | 'all'>('all');
 
   const handleSongRequested = useCallback((video: QueueVideoItem) => {
     onSongQueued?.(video);
@@ -67,23 +69,73 @@ export const ObieKiosk: React.FC<ObieKioskProps> = ({
       {/* Search Modal */}
       <Dialog open={showSearchModal} onOpenChange={setShowSearchModal}>
         <div className="bg-slate-900/95 backdrop-blur-md border-4 border-yellow-400 rounded-xl w-[95vw] h-[90vh] max-w-7xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
-          {/* Modal Header */}
-          <div className="flex items-center justify-between p-4 border-b-2 border-yellow-400/50 bg-black/60">
-            <h2 className="text-2xl font-bold text-yellow-300">SEARCH FOR MUSIC</h2>
-            <button
-              onClick={() => setShowSearchModal(false)}
-              className="bg-red-600 hover:bg-red-700 text-white font-bold px-6 py-2 rounded-lg transition-colors"
-            >
-              CLOSE
-            </button>
+          {/* Modal Header - Single row: SEARCH FOR MUSIC (25%) | Search Input (50%) | Filters (25%) */}
+          <div className="flex items-center gap-4 p-4 border-b-2 border-yellow-400/50 bg-black/60">
+            {/* Left: SEARCH FOR MUSIC text (25% width) */}
+            <div className="w-[25%] flex-shrink-0">
+              <h2 className="text-2xl font-bold text-yellow-300 whitespace-nowrap">SEARCH FOR MUSIC</h2>
+            </div>
+            
+            {/* Center: Search Input (50% width) */}
+            <div className="w-[50%] flex items-center justify-center">
+              <div className="w-full relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  readOnly
+                  placeholder="Type to search for songs..."
+                  className="w-full bg-slate-800/60 border-2 border-yellow-400 rounded-lg px-4 py-2 text-white text-lg placeholder:text-gray-500 outline-none"
+                />
+              </div>
+            </div>
+            
+            {/* Right: Filter buttons (25% width) */}
+            <div className="w-[25%] flex items-center justify-end gap-2 flex-shrink-0">
+              <button
+                onClick={() => setKaraokeFilter('all')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  karaokeFilter === 'all'
+                    ? 'bg-yellow-400 text-slate-900'
+                    : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+                }`}
+              >
+                All Songs
+              </button>
+              <button
+                onClick={() => setKaraokeFilter('hide')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  karaokeFilter === 'hide'
+                    ? 'bg-yellow-400 text-slate-900'
+                    : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+                }`}
+              >
+                Hide Karaoke
+              </button>
+              <button
+                onClick={() => setKaraokeFilter('show')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  karaokeFilter === 'show'
+                    ? 'bg-yellow-400 text-slate-900'
+                    : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
+                }`}
+              >
+                Karaoke Only
+              </button>
+            </div>
           </div>
 
-          {/* Search Interface Content */}
-          <div className="flex-1 overflow-hidden">
+          {/* Search Interface Content - Results and Keyboard */}
+          <div className="flex-1 overflow-hidden flex flex-col">
             <SearchInterface
               onSongRequested={handleSongRequested}
               credits={credits}
               playerId={playerId}
+              showHeader={false}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              karaokeFilter={karaokeFilter}
+              onKaraokeFilterChange={setKaraokeFilter}
+              onClose={() => setShowSearchModal(false)}
             />
           </div>
         </div>
