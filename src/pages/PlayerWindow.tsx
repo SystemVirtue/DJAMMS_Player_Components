@@ -750,16 +750,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               console.log('[PlayerWindow] Preserving current playing video, playlist loaded starting from index 1');
             }
 
-            // Update local state - preserve currently playing video at index 0
-            const updatedQueue = preservedVideo
-              ? [preservedVideo, ...newPlaylistTracks]
-              : newPlaylistTracks;
+            // Don't manually update local state - let main process broadcasts handle it
+            console.log('[PlayerWindow] Supabase playlist load commands sent - waiting for main process broadcasts');
 
-            setQueue(updatedQueue);
+            // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
             setQueueIndex(0);
-
-            // Priority queue is preserved automatically by not clearing it
-            console.log('[PlayerWindow] Priority queue preserved:', currentPriorityQueue.length, 'items');
 
             // Sync state with preserved priority queue
             if (updatedQueue.length > 0) {
@@ -2037,53 +2032,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             });
           });
 
-          // Update local state - preserve index 0, add playlist tracks from index 1
-          const updatedQueue = preservedVideo
-            ? [preservedVideo, ...finalTracks]
-            : finalTracks;
+          // Don't manually update local state - let main process broadcasts handle it
+          // The main process will broadcast the final correct state after all operations
+          console.log('[PlayerWindow] Playlist load commands sent - waiting for main process broadcasts');
 
-          setQueue(updatedQueue);
+          // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
           setQueueIndex(0);
-
-          // Priority queue is preserved automatically by not clearing it
-          console.log('[PlayerWindow] Priority queue preserved during playlist load:', currentPriorityQueue.length, 'items');
-
-          // Sync state to Supabase with the updated active_queue
-          if (updatedQueue.length > 0) {
-            console.log('[PlayerWindow] Syncing updated active_queue to Supabase:', updatedQueue.length, 'items');
-            syncState({
-              activeQueue: updatedQueue.map(v => ({
-                id: v.id,
-                src: v.src,
-                path: v.path,
-                title: v.title,
-                artist: v.artist,
-                sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-                duration: v.duration,
-                playlist: v.playlist,
-                playlistDisplayName: v.playlistDisplayName
-              })),
-              priorityQueue: currentPriorityQueue.map((v: Video) => ({
-                id: v.id,
-                src: v.src,
-                path: v.path,
-                title: v.title,
-                artist: v.artist,
-                sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-                duration: v.duration,
-                playlist: v.playlist,
-                playlistDisplayName: v.playlistDisplayName
-              })),
-              queueIndex: 0
-            }, true); // immediate = true to ensure Supabase is updated quickly
-
-            // Update lastSyncedHash to prevent unnecessary re-syncs
-            syncStateRef.current.lastSyncedHash = JSON.stringify({
-              activeQueue: updatedQueue.map(v => v.id),
-              priorityQueue: currentPriorityQueue.map((v: Video) => v.id),
-              queueIndex: 0
-            });
-          }
         }).catch((error: any) => {
           console.error('[PlayerWindow] Failed to get queue state for playlist load:', error);
           // Fallback: clear and load normally
