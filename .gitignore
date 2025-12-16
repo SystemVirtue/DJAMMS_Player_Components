@@ -19,6 +19,12 @@ electron/dist/
 .env.test.local
 .env.production.local
 
+# IDE files
+.cursor/
+.vscode/
+*.swp
+*.swo
+
 # IDE
 .vscode/
 .idea/
