@@ -149,10 +149,21 @@ class SupabaseService {
       logger.info(`[SupabaseService] Player ID changed from ${this.playerId} to ${newPlayerId} - re-initializing`);
       this.isInitialized = false;
       this.isOnline = false;
-      // Clear existing subscriptions
+      // Clear existing subscriptions and cleanup client
       if (this.commandChannel) {
         this.commandChannel.unsubscribe();
         this.commandChannel = null;
+      }
+      // Cleanup existing client to prevent multiple GoTrueClient instances
+      if (this.client) {
+        try {
+          // Remove all realtime subscriptions
+          this.client.realtime.disconnect();
+          // Clear the client reference
+          this.client = null;
+        } catch (error) {
+          logger.warn('[SupabaseService] Error cleaning up old client:', error);
+        }
       }
     } else if (this.isInitialized) {
       logger.info('[SupabaseService] Already initialized with same player ID');
@@ -2802,13 +2813,14 @@ class SupabaseService {
    * Convert local Video type to NowPlayingVideo
    */
   private videoToNowPlaying(video: Video): NowPlayingVideo {
+    const src = video.src || video.path || video.file_path || '';
     return {
       id: video.id,
-      src: video.src,
+      src: src,
       path: video.path || video.file_path || video.src,
       title: video.title,
       artist: video.artist || null,
-      sourceType: video.src.startsWith('http') ? 'youtube' : 'local',
+      sourceType: src.startsWith('http') ? 'youtube' : 'local',
       duration: video.duration
     };
   }
@@ -2817,13 +2829,14 @@ class SupabaseService {
    * Convert local Video type to QueueVideoItem
    */
   private videoToQueueItem(video: Video): QueueVideoItem {
+    const src = video.src || video.path || video.file_path || '';
     return {
       id: video.id,
-      src: video.src,
+      src: src,
       path: video.path || video.file_path || video.src,
       title: video.title,
       artist: video.artist || null,
-      sourceType: video.src.startsWith('http') ? 'youtube' : 'local',
+      sourceType: src.startsWith('http') ? 'youtube' : 'local',
       duration: video.duration,
       playlist: video.playlist,
       playlistDisplayName: video.playlistDisplayName

@@ -87,3 +87,15 @@ jspm_packages/
 .dynamodb/
 # Development logs
 logs/
+
+
+# DynamoDB Local files
+.dynamodb/
+# Development logs
+logs/
+
+
+# DynamoDB Local files
+.dynamodb/
+# Development logs
+logs/

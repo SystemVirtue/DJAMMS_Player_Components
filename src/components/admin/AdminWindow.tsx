@@ -4,6 +4,7 @@ import { QueueManager } from './shared/QueueManager';
 import { SearchInterface } from './shared/SearchInterface';
 import { SettingsPanel } from './shared/SettingsPanel';
 import { unifiedAPI } from '../../services/UnifiedAPI';
+import { getPlaylistDisplayName } from '../../utils/playlistHelpers';
 import type { SupabasePlayerState } from '../../types/supabase';
 import type { Video } from '../../types';
 
@@ -93,7 +94,8 @@ const QuickActions = ({ onAction }: { onAction: (action: string) => void }) => (
 export const AdminWindow: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('queue');
-  const [currentPlaylist, setCurrentPlaylist] = useState<string>('');
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string>('');
+  const [showPauseDialog, setShowPauseDialog] = useState(false);
 
   // Admin-specific state
   const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
@@ -155,10 +157,10 @@ export const AdminWindow: React.FC = () => {
         setPlaylists(playlistData.playlists);
         setPlayerState(stateData);
 
-        // Set first playlist as current if available
+        // Set first playlist as selected if available
         const playlistNames = Object.keys(playlistData.playlists);
         if (playlistNames.length > 0) {
-          setCurrentPlaylist(playlistNames[0]);
+          setSelectedPlaylist(playlistNames[0]);
         }
       } catch (err) {
         console.error('Failed to load admin data:', err);
@@ -190,7 +192,58 @@ export const AdminWindow: React.FC = () => {
   };
 
   const handlePlaylistSelect = (playlistName: string) => {
-    setCurrentPlaylist(playlistName);
+    setSelectedPlaylist(playlistName);
+  };
+
+  // Get current playlist from active_queue (the playlist currently populating the active_queue)
+  // This should match the Electron admin's activePlaylist which is set when a playlist is loaded
+  const getCurrentPlaylist = (): string => {
+    // First, try to get the playlist from active_queue items
+    // The playlist that's populating the active_queue should be consistent across items
+    if (playerState?.active_queue && playerState.active_queue.length > 0) {
+      // Check the first few items to find the most common playlist
+      const playlists = playerState.active_queue
+        .slice(0, Math.min(10, playerState.active_queue.length))
+        .map(item => {
+          if (item.playlistDisplayName) return item.playlistDisplayName;
+          if (item.playlist) return getPlaylistDisplayName(item.playlist);
+          return null;
+        })
+        .filter((p): p is string => p !== null);
+      
+      if (playlists.length > 0) {
+        // Return the most common playlist, or the first one if all are the same
+        const playlistCounts = playlists.reduce((acc, p) => {
+          acc[p] = (acc[p] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        
+        const mostCommon = Object.entries(playlistCounts).sort((a, b) => b[1] - a[1])[0];
+        if (mostCommon) return mostCommon[0];
+      }
+    }
+    
+    // Fallback to now_playing_video if active_queue doesn't have playlist info
+    if (playerState?.now_playing_video) {
+      const video = playerState.now_playing_video as any;
+      if (video.playlistDisplayName) return video.playlistDisplayName;
+      if (video.playlist) return getPlaylistDisplayName(video.playlist);
+    }
+    
+    return 'No Playlist';
+  };
+
+  const handlePauseClick = async () => {
+    if (playerState?.status === 'playing') {
+      setShowPauseDialog(true);
+    } else {
+      await handleCommand('resume');
+    }
+  };
+
+  const confirmPause = async () => {
+    await handleCommand('pause');
+    setShowPauseDialog(false);
   };
 
   const renderTabContent = () => {
@@ -236,7 +289,6 @@ export const AdminWindow: React.FC = () => {
           </div>
         );
       case 'search':
-      case 'browse':
         return (
           <div className="tab-content active">
             <SearchInterface
@@ -388,12 +440,20 @@ export const AdminWindow: React.FC = () => {
                   </span>
                 </div>
                 <h3 className="text-lg font-semibold text-ytm-text truncate">
-                  {playerState?.currentVideo?.title || 'No track selected'}
+                  {playerState?.now_playing_video?.title || 'No track selected'}
                 </h3>
                 <div className="flex items-center space-x-4 text-sm text-ytm-text-secondary">
-                  <span>Active Playlist: {currentPlaylist || 'None'}</span>
-                  {playerState?.queue && (
-                    <span>Queue: {playerState.queue.length} tracks</span>
+                  <span>{playerState?.now_playing_video?.artist || '—'}</span>
+                </div>
+                <div className="flex items-center space-x-4 text-sm text-ytm-text-secondary mt-1">
+                  <span>Active Playlist: {getCurrentPlaylist()}</span>
+                  {playerState?.active_queue && (
+                    <span>Queue: {playerState.active_queue.length} tracks</span>
+                  )}
+                  {playerState?.status === 'paused' && (
+                    <span style={{ color: 'red', fontSize: '18px', fontWeight: 'bold' }}>
+                      PLAYBACK PAUSED
+                    </span>
                   )}
                 </div>
               </div>
@@ -402,15 +462,7 @@ export const AdminWindow: React.FC = () => {
             {/* Playback Controls */}
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => handleCommand('seek_backward', { seconds: 10 })}
-                className="w-8 h-8 flex items-center justify-center rounded hover:bg-ytm-surface-hover transition-colors"
-                title="Rewind 10s"
-              >
-                <span className="material-symbols-rounded text-ytm-text-secondary">replay_10</span>
-              </button>
-
-              <button
-                onClick={() => handleCommand(playerState?.status === 'playing' ? 'pause' : 'resume')}
+                onClick={handlePauseClick}
                 className="w-10 h-10 bg-ytm-accent rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
                 title={playerState?.status === 'playing' ? 'Pause' : 'Play'}
               >
@@ -425,14 +477,6 @@ export const AdminWindow: React.FC = () => {
                 title="Skip Track"
               >
                 <span className="material-symbols-rounded text-ytm-text-secondary">skip_next</span>
-              </button>
-
-              <button
-                onClick={() => handleCommand('seek_forward', { seconds: 10 })}
-                className="w-8 h-8 flex items-center justify-center rounded hover:bg-ytm-surface-hover transition-colors"
-                title="Forward 10s"
-              >
-                <span className="material-symbols-rounded text-ytm-text-secondary">forward_10</span>
               </button>
             </div>
 
@@ -476,7 +520,6 @@ export const AdminWindow: React.FC = () => {
               {[
                 { id: 'queue' as TabId, label: 'Queue Management', icon: 'queue_music' },
                 { id: 'search' as TabId, label: 'Search & Browse', icon: 'search' },
-                { id: 'browse' as TabId, label: 'Library Browser', icon: 'library_music' },
                 { id: 'settings' as TabId, label: 'System Settings', icon: 'settings' },
                 { id: 'tools' as TabId, label: 'Admin Tools', icon: 'build' }
               ].map(item => (
@@ -510,13 +553,52 @@ export const AdminWindow: React.FC = () => {
                 Object.entries(playlists).map(([name, videos]) => (
                   <div
                     key={name}
-                    className={`playlist-item ${currentPlaylist === name ? 'selected' : ''}`}
+                    className={`playlist-item ${selectedPlaylist === name ? 'selected' : ''}`}
                     onClick={() => handlePlaylistSelect(name)}
+                    onMouseEnter={(e) => {
+                      const item = e.currentTarget;
+                      const playButton = item.querySelector('.playlist-play-btn') as HTMLElement;
+                      if (playButton) playButton.style.display = 'flex';
+                    }}
+                    onMouseLeave={(e) => {
+                      const item = e.currentTarget;
+                      const playButton = item.querySelector('.playlist-play-btn') as HTMLElement;
+                      if (playButton) playButton.style.display = 'none';
+                    }}
                     title={sidebarCollapsed ? name : undefined}
                   >
                     <span className="playlist-icon material-symbols-rounded">queue_music</span>
                     <span className="playlist-name">{name}</span>
                     <span className="playlist-count">{videos.length}</span>
+                    <button
+                      className="playlist-play-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCommand('load_playlist', { playlistName: name });
+                        setActiveTab('queue');
+                      }}
+                      style={{
+                        display: 'none',
+                        position: 'absolute',
+                        right: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '50%',
+                        backgroundColor: '#4CAF50',
+                        border: 'none',
+                        cursor: 'pointer',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 10
+                      }}
+                      title="Load Playlist"
+                    >
+                      <span className="material-symbols-rounded" style={{ color: 'white', fontSize: '20px' }}>
+                        play_arrow
+                      </span>
+                    </button>
                   </div>
                 ))
               )}
@@ -665,6 +747,77 @@ export const AdminWindow: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Pause Confirmation Dialog */}
+      {showPauseDialog && (
+        <div 
+          className="dialog-overlay" 
+          onClick={() => setShowPauseDialog(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}
+        >
+          <div 
+            className="dialog-box" 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--ytm-surface)',
+              borderRadius: '8px',
+              padding: '24px',
+              minWidth: '300px',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)'
+            }}
+          >
+            <h3 style={{ 
+              marginBottom: '16px', 
+              fontSize: '18px', 
+              fontWeight: 'bold',
+              color: 'var(--ytm-text)'
+            }}>
+              Pause the Player?
+            </h3>
+            <div className="dialog-actions" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button 
+                className="dialog-btn dialog-btn-primary" 
+                onClick={confirmPause}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#4CAF50',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                PAUSE
+              </button>
+              <button 
+                onClick={() => setShowPauseDialog(false)}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: 'transparent',
+                  color: 'var(--ytm-text-secondary)',
+                  border: '1px solid var(--ytm-divider)',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

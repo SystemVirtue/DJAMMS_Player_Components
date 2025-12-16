@@ -169,3 +169,4 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
     </div>
   );
 };
+

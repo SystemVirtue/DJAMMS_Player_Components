@@ -383,7 +383,7 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     const errorCode = videoElement.error?.code;
     const errorMessage = videoElement.error?.message || 'Unknown error';
     const videoSrc = videoElement.src;
-    
+
     // Map error codes to human-readable messages
     const errorMessages: Record<number, string> = {
       1: 'MEDIA_ERR_ABORTED - Video loading aborted',
@@ -391,9 +391,23 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       3: 'MEDIA_ERR_DECODE - Video decoding error',
       4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - Video format not supported'
     };
-    
+
     const errorDetails = errorMessages[errorCode || 0] || `Error code: ${errorCode || 'unknown'}`;
-    
+
+    // SPECIAL HANDLING: If current video at index 0 is "Unknown" (corrupted/missing), remove it and auto-play next
+    if (currentVideo?.title === 'Unknown' && typeof window !== 'undefined' && (window as any).electronAPI) {
+      console.error('🚨 [VIDEO ERROR] Current video at index 0 is "Unknown" - removing from queue and auto-playing next');
+
+      try {
+        // Send command to remove the corrupted video at index 0 and auto-play the next one
+        (window as any).electronAPI.sendCommand('remove_unknown_video_at_index_zero');
+        console.log('✅ [VIDEO ERROR] Sent command to remove unknown video at index 0');
+        return; // Don't continue with normal error handling
+      } catch (cmdError) {
+        console.error('❌ [VIDEO ERROR] Failed to send remove command:', cmdError);
+      }
+    }
+
     // Comprehensive PLAYBACK ERROR logging
     const errorLog = {
       type: 'PLAYBACK ERROR',
@@ -620,16 +634,53 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       // Convert ALL backslashes to forward slashes so the resulting file:// URL is valid
       normalizedPath = normalizedPath.replace(/\\/g, '/');
       console.log('[VIDEO] Normalized filesystem path for Electron:', normalizedPath);
-      
+
+      // CRITICAL FIX: Handle playlist name changes (YouTube ID removal)
+      // If the path contains an old playlist name (with YouTube ID), try to find the new path
+      const pathParts = normalizedPath.split('/');
+      if (pathParts.length >= 2) {
+        const playlistsDir = pathParts.slice(0, -2).join('/'); // Everything except playlist folder and filename
+        const oldPlaylistName = pathParts[pathParts.length - 2]; // Playlist folder name
+        const filename = pathParts[pathParts.length - 1]; // Video filename
+
+        // Check if this is an old format playlist name (contains YouTube ID)
+        const youtubeIdMatch = oldPlaylistName.match(/^PL[A-Za-z0-9_-]+[._](.+)$/);
+        if (youtubeIdMatch) {
+          const newPlaylistName = youtubeIdMatch[1]; // Extract display name
+          const newPath = `${playlistsDir}/${newPlaylistName}/${filename}`;
+
+          // Check if the new path exists
+          try {
+            const fs = require('fs');
+            if (fs.existsSync(newPath)) {
+              console.log('✅ [VIDEO] Found video at new path (YouTube ID removed):', newPath);
+              normalizedPath = newPath;
+            } else {
+              console.warn('⚠️ [VIDEO] Old playlist path detected but new path does not exist:', {
+                oldPath: normalizedPath,
+                newPath: newPath,
+                oldPlaylist: oldPlaylistName,
+                newPlaylist: newPlaylistName
+              });
+            }
+          } catch (error) {
+            console.warn('⚠️ [VIDEO] Error checking new playlist path:', error);
+          }
+        }
+      }
+
       // In dev mode, use djamms:// protocol (registered in main process)
       // This avoids file:// URL issues with webSecurity and CORS
       if (isDevMode) {
         // DEV MODE: use custom djamms:// protocol (handled by main process)
-        // IMPORTANT: DO NOT use encodeURIComponent() here - protocol handler expects raw path
-        const djammsUrl = `djamms://${normalizedPath}`;
-        console.log('✅ [VIDEO] Converting file:// to djamms:// in dev mode (FIXED - no double encoding)');
+        // CRITICAL: Encode the path to handle spaces and special characters properly
+        // The protocol handler will decode it back
+        const encodedPath = encodeURIComponent(normalizedPath).replace(/%2F/g, '/'); // Keep slashes as slashes
+        const djammsUrl = `djamms://${encodedPath}`;
+        console.log('✅ [VIDEO] Converting file:// to djamms:// in dev mode (PROPERLY ENCODED)');
         console.log('✅ [VIDEO] Original path:', videoPath);
         console.log('✅ [VIDEO] Normalized path:', normalizedPath);
+        console.log('✅ [VIDEO] Encoded path:', encodedPath);
         console.log('✅ [VIDEO] djamms:// URL:', djammsUrl);
         return djammsUrl;
       }

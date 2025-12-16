@@ -36,6 +36,7 @@ function FullscreenApp() {
   const [volume, setVolume] = useState(0.7)
   const [enableAudioNormalization, setEnableAudioNormalization] = useState(false)
   const [preloadVideo, setPreloadVideo] = useState<Video | null>(null)
+  const [pendingPreload, setPendingPreload] = useState<Video | null>(null)
   const [fadeDuration, setFadeDuration] = useState<number>(2.0)
   const [seekToPosition, setSeekToPosition] = useState<number | null>(null)
   
@@ -129,21 +130,38 @@ function FullscreenApp() {
           console.log('🚨 [FullscreenApp] Video ID:', data?.id);
           console.log('🚨 [FullscreenApp] Full video object:', JSON.stringify(data, null, 2));
           console.log('🚨 [FullscreenApp] ===========================================');
-          
+
           // Ensure src is set correctly (prioritize src over path)
           if (data && !data.src && data.path) {
             console.warn('[FullscreenApp] Video has path but no src, using path as src');
             data.src = data.path;
           }
-          
-          setVideo(data)
-          setIsPlaying(true)
+
+          setVideo(data);
+          setIsPlaying(true);
+
+          // Actually trigger video playback using the player ref
+          if (data && playerRef.current?.playVideo) {
+            console.log('[FullscreenApp] Triggering playVideo for:', data.title);
+            playerRef.current.playVideo(data);
+          } else {
+            console.warn('[FullscreenApp] Cannot play video - player not ready yet. Video will be set when player initializes.');
+            // The video state will be set, and the FullscreenPlayer should handle it when it mounts
+          }
           break
         case 'pause':
-          setIsPlaying(false)
+          setIsPlaying(false);
+          if (playerRef.current?.pauseVideo) {
+            console.log('[FullscreenApp] Triggering pauseVideo');
+            playerRef.current.pauseVideo();
+          }
           break
         case 'resume':
-          setIsPlaying(true)
+          setIsPlaying(true);
+          if (playerRef.current?.resumeVideo) {
+            console.log('[FullscreenApp] Triggering resumeVideo');
+            playerRef.current.resumeVideo();
+          }
           break
         case 'skip':
           // User-initiated skip - fade out current video, then trigger next
@@ -173,9 +191,20 @@ function FullscreenApp() {
           break
         case 'preload':
           try {
-            setPreloadVideo(data)
+            setPreloadVideo(data);
+            console.log('[FullscreenApp] Received preload command:', data);
+
+            // Actually trigger the preload using the player ref
+            if (data && playerRef.current?.preloadVideo) {
+              console.log('[FullscreenApp] Triggering preload for video:', data.title);
+              playerRef.current.preloadVideo(data);
+            } else {
+              console.warn('[FullscreenApp] Cannot preload - no video data or player not ready yet. Will retry when player is ready.');
+              // Store the preload request to execute when player becomes available
+              setPendingPreload(data);
+            }
           } catch (error) {
-            console.warn('Failed to set preload video', error)
+            console.warn('Failed to preload video', error)
           }
           break
         case 'updateSettings':
@@ -389,10 +418,15 @@ function FullscreenApp() {
     if (state.duration > 0) {
       durationRef.current = state.duration
     }
-    
+
+    // Update local isPlaying state based on actual playback state
+    setIsPlaying(state.isPlaying);
+    setCurrentTime(state.currentTime);
+    setDuration(state.duration);
+
     // Note: Don't sync to Supabase here - PlayerWindow handles Supabase sync
     // This prevents partial updates that overwrite queue data
-    
+
     // Send state to Main Window via IPC
     if (isElectron) {
       (window as any).electronAPI.sendPlaybackState(state)
@@ -403,11 +437,36 @@ function FullscreenApp() {
       data: state
     }, window.location.origin)
   }
+
+  const handleVideoError = (error: string) => {
+    console.error('[FullscreenApp] Video error occurred:', error);
+    // Set isPlaying to false when video errors occur
+    setIsPlaying(false);
+    // Send error state to main process
+    if (isElectron) {
+      (window as any).electronAPI.sendPlaybackState({
+        video: video,
+        currentTime: currentTime,
+        duration: duration,
+        isPlaying: false,
+        volume: volume
+      });
+    }
+  }
   
   // Clear seek position after seek completes
   const handleSeekComplete = () => {
     setSeekToPosition(null)
   }
+
+  // Handle pending preload when video changes
+  useEffect(() => {
+    if (pendingPreload && video) {
+      // If we have a pending preload and now have a video, replace it
+      setPreloadVideo(pendingPreload);
+      setPendingPreload(null);
+    }
+  }, [pendingPreload, video])
 
   // Calculate upcoming videos: priority queue first, then next 3 from active queue
   const upcomingVideos = useMemo(() => {
@@ -439,6 +498,7 @@ function FullscreenApp() {
       duration={duration}
       volume={volume}
       onVideoEnd={handleVideoEnd}
+      onError={handleVideoError}
       onStateChange={handleStateChange}
       enableAudioNormalization={enableAudioNormalization}
       preloadVideo={preloadVideo}

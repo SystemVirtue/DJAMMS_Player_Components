@@ -32,6 +32,7 @@ interface FullscreenPlayerProps {
   duration: number;
   volume: number;
   onVideoEnd: () => void;
+  onError?: (error: string) => void; // Called when video errors occur
   onStateChange: (state: { currentVideo: Video | null, currentTime: number, duration: number, isPlaying: boolean }) => void;
   enableAudioNormalization: boolean;
   preloadVideo?: Video | null;
@@ -56,6 +57,7 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
   duration,
   volume,
   onVideoEnd,
+  onError,
   onStateChange,
   enableAudioNormalization,
   preloadVideo,
@@ -71,7 +73,19 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
   const playerRef = useRef<DJAMMSPlayerRef>(null);
   const prevVideoRef = useRef<Video | null>(null);
   const prevIsPlayingRef = useRef<boolean>(false);
-  
+  const prevPreloadVideoRef = useRef<Video | null>(null);
+
+  // Handle preload video changes
+  useEffect(() => {
+    if (preloadVideo && preloadVideo !== prevPreloadVideoRef.current) {
+      prevPreloadVideoRef.current = preloadVideo;
+      if (playerRef.current?.preloadVideo) {
+        console.log('[FullscreenPlayer] Preloading video:', preloadVideo.title);
+        playerRef.current.preloadVideo(preloadVideo);
+      }
+    }
+  }, [preloadVideo]);
+
   // Expose skipWithFade to parent via ref
   useImperativeHandle(ref, () => ({
     skipWithFade: () => {
@@ -305,6 +319,7 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
         volume={volume}
         fadeDuration={fadeDuration}
         onVideoEnd={onVideoEnd}
+        onError={onError}
         onStateChange={handleStateChange}
         enableAudioNormalization={enableAudioNormalization}
       />
