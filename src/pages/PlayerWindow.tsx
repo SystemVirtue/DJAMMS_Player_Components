@@ -629,71 +629,116 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
     onLoadPlaylist: (playlistName: string, shuffle?: boolean) => {
       console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
+
       // Find the playlist (may have YouTube ID prefix)
-      const playlistKey = Object.keys(playlists).find(key => 
+      const playlistKey = Object.keys(playlists).find(key =>
         key === playlistName || key.includes(playlistName)
       );
+
       if (playlistKey && playlists[playlistKey]) {
         const playlistTracks = playlists[playlistKey];
         const shouldShuffle = shuffle ?? settings.autoShufflePlaylists;
-        const finalTracks = Array.isArray(playlistTracks)
+        const newPlaylistTracks = Array.isArray(playlistTracks)
           ? (shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks])
           : [];
+
         setActivePlaylist(playlistKey);
-        
-        // Load playlist into main process queue
-        if (isElectron && finalTracks.length > 0) {
-          // Clear queue in main process
-          (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-          
-          // Add all videos to main process queue
-          finalTracks.forEach((video) => {
-            (window as any).electronAPI.sendQueueCommand?.({ 
-              action: 'add_to_queue', 
-              payload: { video } 
+
+        // Load playlist preserving current playing video and priority queue
+        if (isElectron && newPlaylistTracks.length > 0) {
+          console.log('[PlayerWindow] Loading playlist while preserving current video and priority queue');
+
+          // Get current queue state from main process
+          (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
+            const currentQueue = queueState?.activeQueue || [];
+            const currentPriorityQueue = queueState?.priorityQueue || [];
+
+            console.log('[PlayerWindow] Current queue state:', {
+              activeQueueLength: currentQueue.length,
+              priorityQueueLength: currentPriorityQueue.length,
+              nowPlaying: queueState?.nowPlaying?.title,
+              isPlaying: queueState?.isPlaying
             });
-          });
-          
-          // Determine starting index based on playback state
-          // If video is currently PLAYING, start at index 1 (skip index 0) to not interrupt
-          // If video is NOT playing (paused/inactive), play index 0 (first song in new playlist)
-          const startIndex = (isPlaying && currentVideo) ? 1 : 0;
-          
-          if (startIndex === 1) {
-            // Video is playing - start playlist at index 1 to not interrupt current video
-            console.log('[PlayerWindow] Video is playing - starting playlist at index 1 to avoid interruption');
-            setTimeout(() => {
-              (window as any).electronAPI.sendQueueCommand?.({ 
-                action: 'play_at_index', 
-                payload: { index: 1 } 
+
+            // Preserve index 0 (currently playing video) if it exists and is playing
+            const preservedVideo = (currentQueue.length > 0 && queueState?.isPlaying) ? currentQueue[0] : null;
+
+            if (preservedVideo) {
+              console.log('[PlayerWindow] Preserving currently playing video at index 0:', preservedVideo.title);
+            }
+
+            // Clear the entire queue first
+            (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+
+            // If we have a preserved video, add it back at index 0
+            if (preservedVideo) {
+              (window as any).electronAPI.sendQueueCommand?.({
+                action: 'add_to_queue',
+                payload: { video: preservedVideo }
               });
-            }, 100);
-          } else {
-            // Video is not playing - play index 0 (first song in new playlist)
-            // This effectively "skips" to the next song (which is the first in the new playlist)
-            console.log('[PlayerWindow] Video is not playing - playing index 0 (first song in new playlist)');
-            setTimeout(() => {
-              (window as any).electronAPI.sendQueueCommand?.({ 
-                action: 'play_at_index', 
-                payload: { index: 0 } 
+            }
+
+            // Add new playlist tracks (they will start from index 1 if preserved video exists)
+            newPlaylistTracks.forEach((video) => {
+              (window as any).electronAPI.sendQueueCommand?.({
+                action: 'add_to_queue',
+                payload: { video }
               });
-            }, 100);
-          }
-        }
-        
-        // Update local state (will be synced from main process via queue-state event)
-        // IMPORTANT: Do NOT clear priority queue - it should persist when loading a new playlist
-        setQueue(finalTracks);
-        setQueueIndex(0);
-        // Mark that we have a non-empty queue (allows syncing to Supabase)
-        if (finalTracks.length > 0) {
-          syncStateRef.current.lastSyncedHash = JSON.stringify({
-            activeQueue: finalTracks.map(v => v.id),
-            priorityQueue: [],
-            queueIndex: 0
+            });
+
+            // Determine if we should auto-play
+            // Only auto-play if there's no currently playing video OR if video is not playing
+            const shouldAutoPlay = !preservedVideo || !queueState?.isPlaying;
+
+            if (shouldAutoPlay) {
+              console.log('[PlayerWindow] Auto-playing first track of new playlist');
+              setTimeout(() => {
+                (window as any).electronAPI.sendQueueCommand?.({
+                  action: 'play_at_index',
+                  payload: { index: 0 }
+                });
+              }, 100);
+            } else {
+              console.log('[PlayerWindow] Preserving current playing video, playlist loaded starting from index 1');
+            }
+
+            // Update local state - preserve currently playing video at index 0
+            const updatedQueue = preservedVideo
+              ? [preservedVideo, ...newPlaylistTracks]
+              : newPlaylistTracks;
+
+            setQueue(updatedQueue);
+            setQueueIndex(0);
+
+            // Priority queue is preserved automatically by not clearing it
+            console.log('[PlayerWindow] Priority queue preserved:', currentPriorityQueue.length, 'items');
+
+            // Sync state with preserved priority queue
+            if (updatedQueue.length > 0) {
+              syncStateRef.current.lastSyncedHash = JSON.stringify({
+                activeQueue: updatedQueue.map(v => v.id),
+                priorityQueue: currentPriorityQueue.map((v: Video) => v.id),
+                queueIndex: 0
+              });
+            }
+          }).catch((error: any) => {
+            console.error('[PlayerWindow] Failed to get queue state:', error);
+            // Fallback: clear and load normally
+            (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+            newPlaylistTracks.forEach((video) => {
+              (window as any).electronAPI.sendQueueCommand?.({
+                action: 'add_to_queue',
+                payload: { video }
+              });
+            });
+            setQueue(newPlaylistTracks);
+            setQueueIndex(0);
           });
+        } else {
+          // Fallback for non-Electron or empty playlist
+          setQueue(newPlaylistTracks);
+          setQueueIndex(0);
         }
-        // Priority queue is preserved - do NOT call setPriorityQueue([]) here
       }
     },
     onQueueMove: (fromIndex: number, toIndex: number) => {
@@ -1193,38 +1238,78 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               const shouldShuffle = autoShuffleValue ?? true;
               const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
               
-              // Load playlist into main process queue
+              // Load playlist into main process queue (preserve any existing current video)
               if (isElectron && finalTracks.length > 0) {
-                // Clear queue in main process
-                (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-                
-                // Add all videos to main process queue
-                finalTracks.forEach((video) => {
-                  (window as any).electronAPI.sendQueueCommand?.({ 
-                    action: 'add_to_queue', 
-                    payload: { video } 
+                // Get current queue state to preserve currently playing video
+                (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
+                  const currentQueue = queueState?.activeQueue || [];
+                  const preservedVideo = (currentQueue.length > 0 && queueState?.isPlaying) ? currentQueue[0] : null;
+
+                  if (preservedVideo) {
+                    console.log('[PlayerWindow] Preserving currently playing video during initial load:', preservedVideo.title);
+                  }
+
+                  // Clear queue in main process
+                  (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+
+                  // If we have a preserved video, add it back at index 0
+                  if (preservedVideo) {
+                    (window as any).electronAPI.sendQueueCommand?.({
+                      action: 'add_to_queue',
+                      payload: { video: preservedVideo }
+                    });
+                  }
+
+                  // Add all new playlist videos to main process queue
+                  finalTracks.forEach((video) => {
+                    (window as any).electronAPI.sendQueueCommand?.({
+                      action: 'add_to_queue',
+                      payload: { video }
+                    });
                   });
-                });
-                
-                // Wait for indexing to complete, then wait for admin console readiness
-                waitForIndexingComplete().then(async () => {
-                  console.log('[PlayerWindow] Indexing complete - waiting for admin console and queue setup');
 
-                  // Mark active queue as populated
-                  setActiveQueuePopulated(true);
+                  // Wait for indexing to complete, then wait for admin console readiness
+                  waitForIndexingComplete().then(async () => {
+                    console.log('[PlayerWindow] Indexing complete - waiting for admin console and queue setup');
 
-                  // Wait for admin console to be ready before initializing player window
-                  const waitForReady = () => {
-                    if (adminConsoleReady && !playerWindowInitializing) {
-                      console.log('[PlayerWindow] Admin console ready and queue populated - starting auto-play');
-                      initializePlayerWindow();
-                    } else {
-                      console.log('[PlayerWindow] Waiting for admin console readiness...');
-                      setTimeout(waitForReady, 500);
-                    }
-                  };
+                    // Mark active queue as populated
+                    setActiveQueuePopulated(true);
 
-                  waitForReady();
+                    // Wait for admin console to be ready before initializing player window
+                    const waitForReady = () => {
+                      if (adminConsoleReady && !playerWindowInitializing) {
+                        console.log('[PlayerWindow] Admin console ready and queue populated - starting auto-play');
+                        initializePlayerWindow();
+                      } else {
+                        console.log('[PlayerWindow] Waiting for admin console readiness...');
+                        setTimeout(waitForReady, 500);
+                      }
+                    };
+
+                    waitForReady();
+                  });
+                }).catch((error: any) => {
+                  console.error('[PlayerWindow] Failed to get queue state for initial load:', error);
+                  // Fallback: clear and load normally
+                  (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+                  finalTracks.forEach((video) => {
+                    (window as any).electronAPI.sendQueueCommand?.({
+                      action: 'add_to_queue',
+                      payload: { video }
+                    });
+                  });
+                  // Continue with the indexing wait...
+                  waitForIndexingComplete().then(async () => {
+                    setActiveQueuePopulated(true);
+                    const waitForReady = () => {
+                      if (adminConsoleReady && !playerWindowInitializing) {
+                        initializePlayerWindow();
+                      } else {
+                        setTimeout(waitForReady, 500);
+                      }
+                    };
+                    waitForReady();
+                  });
                 });
               }
               
@@ -1678,44 +1763,96 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         ? (settings.autoShufflePlaylists ? shuffleArray(playlistTracks) : [...playlistTracks])
         : [];
       
-      // Clear the main process queue first, then add all videos
+      // Load playlist preserving current playing video and priority queue
       if (isElectron && finalTracks.length > 0) {
-        // Clear queue in main process
-        (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-        
-        // Add all videos to main process queue
-        finalTracks.forEach((video) => {
-          (window as any).electronAPI.sendQueueCommand?.({ 
-            action: 'add_to_queue', 
-            payload: { video } 
+        console.log('[PlayerWindow] Loading playlist manually while preserving current video and priority queue');
+
+        // Get current queue state from main process
+        (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
+          const currentQueue = queueState?.activeQueue || [];
+          const currentPriorityQueue = queueState?.priorityQueue || [];
+
+          console.log('[PlayerWindow] Current queue state for manual load:', {
+            activeQueueLength: currentQueue.length,
+            priorityQueueLength: currentPriorityQueue.length,
+            nowPlaying: queueState?.nowPlaying?.title,
+            isPlaying: queueState?.isPlaying
           });
+
+          // Preserve index 0 (currently playing video) if it exists and is playing
+          const preservedVideo = (currentQueue.length > 0 && queueState?.isPlaying) ? currentQueue[0] : null;
+
+          if (preservedVideo) {
+            console.log('[PlayerWindow] Preserving currently playing video at index 0:', preservedVideo.title);
+          }
+
+          // Clear the entire queue first
+          (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+
+          // If we have a preserved video, add it back at index 0
+          if (preservedVideo) {
+            (window as any).electronAPI.sendQueueCommand?.({
+              action: 'add_to_queue',
+              payload: { video: preservedVideo }
+            });
+          }
+
+          // Add all new playlist videos to main process queue
+          finalTracks.forEach((video) => {
+            (window as any).electronAPI.sendQueueCommand?.({
+              action: 'add_to_queue',
+              payload: { video }
+            });
+          });
+
+          // Determine if we should auto-play
+          // Only auto-play if there's no currently playing video OR if video is not playing
+          const shouldAutoPlay = !preservedVideo || !queueState?.isPlaying;
+
+          if (shouldAutoPlay) {
+            console.log('[PlayerWindow] Auto-playing first track of manually loaded playlist');
+            setTimeout(() => {
+              (window as any).electronAPI.sendQueueCommand?.({
+                action: 'play_at_index',
+                payload: { index: 0 }
+              });
+            }, 100);
+          } else {
+            console.log('[PlayerWindow] Preserving current playing video, manually loaded playlist starts from index 1');
+          }
+
+          // Update local state - preserve currently playing video at index 0
+          const updatedQueue = preservedVideo
+            ? [preservedVideo, ...finalTracks]
+            : finalTracks;
+
+          setQueue(updatedQueue);
+          setQueueIndex(0);
+
+          // Priority queue is preserved automatically by not clearing it
+          console.log('[PlayerWindow] Priority queue preserved during manual load:', currentPriorityQueue.length, 'items');
+
+          // Sync state with preserved priority queue
+          if (updatedQueue.length > 0) {
+            syncStateRef.current.lastSyncedHash = JSON.stringify({
+              activeQueue: updatedQueue.map(v => v.id),
+              priorityQueue: currentPriorityQueue.map((v: Video) => v.id),
+              queueIndex: 0
+            });
+          }
+        }).catch((error: any) => {
+          console.error('[PlayerWindow] Failed to get queue state for manual load:', error);
+          // Fallback: clear and load normally
+          (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+          finalTracks.forEach((video) => {
+            (window as any).electronAPI.sendQueueCommand?.({
+              action: 'add_to_queue',
+              payload: { video }
+            });
+          });
+          setQueue(finalTracks);
+          setQueueIndex(0);
         });
-        
-        // Determine starting index based on playback state
-        // If video is currently PLAYING, start at index 1 (skip index 0) to not interrupt
-        // If video is NOT playing (paused/inactive), play index 0 (first song in new playlist)
-        const startIndex = (isPlaying && currentVideo) ? 1 : 0;
-        
-        if (startIndex === 1) {
-          // Video is playing - start playlist at index 1 to not interrupt current video
-          console.log('[PlayerWindow] Video is playing - starting playlist at index 1 to avoid interruption');
-          setTimeout(() => {
-            (window as any).electronAPI.sendQueueCommand?.({ 
-              action: 'play_at_index', 
-              payload: { index: 1 } 
-            });
-          }, 100);
-        } else {
-          // Video is not playing - play index 0 (first song in new playlist)
-          // This effectively "skips" to the next song (which is the first in the new playlist)
-          console.log('[PlayerWindow] Video is not playing - playing index 0 (first song in new playlist)');
-          setTimeout(() => {
-            (window as any).electronAPI.sendQueueCommand?.({ 
-              action: 'play_at_index', 
-              payload: { index: 0 } 
-            });
-          }, 100);
-        }
       }
       
       // Update local state (will be synced from main process via queue-state event)
