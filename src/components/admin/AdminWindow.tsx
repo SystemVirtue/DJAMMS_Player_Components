@@ -131,6 +131,9 @@ export const AdminWindow: React.FC = () => {
         case 'volume_down':
           await unifiedAPI.sendCommand('volume_set', { volume: Math.max(0, (playerState?.volume || 0.8) * 100 - 10) / 100 });
           break;
+        case 'migrate_playlist_names':
+          await unifiedAPI.sendCommand('migrate_playlist_names');
+          break;
       }
     } catch (err) {
       console.error('Quick action failed:', err);
@@ -623,6 +626,12 @@ export const AdminWindow: React.FC = () => {
                         title: 'System Diagnostics',
                         description: 'Run diagnostic tests and generate system reports',
                         action: 'diagnostics'
+                      },
+                      {
+                        icon: 'folder_managed',
+                        title: 'Playlist Migration',
+                        description: 'Update Supabase records when playlist folder names change (removes YouTube IDs)',
+                        action: 'migrate_playlist_names'
                       },
                       {
                         icon: 'settings_system_daydream',

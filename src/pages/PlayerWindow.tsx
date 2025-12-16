@@ -627,6 +627,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         return newQueue;
       });
     },
+    onMigratePlaylistNames: async () => {
+      console.log('[PlayerWindow] Manual playlist name migration triggered');
+      await migrateSupabasePlaylistNames(playlists);
+    },
+
     onLoadPlaylist: (playlistName: string, shuffle?: boolean) => {
       console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
 
@@ -1357,9 +1362,14 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     };
     loadData();
 
-    // Mark admin console as ready AFTER all initialization is complete
-    console.log('[PlayerWindow] ✅ Admin console initialization complete - marking as ready');
-    setAdminConsoleReady(true);
+  // Check if Supabase playlist names need migration due to folder name changes
+  if (isElectron && supabaseInitialized) {
+    migrateSupabasePlaylistNames(playlists);
+  }
+
+  // Mark admin console as ready AFTER all initialization is complete
+  console.log('[PlayerWindow] ✅ Admin console initialization complete - marking as ready');
+  setAdminConsoleReady(true);
   }, []); // Empty deps - only run once on mount, but check electronAPI availability inside
 
   // Save queue state whenever it changes (for persistence across app restarts)
@@ -3011,6 +3021,109 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const playlistToLoadDisplayName = playlistToLoad ? getPlaylistDisplayName(playlistToLoad) : '';
 
   const currentTrack = currentVideo;
+
+  // Function to migrate Supabase playlist names when folder names change
+  const migrateSupabasePlaylistNames = async (currentPlaylists: Record<string, Video[]>) => {
+    try {
+      console.log('[PlayerWindow] Checking for playlist name migration needs...');
+
+      const supabaseService = getSupabaseService();
+      const client = supabaseService.getClient();
+
+      if (!client) {
+        console.log('[PlayerWindow] No Supabase client available for migration');
+        return;
+      }
+
+      // Get videos from Supabase that have playlist names with YouTube IDs
+      const { data: videosWithOldNames, error } = await client
+        .from('videos')
+        .select('id, metadata')
+        .eq('player_id', playerId)
+        .like('metadata->>playlist', 'PL%');
+
+      if (error) {
+        console.error('[PlayerWindow] Error fetching videos for migration:', error);
+        return;
+      }
+
+      if (!videosWithOldNames || videosWithOldNames.length === 0) {
+        console.log('[PlayerWindow] No videos with old playlist names found');
+        return;
+      }
+
+      console.log(`[PlayerWindow] Found ${videosWithOldNames.length} videos with potential old playlist names`);
+
+      // Create mapping from old names to new names
+      const updateOperations = [];
+
+      for (const video of videosWithOldNames) {
+        const metadata = video.metadata as any;
+        const oldPlaylistName = metadata?.playlist;
+
+        if (!oldPlaylistName) continue;
+
+        // Extract new playlist name by removing YouTube ID
+        const youtubeIdMatch = oldPlaylistName.match(/^PL[A-Za-z0-9_-]+[._](.+)$/);
+        if (youtubeIdMatch) {
+          const newPlaylistName = youtubeIdMatch[1];
+
+          // Check if this new playlist name exists in current playlists
+          if (currentPlaylists[newPlaylistName] || currentPlaylists[oldPlaylistName]) {
+            // Update the metadata
+            const updatedMetadata = {
+              ...metadata,
+              playlist: newPlaylistName,
+              playlistDisplayName: newPlaylistName
+            };
+
+            updateOperations.push({
+              id: video.id,
+              metadata: updatedMetadata
+            });
+          }
+        }
+      }
+
+      if (updateOperations.length === 0) {
+        console.log('[PlayerWindow] No playlist migrations needed');
+        return;
+      }
+
+      console.log(`[PlayerWindow] Migrating ${updateOperations.length} video records...`);
+
+      // Perform updates in batches to avoid overwhelming Supabase
+      const batchSize = 50;
+      let successCount = 0;
+
+      for (let i = 0; i < updateOperations.length; i += batchSize) {
+        const batch = updateOperations.slice(i, i + batchSize);
+
+        const promises = batch.map(operation =>
+          client
+            .from('videos')
+            .update({ metadata: operation.metadata })
+            .eq('id', operation.id)
+        );
+
+        const results = await Promise.all(promises);
+        const batchSuccess = results.filter(result => !result.error).length;
+        successCount += batchSuccess;
+
+        if (results.some(result => result.error)) {
+          console.error('[PlayerWindow] Some updates in batch failed:', results.filter(r => r.error));
+        }
+      }
+
+      if (successCount > 0) {
+        console.log(`[PlayerWindow] ✅ Successfully migrated ${successCount} video records to new playlist names`);
+        console.log('[PlayerWindow] Videos should now load properly without MEDIA_ERR_SRC_NOT_SUPPORTED errors');
+      }
+
+    } catch (error) {
+      console.error('[PlayerWindow] Error during playlist name migration:', error);
+    }
+  };
 
   // Function to initialize player window after admin console is ready
   const initializePlayerWindow = async () => {
