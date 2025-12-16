@@ -1499,6 +1499,19 @@ ipcMain.handle('clear-recent-searches', async () => {
 app.whenReady().then(() => {
   // Initialize logs directory now that app is ready
   initializeLogsDirectory();
+
+  // Close any existing player windows on app refresh/init to prevent duplicates
+  console.log('[Electron] 🔄 Closing any existing player windows on app initialization...');
+  if (fullscreenWindow && !fullscreenWindow.isDestroyed()) {
+    try {
+      fullscreenWindow.close();
+      fullscreenWindow = null;
+      console.log('[Electron] ✅ Closed existing fullscreen window');
+    } catch (error) {
+      console.warn('[Electron] ⚠️ Error closing existing fullscreen window:', error);
+    }
+  }
+
   console.log('[Electron] ✅ App is ready, creating main window...');
   createMainWindow();
 

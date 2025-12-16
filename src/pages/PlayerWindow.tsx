@@ -342,6 +342,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [playerWindowOpen, setPlayerWindowOpen] = useState(false);
   const [playerReady, setPlayerReady] = useState(false); // True after queue is loaded and ready
   const playerReadyRef = useRef(false); // Ref to avoid stale closure in IPC callbacks
+
+  // New state for proper initialization sequence
+  const [adminConsoleReady, setAdminConsoleReady] = useState(false);
+  const [activeQueuePopulated, setActiveQueuePopulated] = useState(false);
+  const [playerWindowInitializing, setPlayerWindowInitializing] = useState(false);
   const hasIndexedRef = useRef(false); // Prevent multiple indexing calls during mount
   const lastIndexedPlaylistsRef = useRef<string>(''); // Track last indexed playlists to prevent re-indexing
   const isReloadingPlaylistsRef = useRef(false); // Prevent concurrent playlist reloads
@@ -1201,34 +1206,25 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                   });
                 });
                 
-                // Wait for indexing to complete, then start playback
+                // Wait for indexing to complete, then wait for admin console readiness
                 waitForIndexingComplete().then(async () => {
-                  console.log('[PlayerWindow] Indexing complete - starting auto-play');
-                  // Delay to ensure main window is fully ready
-                  setTimeout(async () => {
-                    try {
-                      console.log('[PlayerWindow] Creating fullscreen window for auto-play');
+                  console.log('[PlayerWindow] Indexing complete - waiting for admin console and queue setup');
 
-                      // Create fullscreen window first
-                      await (window as any).electronAPI.createPlayerWindow(displayIdValue ?? undefined, fullscreenValue ?? true);
-                      setPlayerWindowOpen(true);
+                  // Mark active queue as populated
+                  setActiveQueuePopulated(true);
 
-                      // Mark player as ready since we have a queue loaded
-                      if (!playerReadyRef.current) {
-                        playerReadyRef.current = true;
-                        setPlayerReady(true);
-                      }
-
-                      console.log('[PlayerWindow] Sending initial play command to fullscreen window');
-                      // Play first video via main process orchestrator
-                      (window as any).electronAPI.sendQueueCommand?.({
-                        action: 'play_at_index',
-                        payload: { index: 0 }
-                      });
-                    } catch (error) {
-                      console.error('[PlayerWindow] Failed to start auto-play:', error);
+                  // Wait for admin console to be ready before initializing player window
+                  const waitForReady = () => {
+                    if (adminConsoleReady && !playerWindowInitializing) {
+                      console.log('[PlayerWindow] Admin console ready and queue populated - starting auto-play');
+                      initializePlayerWindow();
+                    } else {
+                      console.log('[PlayerWindow] Waiting for admin console readiness...');
+                      setTimeout(waitForReady, 500);
                     }
-                  }, 1000); // Increased delay to ensure fullscreen window is ready
+                  };
+
+                  waitForReady();
                 });
               }
               
@@ -2350,6 +2346,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 queueIndexRef.current = 0;
                 // Mark that we have a non-empty queue (allows syncing to Supabase)
                 if (activeQueueVideos.length > 0) {
+                  // Mark active queue as populated
+                  setActiveQueuePopulated(true);
                   // Set lastSyncedHash to indicate we've synced a non-empty queue
                   syncStateRef.current.lastSyncedHash = JSON.stringify({
                     activeQueue: activeQueueVideos.map(v => v.id),
@@ -2872,6 +2870,76 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const playlistToLoadDisplayName = playlistToLoad ? getPlaylistDisplayName(playlistToLoad) : '';
 
   const currentTrack = currentVideo;
+
+  // Function to initialize player window after admin console is ready
+  const initializePlayerWindow = async () => {
+    if (playerWindowInitializing) {
+      console.log('[PlayerWindow] Player window initialization already in progress');
+      return;
+    }
+
+    setPlayerWindowInitializing(true);
+
+    try {
+      console.log('[PlayerWindow] Initializing fullscreen window for auto-play');
+
+      // Create fullscreen window first
+      await (window as any).electronAPI.createPlayerWindow(displayIdValue ?? undefined, fullscreenValue ?? true);
+      setPlayerWindowOpen(true);
+
+      // Mark player as ready since we have a queue loaded
+      if (!playerReadyRef.current) {
+        playerReadyRef.current = true;
+        setPlayerReady(true);
+      }
+
+      console.log('[PlayerWindow] Sending initial play command to fullscreen window');
+      // Play first video via main process orchestrator
+      (window as any).electronAPI.sendQueueCommand?.({
+        action: 'play_at_index',
+        payload: { index: 0 }
+      });
+
+      // Sync current player state with status for watchdog monitoring
+      syncState({
+        status: 'playing',
+        isPlaying: true,
+        currentVideo: queue[0] || null,
+        currentPosition: 0,
+        volume: volume / 100
+      });
+
+    } catch (error) {
+      console.error('[PlayerWindow] Failed to initialize player window:', error);
+    } finally {
+      setPlayerWindowInitializing(false);
+    }
+  };
+
+  // Mark admin console as ready when component mounts
+  useEffect(() => {
+    console.log('[PlayerWindow] Admin console mounted - marking as ready');
+    setAdminConsoleReady(true);
+  }, []);
+
+  // Sync player status changes with Supabase for watchdog monitoring
+  useEffect(() => {
+    if (supabaseInitialized && currentVideo) {
+      const playerStatus = isPlaying ? 'playing' : 'paused';
+      console.log(`[PlayerWindow] Syncing player status: ${playerStatus} for video: ${currentVideo.title}`);
+
+      syncState({
+        status: playerStatus,
+        isPlaying,
+        currentVideo,
+        currentPosition: playbackTime,
+        volume: volume / 100,
+        activeQueue: queue.map(v => v.id),
+        priorityQueue: priorityQueue.map(v => v.id),
+        queueIndex: 0
+      });
+    }
+  }, [isPlaying, currentVideo, playbackTime, volume, queue, priorityQueue, supabaseInitialized]);
 
   return (
     <div className={`app ${className}`}>
