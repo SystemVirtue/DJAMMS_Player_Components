@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
+const { pathToFileURL } = require('url');
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
@@ -106,12 +107,15 @@ class LocalFileManager {
         metadata = await this.extractMetadata(absPath);
       }
 
+      // Always emit a properly formatted file:// URL so Windows paths work
+      const fileUrl = pathToFileURL(absPath).href;
+
       const video = {
         id: absPath, // use absolute path as id for local files
         title: metadata.title || fileInfo.title,
         artist: metadata.artist || fileInfo.artist,
         path: absPath,
-        src: `file://${absPath}`,
+        src: fileUrl,
         sourceType: 'local',
         duration: metadata.duration || 0, // Will be extracted later if needed
         size: metadata.size,

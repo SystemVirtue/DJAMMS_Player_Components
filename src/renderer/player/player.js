@@ -268,8 +268,8 @@ class PlayerWindow {
       return;
     }
 
-    // Ensure file:// protocol for local files
-    const videoSrc = videoPath.startsWith('file://') ? videoPath : `file://${videoPath}`;
+    // Ensure file:// protocol for local files and normalize Windows paths
+    const videoSrc = this.buildVideoSrc(videoPath);
     logToMain('log', '[PlayerWindow] Video source:', videoSrc);
 
     // Use crossfade if already playing, otherwise direct play
@@ -278,6 +278,40 @@ class PlayerWindow {
     } else {
       this.directPlay(videoSrc);
     }
+  }
+
+  /**
+   * Normalize a file/URL string so the video element can load it on all platforms.
+   * Handles Windows paths like C:\foo\bar.mp4 by converting to file:///C:/foo/bar.mp4.
+   */
+  buildVideoSrc(videoPath) {
+    // Pass through remote URLs untouched
+    if (typeof videoPath === 'string' && /^https?:\/\//i.test(videoPath)) {
+      return videoPath;
+    }
+
+    // If already a file:// URL, normalize backslashes and ensure triple-slash on Windows
+    if (videoPath.startsWith('file://')) {
+      const withoutProtocol = videoPath.replace(/^file:\/\//i, '');
+      const normalizedPath = withoutProtocol.replace(/\\/g, '/');
+      const needsLeadingSlash = /^[a-zA-Z]:\//.test(normalizedPath);
+      const prefixed = needsLeadingSlash ? `file:///${normalizedPath}` : `file://${normalizedPath}`;
+      return encodeURI(prefixed);
+    }
+
+    // Raw Windows path (e.g. C:\videos\foo.mp4)
+    if (/^[a-zA-Z]:\\/.test(videoPath)) {
+      const normalizedPath = videoPath.replace(/\\/g, '/');
+      return encodeURI(`file:///${normalizedPath}`);
+    }
+
+    // POSIX absolute path
+    if (videoPath.startsWith('/')) {
+      return encodeURI(`file://${videoPath}`);
+    }
+
+    // Fallback: treat as relative path
+    return encodeURI(`file://${videoPath.replace(/\\/g, '/')}`);
   }
 
   directPlay(videoSrc) {
