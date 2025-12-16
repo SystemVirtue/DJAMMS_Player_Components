@@ -1,9 +1,9 @@
 import React from 'react'
 import { ConnectPlayerModal } from '@shared/ConnectPlayerModal'
-import { UnifiedAdmin } from '@components/admin/UnifiedAdmin'
+import { AdminWindow } from '@components/admin/AdminWindow'
 
 const AdminApp: React.FC = () => {
-  return <UnifiedAdmin />
+  return <AdminWindow />
 }
 
 export default function App() {

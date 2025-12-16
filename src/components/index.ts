@@ -4,6 +4,7 @@ export type { DJAMMSPlayerRef } from './DJAMMSPlayer';
 export { Header } from './Header';
 export { Sidebar } from './Sidebar';
 export type { TabId } from './Sidebar';
+export { AdminWindow } from './admin/AdminWindow';
 export { QueueTab } from './QueueTab';
 export { ToolsTab } from './ToolsTab';
 export { NowPlayingPanel } from './NowPlayingPanel';
