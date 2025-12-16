@@ -1,37 +1,26 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
 
+// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../../web/shared'),
-    },
-    dedupe: ['@supabase/supabase-js', 'react', 'react-dom'],
+      '@': path.resolve(__dirname, 'src'),
+      '@shared': path.resolve(__dirname, '../../../web/shared'),
+      '@components': path.resolve(__dirname, '../../../components'),
+    }
   },
-  optimizeDeps: {
-    include: ['@supabase/supabase-js', 'react', 'react-dom', 'lucide-react', 'clsx', 'tailwind-merge'],
+  define: {
+    __PLATFORM__: JSON.stringify('web')
   },
   server: {
-    port: 5176,
-    fs: {
-      allow: [
-        // Allow serving files from project root and shared
-        path.resolve(__dirname, '../..'),
-        path.resolve(__dirname, '../../web/shared'),
-      ],
-    },
+    port: 5174,
+    host: true
   },
   build: {
     outDir: 'dist',
-    sourcemap: false,
-    commonjsOptions: {
-      include: [/node_modules/, /shared/],
-    },
-    rollupOptions: {
-      external: [],
-    },
-  },
-});
+    sourcemap: true
+  }
+})

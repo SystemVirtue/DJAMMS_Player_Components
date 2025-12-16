@@ -1,0 +1,1 @@
+export { VideoResultCard } from './VideoResultCard';
