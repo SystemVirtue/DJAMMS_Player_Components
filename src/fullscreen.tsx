@@ -78,7 +78,7 @@ function FullscreenApp() {
   // play commands via IPC. Handling skip here would cause double-skip.
   // NOTE: Play/Pause/Resume are handled by PlayerWindow to avoid duplicate command execution
   // Fullscreen window only receives video data via IPC from PlayerWindow
-  const { isInitialized: supabaseReady } = useSupabase({
+  const { isInitialized: supabaseReady, syncState } = useSupabase({
     autoInit: true
     // Intentionally NOT registering play/pause/resume/volume/seek handlers here
     // These are handled by PlayerWindow to prevent duplicate command execution
