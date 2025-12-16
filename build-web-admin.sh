@@ -42,6 +42,17 @@ if [ ! -d "dist" ]; then
     exit 1
 fi
 
+# Copy build output to project root for Render publishing
+echo "Copying build output to project root..."
+cd ../../..  # Go back to project root (from src/web/admin)
+if [ ! -d "dist" ]; then
+    mkdir dist
+else
+    rm -rf dist/*  # Clean existing content
+fi
+cp -r src/web/admin/dist/* dist/
+
 echo "Build completed successfully!"
+echo "Files ready for deployment:"
 ls -la dist/
 
