@@ -1356,6 +1356,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       }
     };
     loadData();
+
+    // Mark admin console as ready AFTER all initialization is complete
+    console.log('[PlayerWindow] ✅ Admin console initialization complete - marking as ready');
+    setAdminConsoleReady(true);
   }, []); // Empty deps - only run once on mount, but check electronAPI availability inside
 
   // Save queue state whenever it changes (for persistence across app restarts)
@@ -3053,11 +3057,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     }
   };
 
-  // Mark admin console as ready when component mounts
-  useEffect(() => {
-    console.log('[PlayerWindow] Admin console mounted - marking as ready');
-    setAdminConsoleReady(true);
-  }, []);
+  // Admin console readiness is now set after full initialization in the main useEffect
 
   // Sync player status changes with Supabase for watchdog monitoring
   useEffect(() => {
