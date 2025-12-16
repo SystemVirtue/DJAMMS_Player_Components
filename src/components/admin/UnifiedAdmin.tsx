@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { unifiedAPI } from '../../services/UnifiedAPI';
+
 import { usePlatformFeatures } from '../../hooks/usePlatformFeatures';
 import { QueueManager } from './shared/QueueManager';
 import { SearchInterface } from './shared/SearchInterface';
@@ -63,10 +64,10 @@ export const UnifiedAdmin: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="unified-admin-loading min-h-screen bg-gray-100 flex items-center justify-center">
+      <div className="unified-admin-loading min-h-screen bg-ytm-bg flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 text-lg">Loading Admin Console...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ytm-accent mx-auto mb-4"></div>
+          <p className="text-ytm-text-secondary text-lg">Loading Admin Console...</p>
         </div>
       </div>
     );
@@ -74,15 +75,15 @@ export const UnifiedAdmin: React.FC = () => {
 
   if (error) {
     return (
-      <div className="unified-admin-error min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="max-w-md w-full bg-white rounded-lg shadow p-6">
+      <div className="unified-admin-error min-h-screen bg-ytm-bg flex items-center justify-center">
+        <div className="max-w-md w-full bg-ytm-surface rounded-lg shadow p-6">
           <div className="text-center">
             <div className="text-red-500 text-5xl mb-4">⚠️</div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">Connection Error</h2>
-            <p className="text-gray-600 mb-4">{error}</p>
+            <h2 className="text-xl font-semibold text-ytm-text mb-2">Connection Error</h2>
+            <p className="text-ytm-text-secondary mb-4">{error}</p>
             <button
               onClick={() => window.location.reload()}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+              className="w-full px-4 py-2 bg-ytm-accent text-ytm-text rounded hover:bg-red-600 transition-colors"
             >
               Retry Connection
             </button>
@@ -93,16 +94,16 @@ export const UnifiedAdmin: React.FC = () => {
   }
 
   return (
-    <div className="unified-admin min-h-screen bg-gray-100">
-      <header className="admin-header bg-white shadow-sm border-b">
+    <div className="unified-admin min-h-screen bg-ytm-bg">
+      <header className="admin-header bg-ytm-surface shadow-sm border-b border-ytm-divider">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
-              <h1 className="text-2xl font-bold text-gray-900">DJAMMS Admin Console</h1>
+              <h1 className="text-2xl font-bold text-ytm-text">DJAMMS Admin Console</h1>
               {platform.showConnectionStatus && (
                 <div className="flex items-center space-x-2">
                   <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span className="text-sm text-gray-600">
+                  <span className="text-sm text-ytm-text-secondary">
                     Player: {unifiedAPI.currentPlayerId}
                   </span>
                 </div>
@@ -114,8 +115,8 @@ export const UnifiedAdmin: React.FC = () => {
                 onClick={() => setActiveTab('queue')}
                 className={`px-4 py-2 rounded-t-md font-medium transition-colors ${
                   activeTab === 'queue'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-ytm-accent text-ytm-text'
+                    : 'bg-ytm-surface text-ytm-text-secondary hover:bg-ytm-surface-hover'
                 }`}
               >
                 Queue
@@ -124,8 +125,8 @@ export const UnifiedAdmin: React.FC = () => {
                 onClick={() => setActiveTab('search')}
                 className={`px-4 py-2 rounded-t-md font-medium transition-colors ${
                   activeTab === 'search'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-ytm-accent text-ytm-text'
+                    : 'bg-ytm-surface text-ytm-text-secondary hover:bg-ytm-surface-hover'
                 }`}
               >
                 Search
@@ -134,8 +135,8 @@ export const UnifiedAdmin: React.FC = () => {
                 onClick={() => setActiveTab('settings')}
                 className={`px-4 py-2 rounded-t-md font-medium transition-colors ${
                   activeTab === 'settings'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-ytm-accent text-ytm-text'
+                    : 'bg-ytm-surface text-ytm-text-secondary hover:bg-ytm-surface-hover'
                 }`}
               >
                 Settings

@@ -2,6 +2,8 @@ import { insertCommand, subscribeToPlayerState, getPlayerState, getAllLocalVideo
 import type { SupabasePlayerState } from '../types/supabase';
 import type { Video } from '../types';
 
+import type { Video } from '../types';
+
 export class UnifiedAPI {
   private isElectron: boolean;
   private playerId: string;

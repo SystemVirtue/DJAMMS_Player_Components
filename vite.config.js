@@ -39,3 +39,9 @@ export default defineConfig({
   },
   // Removed __PLAYLISTS__ define - playlists loaded at runtime
 })
+  },
+  // Removed __PLAYLISTS__ define - playlists loaded at runtime
+})
+  },
+  // Removed __PLAYLISTS__ define - playlists loaded at runtime
+})
