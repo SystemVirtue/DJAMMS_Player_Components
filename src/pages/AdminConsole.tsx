@@ -1,16 +1,16 @@
 // src/pages/AdminConsole.tsx
 import React from 'react';
-import { UnifiedAdmin } from '../components/admin/UnifiedAdmin';
+import { AdminWindow } from '../components/admin/AdminWindow';
 
 interface AdminConsoleProps {
   className?: string;
 }
 
 export const AdminConsole: React.FC<AdminConsoleProps> = ({ className = '' }) => {
-  // Use the unified admin component for consistent functionality across platforms
+  // Use the admin window component for consistent functionality across platforms
   return (
     <div className={className}>
-      <UnifiedAdmin />
+      <AdminWindow />
     </div>
   );
 };
