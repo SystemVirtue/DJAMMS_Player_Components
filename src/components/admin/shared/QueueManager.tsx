@@ -40,11 +40,10 @@ export const QueueManager: React.FC<QueueManagerProps> = ({
 
   const handlePlayNext = async () => {
     if (queueVideoToPlay && playerState) {
-      const queueIndex = playerState.queue_index ?? 0;
-      // Move the video to position after current (queueIndex + 1)
+      // Move the video to index position 1 (after current which is index 0)
       await onCommand('queue_move', { 
         fromIndex: queueVideoToPlay.index, 
-        toIndex: queueIndex + 1 
+        toIndex: 1 
       });
       setShowQueuePlayDialog(false);
       setQueueVideoToPlay(null);

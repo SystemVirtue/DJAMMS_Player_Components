@@ -720,6 +720,23 @@ class SupabaseService {
         updateData.active_queue = [];
       }
       
+      // ABSOLUTE FINAL GUARANTEE: Ensure active_queue is ALWAYS an array before database update
+      // This prevents any possibility of undefined/null being sent to Supabase
+      // This is a safety net to ensure Web Admin always receives active_queue in Realtime updates
+      if (!Array.isArray(updateData.active_queue)) {
+        logger.error('[SupabaseService] ❌ CRITICAL ERROR: active_queue is not an array - forcing to empty array');
+        updateData.active_queue = [];
+      }
+      
+      // Same guarantee for priority_queue
+      if (updateData.priority_queue === undefined || updateData.priority_queue === null) {
+        updateData.priority_queue = [];
+      }
+      if (!Array.isArray(updateData.priority_queue)) {
+        logger.error('[SupabaseService] ❌ CRITICAL ERROR: priority_queue is not an array - forcing to empty array');
+        updateData.priority_queue = [];
+      }
+      
       // ARCHITECTURE VALIDATION: Ensure activeQueue[0] always matches now_playing_video
       // Index 0 is always now-playing - validate this invariant
       if (updateData.active_queue && updateData.active_queue.length > 0 && updateData.now_playing_video) {
@@ -900,9 +917,25 @@ class SupabaseService {
       }, null, 2);
       const requestId = await getIOLogger().logSent('supabase', requestStr, 'player_state');
 
+      // ABSOLUTE FINAL GUARANTEE BEFORE DATABASE UPDATE: Ensure active_queue is ALWAYS included
+      // This is the last safety check before sending to Supabase to prevent missing active_queue in Realtime updates
+      if (!updateData.active_queue || !Array.isArray(updateData.active_queue)) {
+        logger.error('[SupabaseService] ❌ CRITICAL: active_queue missing or invalid before DB update - forcing to array');
+        updateData.active_queue = this.lastSyncedState?.active_queue || [];
+        if (!Array.isArray(updateData.active_queue)) {
+          updateData.active_queue = [];
+        }
+      }
+      if (!updateData.priority_queue || !Array.isArray(updateData.priority_queue)) {
+        updateData.priority_queue = this.lastSyncedState?.priority_queue || [];
+        if (!Array.isArray(updateData.priority_queue)) {
+          updateData.priority_queue = [];
+        }
+      }
+      
       // #region agent log
       if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
-        (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:760',message:'Sending update to Supabase DB',data:{hasActiveQueue:updateData.active_queue!==undefined,activeQueueLength:updateData.active_queue?.length,hasPriorityQueue:updateData.priority_queue!==undefined,hasNowPlaying:updateData.now_playing_video!==undefined,nowPlayingId:updateData.now_playing_video?.id,updateDataKeys:Object.keys(updateData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
+        (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:760',message:'Sending update to Supabase DB',data:{hasActiveQueue:updateData.active_queue!==undefined,activeQueueLength:updateData.active_queue?.length,hasPriorityQueue:updateData.priority_queue!==undefined,hasNowPlaying:updateData.now_playing_video!==undefined,nowPlayingId:updateData.now_playing_video?.id,updateDataKeys:Object.keys(updateData),isActiveQueueArray:Array.isArray(updateData.active_queue)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
       }
       // #endregion
       // Select updated_at after update to get the actual timestamp from database trigger

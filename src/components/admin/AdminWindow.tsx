@@ -46,20 +46,26 @@ const ActivityFeed = ({ activities }: { activities: Array<{ time: string; action
       <span className="material-symbols-rounded mr-2">history</span>
       Recent Activity
     </h3>
-    <div className="space-y-3">
-      {activities.map((activity, index) => (
-        <div key={index} className="flex items-start space-x-3 py-2">
-          <div className="w-2 h-2 bg-ytm-accent rounded-full mt-2 flex-shrink-0"></div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm text-ytm-text-secondary">
-              <span className="font-medium text-ytm-text">{activity.user}</span>
-              {' '}{activity.action}
-            </p>
-            <p className="text-xs text-ytm-text-secondary mt-1">{activity.time}</p>
+    {activities.length === 0 ? (
+      <div className="text-center py-8">
+        <p className="text-ytm-text-secondary">No recent activity</p>
+      </div>
+    ) : (
+      <div className="space-y-3">
+        {activities.map((activity, index) => (
+          <div key={index} className="flex items-start space-x-3 py-2">
+            <div className="w-2 h-2 bg-ytm-accent rounded-full mt-2 flex-shrink-0"></div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-ytm-text-secondary">
+                <span className="font-medium text-ytm-text">{activity.user}</span>
+                {' '}{activity.action}
+              </p>
+              <p className="text-xs text-ytm-text-secondary mt-1">{activity.time}</p>
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    )}
   </div>
 );
 
@@ -96,6 +102,8 @@ export const AdminWindow: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('queue');
   const [selectedPlaylist, setSelectedPlaylist] = useState<string>('');
   const [showPauseDialog, setShowPauseDialog] = useState(false);
+  const [showLoadPlaylistDialog, setShowLoadPlaylistDialog] = useState(false);
+  const [playlistToLoad, setPlaylistToLoad] = useState<string | null>(null);
 
   // Admin-specific state
   const [playerState, setPlayerState] = useState<SupabasePlayerState | null>(null);
@@ -103,14 +111,8 @@ export const AdminWindow: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Mock data for dashboard
-  const activities = [
-    { time: '2 minutes ago', action: 'added 3 songs to queue', user: 'Admin' },
-    { time: '5 minutes ago', action: 'changed playlist to "Electronic"', user: 'Admin' },
-    { time: '12 minutes ago', action: 'adjusted volume to 75%', user: 'Admin' },
-    { time: '18 minutes ago', action: 'enabled shuffle mode', user: 'Admin' },
-    { time: '25 minutes ago', action: 'connected to player DJAMMS_DEMO', user: 'System' }
-  ];
+  // Activity feed - empty for now (can be populated with real activity data in the future)
+  const activities: Array<{ time: string; action: string; user: string }> = [];
 
   const handleQuickAction = async (action: string) => {
     try {
@@ -193,6 +195,23 @@ export const AdminWindow: React.FC = () => {
 
   const handlePlaylistSelect = (playlistName: string) => {
     setSelectedPlaylist(playlistName);
+    // Switch to Search & Browse tab and show the selected playlist
+    setActiveTab('search');
+  };
+
+  const handlePlaylistPlayClick = (playlistName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPlaylistToLoad(playlistName);
+    setShowLoadPlaylistDialog(true);
+  };
+
+  const confirmLoadPlaylist = async () => {
+    if (playlistToLoad) {
+      await handleCommand('load_playlist', { playlistName: playlistToLoad });
+      setActiveTab('queue');
+      setShowLoadPlaylistDialog(false);
+      setPlaylistToLoad(null);
+    }
   };
 
   // Get current playlist from active_queue (the playlist currently populating the active_queue)
@@ -294,6 +313,7 @@ export const AdminWindow: React.FC = () => {
             <SearchInterface
               playlists={playlists}
               onCommand={handleCommand}
+              selectedPlaylist={selectedPlaylist || null}
             />
           </div>
         );
@@ -572,11 +592,7 @@ export const AdminWindow: React.FC = () => {
                     <span className="playlist-count">{videos.length}</span>
                     <button
                       className="playlist-play-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCommand('load_playlist', { playlistName: name });
-                        setActiveTab('queue');
-                      }}
+                      onClick={(e) => handlePlaylistPlayClick(name, e)}
                       style={{
                         display: 'none',
                         position: 'absolute',
@@ -641,7 +657,7 @@ export const AdminWindow: React.FC = () => {
                   <SystemStatusCard
                     title="Queue Length"
                     status="Active"
-                    value={`${playerState?.queue?.length || 0} tracks`}
+                    value={`${playerState?.active_queue?.length || 0} tracks`}
                     icon="queue_music"
                     color="blue"
                   />
@@ -803,6 +819,83 @@ export const AdminWindow: React.FC = () => {
               </button>
               <button 
                 onClick={() => setShowPauseDialog(false)}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: 'transparent',
+                  color: 'var(--ytm-text-secondary)',
+                  border: '1px solid var(--ytm-divider)',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Load Playlist Confirmation Dialog */}
+      {showLoadPlaylistDialog && playlistToLoad && (
+        <div 
+          className="dialog-overlay" 
+          onClick={() => { setShowLoadPlaylistDialog(false); setPlaylistToLoad(null); }}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}
+        >
+          <div 
+            className="dialog-box" 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--ytm-surface)',
+              borderRadius: '8px',
+              padding: '24px',
+              minWidth: '300px',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)'
+            }}
+          >
+            <h3 style={{ 
+              marginBottom: '16px', 
+              fontSize: '18px', 
+              fontWeight: 'bold',
+              color: 'var(--ytm-text)'
+            }}>
+              Load Playlist
+            </h3>
+            <p style={{ 
+              marginBottom: '20px',
+              color: 'var(--ytm-text-secondary)'
+            }}>
+              Load playlist "{getPlaylistDisplayName(playlistToLoad)}"?
+            </p>
+            <div className="dialog-actions" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button 
+                className="dialog-btn dialog-btn-primary" 
+                onClick={confirmLoadPlaylist}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#4CAF50',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                LOAD
+              </button>
+              <button 
+                onClick={() => { setShowLoadPlaylistDialog(false); setPlaylistToLoad(null); }}
                 style={{
                   padding: '8px 16px',
                   backgroundColor: 'transparent',

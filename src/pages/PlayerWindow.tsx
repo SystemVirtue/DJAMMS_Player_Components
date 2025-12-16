@@ -2177,7 +2177,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     syncDebounceTimeout: null as NodeJS.Timeout | null, // Debounce timeout for syncs
     lastPlaybackSyncTime: 0, // Tracks when we last synced playback position
     lastSyncedPlaybackPosition: 0, // Tracks last synced playback position
-    isReceivingExternalUpdate: false // Flag to prevent syncing when receiving external state updates
+    isReceivingExternalUpdate: false, // Flag to prevent syncing when receiving external state updates
+    lastSyncedStatus: null as 'playing' | 'paused' | null // Track last synced status to prevent unnecessary syncs
   });
   
   // Keep refs in sync with state
@@ -3366,7 +3367,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Admin console readiness is now set after full initialization in the main useEffect
 
   // Sync player status changes with Supabase for watchdog monitoring
-  // Only sync when significant state changes occur, not when isPlaying is updated by external sources
+  // Only sync when status actually changes, not on every playbackTime update
+  // This prevents recursion loops where status keeps toggling
   useEffect(() => {
     if (supabaseInitialized && currentVideo) {
       // Don't sync if we're currently receiving external state updates
@@ -3375,40 +3377,59 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       }
 
       const playerStatus = isPlaying ? 'playing' : 'paused';
+      
+      // Only sync status if it actually changed from last sync
+      // This prevents recursion loops where status keeps toggling
+      if (syncStateRef.current.lastSyncedStatus === playerStatus) {
+        // Status hasn't changed - don't sync status
+        // Other fields (queue, position, etc.) are synced separately via other syncState calls
+        return;
+      }
+
+      // Status changed - update the ref and sync
+      syncStateRef.current.lastSyncedStatus = playerStatus;
       console.log(`[PlayerWindow] Syncing player status: ${playerStatus} for video: ${currentVideo.title}`);
 
-      syncState({
-        status: playerStatus,
-        isPlaying,
-        currentVideo,
-        currentPosition: playbackTime,
-        volume: volume / 100,
-        activeQueue: queue.map(v => ({
-          id: v.id,
-          src: v.src,
-          path: v.path,
-          title: v.title,
-          artist: v.artist,
-          sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-          duration: v.duration,
-          playlist: v.playlist,
-          playlistDisplayName: v.playlistDisplayName
-        })),
-        priorityQueue: priorityQueue.map(v => ({
-          id: v.id,
-          src: v.src,
-          path: v.path,
-          title: v.title,
-          artist: v.artist,
-          sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-          duration: v.duration,
-          playlist: v.playlist,
-          playlistDisplayName: v.playlistDisplayName
-        })),
-        queueIndex: 0
-      });
+      // Debounce status sync to prevent rapid toggling
+      if (syncStateRef.current.syncDebounceTimeout) {
+        clearTimeout(syncStateRef.current.syncDebounceTimeout);
+      }
+
+      syncStateRef.current.syncDebounceTimeout = setTimeout(() => {
+        syncState({
+          status: playerStatus,
+          isPlaying,
+          currentVideo,
+          currentPosition: playbackTime,
+          volume: volume / 100,
+          activeQueue: queue.map(v => ({
+            id: v.id,
+            src: v.src,
+            path: v.path,
+            title: v.title,
+            artist: v.artist,
+            sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
+            duration: v.duration,
+            playlist: v.playlist,
+            playlistDisplayName: v.playlistDisplayName
+          })),
+          priorityQueue: priorityQueue.map(v => ({
+            id: v.id,
+            src: v.src,
+            path: v.path,
+            title: v.title,
+            artist: v.artist,
+            sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
+            duration: v.duration,
+            playlist: v.playlist,
+            playlistDisplayName: v.playlistDisplayName
+          })),
+          queueIndex: 0
+        });
+        syncStateRef.current.syncDebounceTimeout = null;
+      }, 500); // 500ms debounce to prevent rapid toggling
     }
-  }, [currentVideo, playbackTime, volume, queue, priorityQueue, supabaseInitialized]); // Removed isPlaying from deps
+  }, [currentVideo, isPlaying, volume, queue, priorityQueue, supabaseInitialized]); // Removed playbackTime - it has its own debounced sync
 
   return (
     <div className={`app ${className}`}>

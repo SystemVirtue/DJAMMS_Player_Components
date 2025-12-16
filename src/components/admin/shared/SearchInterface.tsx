@@ -1,39 +1,114 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { unifiedAPI } from '../../../services/UnifiedAPI';
+import { cleanVideoTitle, getDisplayArtist, getPlaylistDisplayName, formatDuration } from '../../../utils/playlistHelpers';
 import type { Video } from '../../../types';
 
 interface SearchInterfaceProps {
   playlists: Record<string, Video[]>;
   onCommand: (command: string, data?: any) => Promise<void>;
+  selectedPlaylist?: string | null;
 }
 
 export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   playlists,
-  onCommand
+  onCommand,
+  selectedPlaylist: propSelectedPlaylist = null
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Video[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [activeTab, setActiveTab] = useState<'search' | 'browse'>('browse');
+  const [searchScope, setSearchScope] = useState<'all' | 'playlist' | 'karaoke' | 'no-karaoke'>('all');
+  const [searchSort, setSearchSort] = useState<'artist' | 'az' | 'title' | 'playlist'>('artist');
+  const [searchLimit, setSearchLimit] = useState(100);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(propSelectedPlaylist);
 
+  // Update selectedPlaylist when prop changes
+  useEffect(() => {
+    if (propSelectedPlaylist) {
+      setSelectedPlaylist(propSelectedPlaylist);
+      setSearchScope('playlist');
+    }
+  }, [propSelectedPlaylist]);
+
+  // Get all videos from playlists
+  const allVideos = useMemo(() => {
+    const videos = Object.values(playlists).flat();
+    const seen = new Set<string>();
+    return videos.filter(video => {
+      const key = video.path || video.src || `${video.title}|${video.artist}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [playlists]);
+
+  // Perform search
   useEffect(() => {
     const performSearch = async () => {
-      if (!searchQuery.trim() && activeTab === 'search') {
-        setSearchResults([]);
+      if (!searchQuery.trim()) {
+        // If no search query, show videos based on scope
+        let videos: Video[] = [];
+        
+        if (searchScope === 'playlist' && selectedPlaylist) {
+          videos = playlists[selectedPlaylist] || [];
+        } else if (searchScope === 'karaoke') {
+          videos = allVideos.filter(v => v.title?.toLowerCase().includes('karaoke') || v.artist?.toLowerCase().includes('karaoke'));
+        } else if (searchScope === 'no-karaoke') {
+          videos = allVideos.filter(v => !v.title?.toLowerCase().includes('karaoke') && !v.artist?.toLowerCase().includes('karaoke'));
+        } else {
+          videos = allVideos;
+        }
+
+        // Sort videos
+        const sorted = [...videos].sort((a, b) => {
+          switch (searchSort) {
+            case 'artist':
+              return (a.artist || '').localeCompare(b.artist || '');
+            case 'az':
+            case 'title':
+              return (a.title || '').localeCompare(b.title || '');
+            case 'playlist':
+              return (a.playlist || '').localeCompare(b.playlist || '');
+            default:
+              return 0;
+          }
+        });
+
+        setSearchResults(sorted);
+        setIsSearching(false);
         return;
       }
 
       setIsSearching(true);
       try {
-        if (activeTab === 'search' && searchQuery.trim()) {
-          // Use unified API for search
-          const results = await unifiedAPI.searchVideos(searchQuery);
-          setSearchResults(results);
-        } else if (activeTab === 'browse') {
-          // Show all videos for browsing
-          const allVideos = Object.values(playlists).flat();
-          setSearchResults(allVideos);
+        const results = await unifiedAPI.searchVideos(searchQuery);
+        
+        // Apply scope filter
+        let filtered = results;
+        if (searchScope === 'playlist' && selectedPlaylist) {
+          filtered = results.filter(v => v.playlist === selectedPlaylist);
+        } else if (searchScope === 'karaoke') {
+          filtered = results.filter(v => v.title?.toLowerCase().includes('karaoke') || v.artist?.toLowerCase().includes('karaoke'));
+        } else if (searchScope === 'no-karaoke') {
+          filtered = results.filter(v => !v.title?.toLowerCase().includes('karaoke') && !v.artist?.toLowerCase().includes('karaoke'));
         }
+
+        // Sort results
+        const sorted = [...filtered].sort((a, b) => {
+          switch (searchSort) {
+            case 'artist':
+              return (a.artist || '').localeCompare(b.artist || '');
+            case 'az':
+            case 'title':
+              return (a.title || '').localeCompare(b.title || '');
+            case 'playlist':
+              return (a.playlist || '').localeCompare(b.playlist || '');
+            default:
+              return 0;
+          }
+        });
+
+        setSearchResults(sorted);
       } catch (error) {
         console.error('Search failed:', error);
         setSearchResults([]);
@@ -44,9 +119,10 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
 
     const debounceTimer = setTimeout(performSearch, 300);
     return () => clearTimeout(debounceTimer);
-  }, [searchQuery, playlists, activeTab]);
+  }, [searchQuery, searchScope, searchSort, selectedPlaylist, playlists, allVideos]);
 
-  const handleAddToQueue = async (video: Video) => {
+  const handleVideoClick = async (video: Video, event: React.MouseEvent) => {
+    event.stopPropagation();
     await onCommand('queue_add', {
       video: {
         id: video.id,
@@ -55,113 +131,236 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
         src: video.src,
         path: video.path,
         duration: video.duration,
-        playlist: video.playlist
-      }
+        playlist: video.playlist,
+        playlistDisplayName: video.playlistDisplayName
+      },
+      queueType: 'priority'
     });
   };
 
-  const handlePlayNow = async (video: Video) => {
-    await onCommand('play_now', {
-      video: {
-        id: video.id,
-        title: video.title,
-        artist: video.artist,
-        src: video.src,
-        path: video.path,
-        duration: video.duration,
-        playlist: video.playlist
-      }
-    });
+  const handleScopeChange = (scope: 'all' | 'playlist' | 'karaoke' | 'no-karaoke') => {
+    setSearchScope(scope);
+    setSearchLimit(100);
+    if (scope !== 'playlist') setSelectedPlaylist(null);
   };
+
+  // Helper to get playlist display name for selected playlist
+  const getSelectedPlaylistDisplayName = () => {
+    if (!selectedPlaylist) return '';
+    return playlists[selectedPlaylist]?.[0]?.playlistDisplayName || getPlaylistDisplayName(selectedPlaylist);
+  };
+
+  const searchTotalCount = searchResults.length;
+  const displayedResults = searchResults.slice(0, searchLimit);
 
   return (
-    <div className="search-interface bg-ytm-surface rounded-lg shadow-sm p-6">
-      <div className="mb-6">
-        <div className="flex border-b border-ytm-divider mb-4">
+    <div className="tab-content active">
+      <div className="search-header" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
+        <div className="search-input-container" style={{ flex: '1 1 300px', minWidth: '200px', position: 'relative' }}>
+          <span className="material-symbols-rounded" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--ytm-text-secondary)' }}>search</span>
+          <input
+            type="text"
+            placeholder="Search all music…"
+            className="search-input"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setSearchLimit(100);
+            }}
+            style={{
+              width: '100%',
+              padding: '8px 12px 8px 40px',
+              backgroundColor: 'var(--ytm-surface)',
+              border: '1px solid var(--ytm-divider)',
+              borderRadius: '4px',
+              color: 'var(--ytm-text)',
+              fontSize: '14px'
+            }}
+          />
+          {isSearching && <span className="material-symbols-rounded" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', animation: 'spin 1s linear infinite' }}>progress_activity</span>}
+        </div>
+        <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ color: 'var(--ytm-text-secondary)', fontSize: '12px', marginRight: '4px' }}>Filter:</span>
+          {selectedPlaylist && (
+            <button
+              className={`radio-btn ${searchScope === 'playlist' ? 'active' : ''}`}
+              onClick={() => handleScopeChange('playlist')}
+              style={{
+                padding: '4px 12px',
+                fontSize: '12px',
+                backgroundColor: searchScope === 'playlist' ? 'var(--ytm-accent)' : 'transparent',
+                color: searchScope === 'playlist' ? 'white' : 'var(--ytm-text-secondary)',
+                border: '1px solid var(--ytm-divider)',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: searchScope === 'playlist' ? 'bold' : 'normal'
+              }}
+            >
+              📁 {getSelectedPlaylistDisplayName()}
+            </button>
+          )}
           <button
-            onClick={() => setActiveTab('browse')}
-            className={`px-4 py-2 font-medium transition-colors ${
-              activeTab === 'browse'
-                ? 'text-ytm-accent border-b-2 border-ytm-accent'
-                : 'text-ytm-text-secondary hover:text-ytm-text'
-            }`}
+            className={`radio-btn ${searchScope === 'all' ? 'active' : ''}`}
+            onClick={() => handleScopeChange('all')}
+            style={{
+              padding: '4px 12px',
+              fontSize: '12px',
+              backgroundColor: searchScope === 'all' ? 'var(--ytm-accent)' : 'transparent',
+              color: searchScope === 'all' ? 'white' : 'var(--ytm-text-secondary)',
+              border: '1px solid var(--ytm-divider)',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
           >
-            Browse Library
+            All Music
           </button>
           <button
-            onClick={() => setActiveTab('search')}
-            className={`px-4 py-2 font-medium transition-colors ${
-              activeTab === 'search'
-                ? 'text-ytm-accent border-b-2 border-ytm-accent'
-                : 'text-ytm-text-secondary hover:text-ytm-text'
-            }`}
+            className={`radio-btn ${searchScope === 'karaoke' ? 'active' : ''}`}
+            onClick={() => handleScopeChange('karaoke')}
+            style={{
+              padding: '4px 12px',
+              fontSize: '12px',
+              backgroundColor: searchScope === 'karaoke' ? 'var(--ytm-accent)' : 'transparent',
+              color: searchScope === 'karaoke' ? 'white' : 'var(--ytm-text-secondary)',
+              border: '1px solid var(--ytm-divider)',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
           >
-            Search
+            Karaoke Only
+          </button>
+          <button
+            className={`radio-btn ${searchScope === 'no-karaoke' ? 'active' : ''}`}
+            onClick={() => handleScopeChange('no-karaoke')}
+            style={{
+              padding: '4px 12px',
+              fontSize: '12px',
+              backgroundColor: searchScope === 'no-karaoke' ? 'var(--ytm-accent)' : 'transparent',
+              color: searchScope === 'no-karaoke' ? 'white' : 'var(--ytm-text-secondary)',
+              border: '1px solid var(--ytm-divider)',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Hide Karaoke
           </button>
         </div>
-
-        {activeTab === 'search' && (
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search for songs, artists, or albums..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-4 py-3 pl-12 border border-ytm-divider rounded-lg focus:outline-none focus:ring-2 focus:ring-ytm-accent focus:border-transparent bg-ytm-surface text-ytm-text placeholder-ytm-text-secondary"
-            />
-            <div className="absolute left-3 top-3.5 text-ytm-text-secondary">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-          </div>
-        )}
+        <div className="search-radio-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ color: 'var(--ytm-text-secondary)', fontSize: '12px', marginRight: '4px' }}>Sort:</span>
+          <button
+            className={`radio-btn ${searchSort === 'artist' ? 'active' : ''}`}
+            onClick={() => setSearchSort('artist')}
+            style={{
+              padding: '4px 12px',
+              fontSize: '12px',
+              backgroundColor: searchSort === 'artist' ? 'var(--ytm-accent)' : 'transparent',
+              color: searchSort === 'artist' ? 'white' : 'var(--ytm-text-secondary)',
+              border: '1px solid var(--ytm-divider)',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Artist
+          </button>
+          <button
+            className={`radio-btn ${searchSort === 'az' || searchSort === 'title' ? 'active' : ''}`}
+            onClick={() => setSearchSort('az')}
+            style={{
+              padding: '4px 12px',
+              fontSize: '12px',
+              backgroundColor: (searchSort === 'az' || searchSort === 'title') ? 'var(--ytm-accent)' : 'transparent',
+              color: (searchSort === 'az' || searchSort === 'title') ? 'white' : 'var(--ytm-text-secondary)',
+              border: '1px solid var(--ytm-divider)',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Song
+          </button>
+          <button
+            className={`radio-btn ${searchSort === 'playlist' ? 'active' : ''}`}
+            onClick={() => setSearchSort('playlist')}
+            style={{
+              padding: '4px 12px',
+              fontSize: '12px',
+              backgroundColor: searchSort === 'playlist' ? 'var(--ytm-accent)' : 'transparent',
+              color: searchSort === 'playlist' ? 'white' : 'var(--ytm-text-secondary)',
+              border: '1px solid var(--ytm-divider)',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Playlist
+          </button>
+        </div>
       </div>
-
-      <div className="space-y-4">
-        {isSearching && (
-          <div className="text-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ytm-accent mx-auto mb-2"></div>
-            <p className="text-ytm-text-secondary">Searching...</p>
-          </div>
-        )}
-
-        {!isSearching && searchResults.map((video, index) => (
-          <div key={`${video.id}-${index}`} className="flex items-center justify-between p-4 border border-ytm-divider rounded-lg hover:bg-ytm-surface-hover transition-colors">
-            <div className="flex items-center space-x-4 flex-1 min-w-0">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 bg-ytm-surface-hover rounded flex items-center justify-center">
-                  <svg className="w-6 h-6 text-ytm-text-secondary" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                  </svg>
-                </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-lg font-medium text-ytm-text truncate">{video.title}</h3>
-                <p className="text-sm text-ytm-text-secondary truncate">{video.artist}</p>
-                <p className="text-xs text-ytm-text-secondary">{video.playlist}</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => handlePlayNow(video)}
-                className="px-3 py-1 text-sm bg-ytm-accent text-ytm-text rounded hover:bg-red-600 transition-colors"
-              >
-                Play Now
-              </button>
-              <button
-                onClick={() => handleAddToQueue(video)}
-                className="px-3 py-1 text-sm bg-ytm-surface-hover text-ytm-text rounded hover:bg-ytm-surface transition-colors"
-              >
-                Add to Queue
-              </button>
-            </div>
-          </div>
-        ))}
-
-        {searchResults.length === 0 && !isSearching && (
-          <div className="text-center py-12 text-ytm-text-secondary">
-            {activeTab === 'search' ? 'No search results found' : 'No music found in library'}
+      <div className="table-container" style={{ overflowX: 'auto' }}>
+        <table className="media-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--ytm-divider)' }}>
+              <th className="col-index" style={{ textAlign: 'left', padding: '12px', fontSize: '12px', fontWeight: '600', color: 'var(--ytm-text-secondary)', width: '60px' }}>#</th>
+              <th className="col-title" style={{ textAlign: 'left', padding: '12px', fontSize: '12px', fontWeight: '600', color: 'var(--ytm-text-secondary)' }}>Title</th>
+              <th className="col-artist" style={{ textAlign: 'left', padding: '12px', fontSize: '12px', fontWeight: '600', color: 'var(--ytm-text-secondary)' }}>Artist</th>
+              <th className="col-duration" style={{ textAlign: 'left', padding: '12px', fontSize: '12px', fontWeight: '600', color: 'var(--ytm-text-secondary)', width: '80px' }}>Duration</th>
+              <th className="col-playlist" style={{ textAlign: 'left', padding: '12px', fontSize: '12px', fontWeight: '600', color: 'var(--ytm-text-secondary)' }}>Playlist</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isSearching && displayedResults.length === 0 ? (
+              <tr className="empty-state">
+                <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--ytm-text-secondary)' }}>Loading...</td>
+              </tr>
+            ) : displayedResults.length === 0 ? (
+              <tr className="empty-state">
+                <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--ytm-text-secondary)' }}>
+                  {searchScope === 'playlist' && selectedPlaylist ? 'No tracks in this playlist' : 'No tracks found'}
+                </td>
+              </tr>
+            ) : (
+              displayedResults.map((track, index) => (
+                <tr 
+                  key={`${track.id}-${index}`} 
+                  onClick={(e) => handleVideoClick(track, e)} 
+                  style={{ 
+                    cursor: 'pointer',
+                    borderBottom: '1px solid var(--ytm-divider)',
+                    transition: 'background-color 0.15s'
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--ytm-surface-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                >
+                  <td style={{ padding: '12px', fontSize: '14px', color: 'var(--ytm-text-secondary)' }}>{index + 1}</td>
+                  <td className="col-title" style={{ padding: '12px', fontSize: '14px', fontWeight: '500', color: 'var(--ytm-text)' }}>{cleanVideoTitle(track.title)}</td>
+                  <td style={{ padding: '12px', fontSize: '14px', color: 'var(--ytm-text-secondary)' }}>{getDisplayArtist(track.artist)}</td>
+                  <td style={{ padding: '12px', fontSize: '14px', color: 'var(--ytm-text-secondary)' }}>{formatDuration(track.duration)}</td>
+                  <td style={{ padding: '12px', fontSize: '14px', color: 'var(--ytm-text-secondary)' }}>{track.playlistDisplayName || getPlaylistDisplayName(track.playlist || '')}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        {searchTotalCount > displayedResults.length && (
+          <div className="load-more-container" style={{ padding: '12px', textAlign: 'center' }}>
+            <button 
+              className="action-btn"
+              onClick={() => setSearchLimit(prev => prev + 100)}
+              style={{
+                marginRight: '8px',
+                padding: '8px 16px',
+                backgroundColor: 'var(--ytm-accent)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+              disabled={isSearching}
+            >
+              {isSearching ? 'Loading...' : `Load More (${searchTotalCount - displayedResults.length} remaining)`}
+            </button>
+            <span style={{ color: 'var(--ytm-text-secondary)', fontSize: '12px' }}>
+              Showing {displayedResults.length} of {searchTotalCount} tracks
+            </span>
           </div>
         )}
       </div>
