@@ -662,10 +662,23 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       await migrateSupabasePlaylistNames(playlists);
     },
 
-    onLoadPlaylist: (playlistName: string, shuffle?: boolean) => {
+    onLoadPlaylist: async (playlistName: string, shuffle?: boolean) => {
       console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
 
-      // Find the playlist (may have YouTube ID prefix)
+      // Refresh playlists from disk to ensure we have the latest changes
+      if (isElectron) {
+        try {
+          const { playlists: refreshedPlaylists } = await (window as any).electronAPI.getPlaylists();
+          if (refreshedPlaylists) {
+            setPlaylists(refreshedPlaylists);
+            localSearchService.indexVideos(refreshedPlaylists);
+          }
+        } catch (error) {
+          console.warn('[PlayerWindow] Failed to refresh playlists:', error);
+        }
+      }
+
+      // Find the playlist (may have YouTube ID prefix) - use the refreshed playlists
       const playlistKey = Object.keys(playlists).find(key =>
         key === playlistName || key.includes(playlistName)
       );
@@ -1902,17 +1915,44 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     setSearchLimit(100); // Reset pagination
   };
 
-  const handlePlayButtonClick = (e: React.MouseEvent, playlistName: string) => {
+  const handlePlayButtonClick = async (e: React.MouseEvent, playlistName: string) => {
     e.stopPropagation();
+
+    // Refresh playlists from disk before showing load dialog
+    if (isElectron) {
+      try {
+        const { playlists: refreshedPlaylists } = await (window as any).electronAPI.getPlaylists();
+        if (refreshedPlaylists) {
+          setPlaylists(refreshedPlaylists);
+          localSearchService.indexVideos(refreshedPlaylists);
+        }
+      } catch (error) {
+        console.warn('[PlayerWindow] Failed to refresh playlists:', error);
+      }
+    }
+
     setPlaylistToLoad(playlistName);
     setShowLoadDialog(true);
   };
 
-  const confirmLoadPlaylist = () => {
+  const confirmLoadPlaylist = async () => {
     if (playlistToLoad) {
       // Set tab to 'queue' when loading a playlist
       setCurrentTab('queue');
-      
+
+      // Refresh playlists from disk to ensure we have the latest changes
+      if (isElectron) {
+        try {
+          const { playlists: refreshedPlaylists } = await (window as any).electronAPI.getPlaylists();
+          if (refreshedPlaylists) {
+            setPlaylists(refreshedPlaylists);
+            localSearchService.indexVideos(refreshedPlaylists);
+          }
+        } catch (error) {
+          console.warn('[PlayerWindow] Failed to refresh playlists:', error);
+        }
+      }
+
       setActivePlaylist(playlistToLoad);
       setSelectedPlaylist(null);
       const playlistTracks = playlists[playlistToLoad] || [];
