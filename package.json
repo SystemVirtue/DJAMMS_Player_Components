@@ -44,7 +44,7 @@
     "dev:kiosk": "npm run dev --prefix web/kiosk",
     "dev:admin": "npm run dev --prefix src/web/admin",
     "build:kiosk": "npm run build --prefix web/kiosk",
-    "build:admin": "npm run build --prefix src/web/admin",
+    "build:admin": "cd src/web/admin && npm install && npm run build",
     "clean": "rm -rf dist/ web/kiosk/dist/ src/web/admin/dist/ node_modules/.vite",
     "clean:all": "npm run clean && rm -rf node_modules/",
     "fresh-install": "npm run clean:all && npm install",
