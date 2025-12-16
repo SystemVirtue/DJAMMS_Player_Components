@@ -1302,16 +1302,16 @@ function convertToDjammsUrl(video) {
 ipcMain.handle('control-player-window', async (event, action, data) => {
   console.log('[Electron] control-player-window called:', action, 'fullscreenWindow exists:', !!fullscreenWindow);
 
-  // Convert video data for proper playback
-  if (action === 'play' && data) {
-    console.log('[Electron] 🎬 BEFORE conversion - video object:', {
+  // Convert video data for proper playback (both play and preload actions)
+  if ((action === 'play' || action === 'preload') && data) {
+    console.log(`[Electron] 🎬 BEFORE conversion - video object (${action}):`, {
       title: data.title,
       src: data.src,
       path: data.path,
       id: data.id
     });
     data = convertToDjammsUrl(data);
-    console.log('[Electron] 🎬 AFTER conversion - video object:');
+    console.log(`[Electron] 🎬 AFTER conversion - video object (${action}):`);
     console.log('[Electron] 🎬   - title:', data.title);
     console.log('[Electron] 🎬   - src:', data.src);
     console.log('[Electron] 🎬   - path:', data.path);
@@ -1342,7 +1342,7 @@ ipcMain.handle('control-player-window', async (event, action, data) => {
     await new Promise(resolve => setTimeout(resolve, 1000));
     if (fullscreenWindow) {
       console.log('[Electron] ✅ Fullscreen window created, sending play command');
-      if (action === 'play' && data) {
+      if ((action === 'play' || action === 'preload') && data) {
         data = convertToDjammsUrl(data);
         console.log('[Electron] Video object being sent after creation - src:', data.src, 'path:', data.path);
       }

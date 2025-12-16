@@ -352,6 +352,8 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
   const hasInitializedRef = useRef(false);
   const lastAutoInitRef = useRef(false);
   const lastPlayerIdRef = useRef<string | undefined>(undefined);
+  const initializationInProgressRef = useRef(false); // Prevent concurrent initializations
+
   useEffect(() => {
     // Re-initialize if playerId changed (even if already initialized)
     const playerIdChanged = playerId !== lastPlayerIdRef.current;
@@ -360,16 +362,23 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
       console.log(`[useSupabase] Player ID changed to ${playerId} - re-initializing`);
       hasInitializedRef.current = false; // Reset to allow re-initialization
     }
-    
+
     // Only initialize when autoInit changes from false to true OR playerId changed
-    if (autoInit && (playerIdChanged || (!lastAutoInitRef.current && !hasInitializedRef.current))) {
+    // AND not already initializing
+    if (autoInit && !initializationInProgressRef.current &&
+        (playerIdChanged || (!lastAutoInitRef.current && !hasInitializedRef.current))) {
       hasInitializedRef.current = true;
       lastAutoInitRef.current = true;
-      initialize();
+      initializationInProgressRef.current = true;
+
+      initialize().finally(() => {
+        initializationInProgressRef.current = false;
+      });
     } else if (!autoInit) {
       // Reset when autoInit becomes false
       lastAutoInitRef.current = false;
       hasInitializedRef.current = false;
+      initializationInProgressRef.current = false;
     }
 
     // Cleanup on unmount

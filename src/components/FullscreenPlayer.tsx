@@ -48,6 +48,10 @@ interface FullscreenPlayerProps {
 
 export interface FullscreenPlayerRef {
   skipWithFade: () => void;
+  playVideo: (video: Video) => void;
+  pauseVideo: () => void;
+  resumeVideo: () => void;
+  preloadVideo: (video: Video) => void;
 }
 
 export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayerProps>(({
@@ -73,12 +77,14 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
   const playerRef = useRef<DJAMMSPlayerRef>(null);
   const prevVideoRef = useRef<Video | null>(null);
   const prevIsPlayingRef = useRef<boolean>(false);
-  const prevPreloadVideoRef = useRef<Video | null>(null);
+  const prevPreloadVideoRef = useRef<string | null>(null);
 
   // Handle preload video changes
   useEffect(() => {
-    if (preloadVideo && preloadVideo !== prevPreloadVideoRef.current) {
-      prevPreloadVideoRef.current = preloadVideo;
+    // Compare by video ID to prevent duplicate preloads of the same video
+    const videoId = preloadVideo?.id || null;
+    if (preloadVideo && videoId && videoId !== prevPreloadVideoRef.current) {
+      prevPreloadVideoRef.current = videoId;
       if (playerRef.current?.preloadVideo) {
         console.log('[FullscreenPlayer] Preloading video:', preloadVideo.title);
         playerRef.current.preloadVideo(preloadVideo);
@@ -86,11 +92,31 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
     }
   }, [preloadVideo]);
 
-  // Expose skipWithFade to parent via ref
+  // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
     skipWithFade: () => {
       if (playerRef.current) {
         playerRef.current.skipWithFade();
+      }
+    },
+    playVideo: (video: Video) => {
+      if (playerRef.current) {
+        playerRef.current.playVideo(video);
+      }
+    },
+    pauseVideo: () => {
+      if (playerRef.current) {
+        playerRef.current.pauseVideo();
+      }
+    },
+    resumeVideo: () => {
+      if (playerRef.current) {
+        playerRef.current.resumeVideo();
+      }
+    },
+    preloadVideo: (video: Video) => {
+      if (playerRef.current) {
+        playerRef.current.preloadVideo(video);
       }
     }
   }), []);

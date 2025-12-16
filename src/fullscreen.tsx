@@ -141,9 +141,9 @@ function FullscreenApp() {
           setIsPlaying(true);
 
           // Actually trigger video playback using the player ref
-          if (data && playerRef.current?.playVideo) {
+          if (data && fullscreenPlayerRef.current?.playVideo) {
             console.log('[FullscreenApp] Triggering playVideo for:', data.title);
-            playerRef.current.playVideo(data);
+            fullscreenPlayerRef.current.playVideo(data);
           } else {
             console.warn('[FullscreenApp] Cannot play video - player not ready yet. Video will be set when player initializes.');
             // The video state will be set, and the FullscreenPlayer should handle it when it mounts
@@ -151,16 +151,16 @@ function FullscreenApp() {
           break
         case 'pause':
           setIsPlaying(false);
-          if (playerRef.current?.pauseVideo) {
+          if (fullscreenPlayerRef.current?.pauseVideo) {
             console.log('[FullscreenApp] Triggering pauseVideo');
-            playerRef.current.pauseVideo();
+            fullscreenPlayerRef.current.pauseVideo();
           }
           break
         case 'resume':
           setIsPlaying(true);
-          if (playerRef.current?.resumeVideo) {
+          if (fullscreenPlayerRef.current?.resumeVideo) {
             console.log('[FullscreenApp] Triggering resumeVideo');
-            playerRef.current.resumeVideo();
+            fullscreenPlayerRef.current.resumeVideo();
           }
           break
         case 'skip':
@@ -191,20 +191,14 @@ function FullscreenApp() {
           break
         case 'preload':
           try {
-            setPreloadVideo(data);
-            console.log('[FullscreenApp] Received preload command:', data);
-
-            // Actually trigger the preload using the player ref
-            if (data && playerRef.current?.preloadVideo) {
-              console.log('[FullscreenApp] Triggering preload for video:', data.title);
-              playerRef.current.preloadVideo(data);
-            } else {
-              console.warn('[FullscreenApp] Cannot preload - no video data or player not ready yet. Will retry when player is ready.');
-              // Store the preload request to execute when player becomes available
-              setPendingPreload(data);
+            if (data) {
+              console.log('[FullscreenApp] Received preload command:', data.title);
+              // Only set the preloadVideo state - FullscreenPlayer will handle the actual preload
+              // This prevents duplicate preloads and ensures proper sequencing
+              setPreloadVideo(data);
             }
           } catch (error) {
-            console.warn('Failed to preload video', error)
+            console.warn('Failed to handle preload command', error)
           }
           break
         case 'updateSettings':
