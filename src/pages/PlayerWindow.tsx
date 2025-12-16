@@ -2230,6 +2230,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   // Track the last preloaded video ID to prevent duplicate preloads
   const lastPreloadedVideoIdRef = useRef<string | null>(null);
 
+  // Request initial state (only once per component mount)
+  const initialStateRequestedRef = useRef(false);
+
   // Reset preload tracking when current video changes (allows re-preloading if video loops back)
   useEffect(() => {
     if (currentVideo?.id) {
@@ -2614,9 +2617,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         }, 100);
       }
     });
-    
+
     // Request initial state (only once per component mount)
-    const initialStateRequestedRef = useRef(false);
     if (!initialStateRequestedRef.current) {
       initialStateRequestedRef.current = true;
       (window as any).electronAPI.getQueueState?.().then(async (state: any) => {
