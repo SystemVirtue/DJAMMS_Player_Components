@@ -406,7 +406,7 @@ export const AdminWindow: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-ytm-text">DJAMMS Admin Console</h1>
-                <p className="text-sm text-ytm-text-secondary">Professional Media Player Management</p>
+                <p className="text-sm text-ytm-text-secondary">Digital Jukebox And Media Management System</p>
               </div>
             </div>
           </div>
