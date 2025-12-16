@@ -76,32 +76,12 @@ function FullscreenApp() {
   // Supabase integration - listens for remote commands
   // NOTE: Skip is NOT handled here - PlayerWindow manages the queue and sends
   // play commands via IPC. Handling skip here would cause double-skip.
-  const { isInitialized: supabaseReady, syncState } = useSupabase({
-    autoInit: true,
-    // Remote play command (from Admin Console)
-    onPlay: (queueVideo?: QueueVideoItem) => {
-      if (queueVideo) {
-        const videoToPlay: Video = {
-          id: queueVideo.id,
-          title: queueVideo.title,
-          artist: queueVideo.artist,
-          src: queueVideo.src,
-          path: queueVideo.path,
-          duration: queueVideo.duration,
-          playlist: queueVideo.playlist,
-          playlistDisplayName: queueVideo.playlistDisplayName
-        }
-        setVideo(videoToPlay)
-      }
-      setIsPlaying(true)
-    },
-    // Remote pause command
-    onPause: () => setIsPlaying(false),
-    // Remote resume command  
-    onResume: () => setIsPlaying(true),
-    // NOTE: onSkip is intentionally NOT registered here
-    // Skip commands are handled by PlayerWindow which manages the queue
-    // and sends the next video via IPC controlPlayerWindow('play', nextVideo)
+  // NOTE: Play/Pause/Resume are handled by PlayerWindow to avoid duplicate command execution
+  // Fullscreen window only receives video data via IPC from PlayerWindow
+  const { isInitialized: supabaseReady } = useSupabase({
+    autoInit: true
+    // Intentionally NOT registering play/pause/resume handlers here
+    // These are handled by PlayerWindow to prevent duplicate command execution
     // Remote volume command
     onSetVolume: (vol: number) => setVolume(vol),
     // Remote seek command
