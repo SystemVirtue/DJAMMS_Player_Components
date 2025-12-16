@@ -666,10 +666,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
 
       // Refresh playlists from disk to ensure we have the latest changes
+      let refreshedPlaylists = playlists; // Default to current state
       if (isElectron) {
         try {
-          const { playlists: refreshedPlaylists } = await (window as any).electronAPI.getPlaylists();
-          if (refreshedPlaylists) {
+          const result = await (window as any).electronAPI.getPlaylists();
+          if (result?.playlists) {
+            refreshedPlaylists = result.playlists;
             setPlaylists(refreshedPlaylists);
             localSearchService.indexVideos(refreshedPlaylists);
           }
@@ -679,12 +681,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       }
 
       // Find the playlist (may have YouTube ID prefix) - use the refreshed playlists
-      const playlistKey = Object.keys(playlists).find(key =>
+      const playlistKey = Object.keys(refreshedPlaylists).find(key =>
         key === playlistName || key.includes(playlistName)
       );
 
-      if (playlistKey && playlists[playlistKey]) {
-        const playlistTracks = playlists[playlistKey];
+      if (playlistKey && refreshedPlaylists[playlistKey]) {
+        const playlistTracks = refreshedPlaylists[playlistKey];
         const shouldShuffle = shuffle ?? settings.autoShufflePlaylists;
         const newPlaylistTracks = Array.isArray(playlistTracks)
           ? (shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks])
@@ -1936,10 +1938,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       setCurrentTab('queue');
 
       // Refresh playlists from disk to ensure we have the latest changes
+      let refreshedPlaylists = playlists; // Default to current state
       if (isElectron) {
         try {
-          const { playlists: refreshedPlaylists } = await (window as any).electronAPI.getPlaylists();
-          if (refreshedPlaylists) {
+          const result = await (window as any).electronAPI.getPlaylists();
+          if (result?.playlists) {
+            refreshedPlaylists = result.playlists;
             setPlaylists(refreshedPlaylists);
             localSearchService.indexVideos(refreshedPlaylists);
           }
@@ -1950,7 +1954,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
       setActivePlaylist(playlistToLoad);
       setSelectedPlaylist(null);
-      const playlistTracks = playlists[playlistToLoad] || [];
+      const playlistTracks = refreshedPlaylists[playlistToLoad] || [];
       const finalTracks = Array.isArray(playlistTracks)
         ? (settings.autoShufflePlaylists ? shuffleArray(playlistTracks) : [...playlistTracks])
         : [];
