@@ -80,12 +80,8 @@ function FullscreenApp() {
   // Fullscreen window only receives video data via IPC from PlayerWindow
   const { isInitialized: supabaseReady } = useSupabase({
     autoInit: true
-    // Intentionally NOT registering play/pause/resume handlers here
+    // Intentionally NOT registering play/pause/resume/volume/seek handlers here
     // These are handled by PlayerWindow to prevent duplicate command execution
-    // Remote volume command
-    onSetVolume: (vol: number) => setVolume(vol),
-    // Remote seek command
-    onSeekTo: (position: number) => setCurrentTime(position)
   })
 
   useEffect(() => {
