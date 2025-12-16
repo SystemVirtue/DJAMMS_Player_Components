@@ -958,10 +958,26 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   useEffect(() => {
     if (!supabaseInitialized || Object.keys(playlists).length === 0) return;
 
-    // Create a hash of playlist keys to detect actual changes
-    const playlistHash = Object.keys(playlists).sort().join('|');
-    
-    // Skip if we've already indexed these exact playlists
+    // Create a comprehensive hash of playlist names AND contents to detect actual changes
+    const createPlaylistHash = (playlists: Record<string, Video[]>) => {
+      const parts: string[] = [];
+
+      // Sort playlist names for consistent ordering
+      const sortedNames = Object.keys(playlists).sort();
+
+      for (const name of sortedNames) {
+        const videos = playlists[name] || [];
+        // Include playlist name and all video IDs in the hash
+        const videoIds = videos.map(v => v.id || v.src || v.title).sort().join(',');
+        parts.push(`${name}:${videoIds}:${videos.length}`);
+      }
+
+      return parts.join('|');
+    };
+
+    const playlistHash = createPlaylistHash(playlists);
+
+    // Skip if we've already indexed these exact playlists (including contents)
     if (lastIndexedPlaylistsRef.current === playlistHash) {
       console.log('[PlayerWindow] Playlists unchanged, skipping re-index');
       return;
@@ -1022,9 +1038,22 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       try {
         // Re-parse playlists from disk
         const { playlists: loadedPlaylists } = await (window as any).electronAPI.getPlaylists();
-        const playlistHash = Object.keys(loadedPlaylists || {}).sort().join('|');
-        
-        // Only update if playlists actually changed
+
+        // Create comprehensive hash including playlist contents
+        const createPlaylistHash = (playlists: Record<string, Video[]>) => {
+          const parts: string[] = [];
+          const sortedNames = Object.keys(playlists).sort();
+          for (const name of sortedNames) {
+            const videos = playlists[name] || [];
+            const videoIds = videos.map(v => v.id || v.src || v.title).sort().join(',');
+            parts.push(`${name}:${videoIds}:${videos.length}`);
+          }
+          return parts.join('|');
+        };
+
+        const playlistHash = createPlaylistHash(loadedPlaylists || {});
+
+        // Only update if playlists actually changed (including contents)
         if (lastIndexedPlaylistsRef.current !== playlistHash) {
           console.log('[PlayerWindow] Player ID validated - reloading playlists');
           setPlaylists(loadedPlaylists || {});
@@ -3071,6 +3100,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       const { playlists: newPlaylists } = await (window as any).electronAPI.getPlaylists();
       setPlaylists(newPlaylists || {});
       localSearchService.indexVideos(newPlaylists || {});
+
+      // Force re-index to Supabase even if hash hasn't changed (manual refresh)
+      lastIndexedPlaylistsRef.current = ''; // Reset hash to force re-indexing
+
       // Sync entire music database to Supabase for Web Admin/Kiosk
       if (supabaseInitialized) {
         console.log('[PlayerWindow] Syncing music database to Supabase after manual refresh');
