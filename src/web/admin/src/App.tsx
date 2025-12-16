@@ -1,6 +1,6 @@
 import React from 'react'
-import { ConnectPlayerModal } from '../../../../web/shared/ConnectPlayerModal'
-import { UnifiedAdmin } from '../../../components/admin/UnifiedAdmin'
+import { ConnectPlayerModal } from '@shared/ConnectPlayerModal'
+import { UnifiedAdmin } from '@components/admin/UnifiedAdmin'
 
 const AdminApp: React.FC = () => {
   return <UnifiedAdmin />
