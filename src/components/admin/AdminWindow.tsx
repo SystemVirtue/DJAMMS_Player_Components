@@ -360,7 +360,100 @@ export const AdminWindow: React.FC = () => {
         </div>
       </header>
 
-      <div className="flex h-[calc(100vh-80px)]">
+      {/* NOW PLAYING Frame */}
+      <div className="bg-ytm-surface border-b border-ytm-divider px-6 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4 flex-1">
+            {/* Current Track Info */}
+            <div className="flex items-center space-x-3 flex-1">
+              <div className="w-12 h-12 bg-ytm-accent/20 rounded-lg flex items-center justify-center">
+                <span className="material-symbols-rounded text-ytm-accent">
+                  {playerState?.status === 'playing' ? 'play_arrow' :
+                   playerState?.status === 'paused' ? 'pause' : 'stop'}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-ytm-text-secondary">NOW PLAYING</span>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    playerState?.status === 'playing' ? 'bg-green-500/20 text-green-400' :
+                    playerState?.status === 'paused' ? 'bg-yellow-500/20 text-yellow-400' :
+                    'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {playerState?.status === 'playing' ? 'Playing' :
+                     playerState?.status === 'paused' ? 'Paused' : 'Stopped'}
+                  </span>
+                </div>
+                <h3 className="text-lg font-semibold text-ytm-text truncate">
+                  {playerState?.currentVideo?.title || 'No track selected'}
+                </h3>
+                <div className="flex items-center space-x-4 text-sm text-ytm-text-secondary">
+                  <span>Active Playlist: {currentPlaylist || 'None'}</span>
+                  {playerState?.queue && (
+                    <span>Queue: {playerState.queue.length} tracks</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Playback Controls */}
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => handleCommand('seek_backward', { seconds: 10 })}
+                className="w-8 h-8 flex items-center justify-center rounded hover:bg-ytm-surface-hover transition-colors"
+                title="Rewind 10s"
+              >
+                <span className="material-symbols-rounded text-ytm-text-secondary">replay_10</span>
+              </button>
+
+              <button
+                onClick={() => handleCommand(playerState?.status === 'playing' ? 'pause' : 'resume')}
+                className="w-10 h-10 bg-ytm-accent rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                title={playerState?.status === 'playing' ? 'Pause' : 'Play'}
+              >
+                <span className="material-symbols-rounded text-white">
+                  {playerState?.status === 'playing' ? 'pause' : 'play_arrow'}
+                </span>
+              </button>
+
+              <button
+                onClick={() => handleCommand('skip')}
+                className="w-8 h-8 flex items-center justify-center rounded hover:bg-ytm-surface-hover transition-colors"
+                title="Skip Track"
+              >
+                <span className="material-symbols-rounded text-ytm-text-secondary">skip_next</span>
+              </button>
+
+              <button
+                onClick={() => handleCommand('seek_forward', { seconds: 10 })}
+                className="w-8 h-8 flex items-center justify-center rounded hover:bg-ytm-surface-hover transition-colors"
+                title="Forward 10s"
+              >
+                <span className="material-symbols-rounded text-ytm-text-secondary">forward_10</span>
+              </button>
+            </div>
+
+            {/* Volume Control */}
+            <div className="flex items-center space-x-2">
+              <span className="material-symbols-rounded text-ytm-text-secondary">volume_up</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={Math.round((playerState?.volume || 0) * 100)}
+                onChange={(e) => handleCommand('volume_set', { volume: parseInt(e.target.value) / 100 })}
+                className="w-20 h-1 bg-ytm-divider rounded-lg appearance-none cursor-pointer slider"
+                title={`Volume: ${Math.round((playerState?.volume || 0) * 100)}%`}
+              />
+              <span className="text-sm text-ytm-text-secondary w-8 text-right">
+                {Math.round((playerState?.volume || 0) * 100)}%
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex h-[calc(100vh-160px)]">
         {/* Left Sidebar */}
         <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} bg-ytm-surface border-r border-ytm-divider`}>
           <button

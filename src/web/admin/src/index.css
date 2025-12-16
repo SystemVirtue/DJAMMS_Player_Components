@@ -56,6 +56,39 @@ html, body, #root {
 .bg-ytm-accent { background-color: #ff1e56 !important; }
 .bg-ytm-accent\/20 { background-color: rgba(255, 30, 86, 0.2) !important; }
 
+/* Volume slider styling */
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #ff1e56;
+  cursor: pointer;
+  border: none;
+}
+
+.slider::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #ff1e56;
+  cursor: pointer;
+  border: none;
+}
+
+.slider::-webkit-slider-track {
+  background: #333333;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.slider::-moz-range-track {
+  background: #333333;
+  height: 4px;
+  border-radius: 2px;
+  border: none;
+}
+
 .material-symbols-rounded {
   font-family: 'Material Symbols Rounded', sans-serif;
   font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
