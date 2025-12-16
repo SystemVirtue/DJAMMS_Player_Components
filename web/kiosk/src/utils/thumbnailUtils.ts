@@ -5,11 +5,15 @@
  */
 
 import { thumbnailCache } from '../services/thumbnailCache';
+import { supabase } from '@shared/supabase-client';
 
 /**
  * Extract YouTube ID from video filename
- * Format: '[Artist] - [Song Title] -- [Youtube_ID].mp4'
- * YouTube ID is the last 11 characters before the .mp4 extension
+ * Supports multiple filename formats:
+ * 1. Format: '[Artist] - [Song Title] -- [Youtube_ID].mp4' (YouTube ID at the end)
+ * 2. Format: '[Youtube_ID] [separator] [Artist] - [Title].mp4' (YouTube ID at the start)
+ * 
+ * YouTube IDs are exactly 11 alphanumeric characters (may contain - or _)
  */
 export function extractYouTubeId(filename: string): string | null {
   if (!filename) return null;
@@ -25,13 +29,37 @@ export function extractYouTubeId(filename: string): string | null {
   // Remove .mp4 extension
   const nameWithoutExt = justFilename.slice(0, -4);
   
-  // Get the last 11 characters before .mp4
-  if (nameWithoutExt.length >= 11) {
-    const last11 = nameWithoutExt.slice(-11);
-    // Basic validation: YouTube IDs are alphanumeric (and sometimes contain - or _)
-    if (/^[a-zA-Z0-9_-]{11}$/.test(last11)) {
-      return last11;
+  if (nameWithoutExt.length < 11) {
+    return null;
+  }
+  
+  // YouTube ID validation pattern
+  const youtubeIdPattern = /^[a-zA-Z0-9_-]{11}$/;
+  
+  // Method 1: Check if YouTube ID is at the START (Format 2)
+  // Format: "[11-char YouTube_ID] [separator] [Artist] - [Title]"
+  // Check if first 11 chars are a valid YouTube ID and followed by a space
+  if (nameWithoutExt.length >= 12) {
+    const first11 = nameWithoutExt.substring(0, 11);
+    if (youtubeIdPattern.test(first11) && nameWithoutExt.charAt(11) === ' ') {
+      return first11;
     }
+  }
+  
+  // Method 2: Check if YouTube ID is at the END after " -- " (Format 1)
+  // Format: "[Artist] - [Song Title] -- [Youtube_ID]"
+  const doubleHyphenIndex = nameWithoutExt.lastIndexOf(' -- ');
+  if (doubleHyphenIndex !== -1 && doubleHyphenIndex + 4 < nameWithoutExt.length) {
+    const afterDoubleHyphen = nameWithoutExt.substring(doubleHyphenIndex + 4).trim();
+    if (afterDoubleHyphen.length === 11 && youtubeIdPattern.test(afterDoubleHyphen)) {
+      return afterDoubleHyphen;
+    }
+  }
+  
+  // Method 3: Fallback - try last 11 characters (for edge cases)
+  const last11 = nameWithoutExt.slice(-11);
+  if (youtubeIdPattern.test(last11)) {
+    return last11;
   }
   
   return null;

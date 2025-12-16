@@ -80,3 +80,4 @@ Where `youtubeId` is the 11-character YouTube video ID.
 - **Error: "Bucket not found"**: The script will create the bucket automatically. Make sure your service role key has storage admin permissions.
 - **Error: "Rate limit exceeded"**: The script includes delays between batches. If you still hit rate limits, increase the delay in the script.
 - **Error: "File too large"**: Thumbnails should be under 1MB. Compress your images if needed.
+

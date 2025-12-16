@@ -7,7 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../../DJAMMS_PLAYER_REACT_MIGRATION/web/shared'),
+      '@shared': path.resolve(__dirname, '../../web/shared'),
     },
     dedupe: ['@supabase/supabase-js', 'react', 'react-dom'],
   },
@@ -20,7 +20,7 @@ export default defineConfig({
       allow: [
         // Allow serving files from project root and shared
         path.resolve(__dirname, '../..'),
-        path.resolve(__dirname, '../../DJAMMS_PLAYER_REACT_MIGRATION/web/shared'),
+        path.resolve(__dirname, '../../web/shared'),
       ],
     },
   },
