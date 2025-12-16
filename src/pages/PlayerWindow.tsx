@@ -1106,17 +1106,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           }
           // Otherwise, values were set in the else block above via setSettings
           
-          // Open player window on startup if enabled
-          if (enablePlayerValue && isElectron) {
-            setTimeout(async () => {
-              try {
-                await (window as any).electronAPI.createPlayerWindow(displayIdValue ?? undefined, fullscreenValue ?? true);
-                setPlayerWindowOpen(true);
-              } catch (error) {
-                console.error('[PlayerWindow] Failed to open player window on startup:', error);
-              }
-            }, 1000); // Delay to ensure main window is ready
-          }
+          // Note: Player window is now only created when explicitly requested
+          // Removed automatic player window creation to prevent duplicate windows
           
           // Listen for auto-disabled fullscreen event (when Admin and Player are on same display)
           if (isElectron && (window as any).electronAPI?.on) {
@@ -1211,23 +1202,33 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                 });
                 
                 // Wait for indexing to complete, then start playback
-                waitForIndexingComplete().then(() => {
+                waitForIndexingComplete().then(async () => {
                   console.log('[PlayerWindow] Indexing complete - starting auto-play');
-                  // Delay to ensure Player Window is fully loaded and ready to receive IPC
-                  // Player Window is created at 500ms, needs time to load and register handlers
-                  setTimeout(() => {
-                    console.log('[PlayerWindow] Sending initial play command to Player Window');
-                    // Mark player as ready since we have a queue loaded
-                    if (!playerReadyRef.current) {
-                      playerReadyRef.current = true;
-                      setPlayerReady(true);
+                  // Delay to ensure main window is fully ready
+                  setTimeout(async () => {
+                    try {
+                      console.log('[PlayerWindow] Creating fullscreen window for auto-play');
+
+                      // Create fullscreen window first
+                      await (window as any).electronAPI.createPlayerWindow(displayIdValue ?? undefined, fullscreenValue ?? true);
+                      setPlayerWindowOpen(true);
+
+                      // Mark player as ready since we have a queue loaded
+                      if (!playerReadyRef.current) {
+                        playerReadyRef.current = true;
+                        setPlayerReady(true);
+                      }
+
+                      console.log('[PlayerWindow] Sending initial play command to fullscreen window');
+                      // Play first video via main process orchestrator
+                      (window as any).electronAPI.sendQueueCommand?.({
+                        action: 'play_at_index',
+                        payload: { index: 0 }
+                      });
+                    } catch (error) {
+                      console.error('[PlayerWindow] Failed to start auto-play:', error);
                     }
-                    // Play first video via main process orchestrator
-                    (window as any).electronAPI.sendQueueCommand?.({ 
-                      action: 'play_at_index', 
-                      payload: { index: 0 } 
-                    });
-                  }, 500);
+                  }, 1000); // Increased delay to ensure fullscreen window is ready
                 });
               }
               
