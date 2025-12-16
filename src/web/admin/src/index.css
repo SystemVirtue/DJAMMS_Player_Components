@@ -56,6 +56,209 @@ html, body, #root {
 .bg-ytm-accent { background-color: #ff1e56 !important; }
 .bg-ytm-accent\/20 { background-color: rgba(255, 30, 86, 0.2) !important; }
 
+/* ==========================================
+   SIDEBAR STYLES (MISSING FROM WEB ADMIN)
+   ========================================== */
+
+/* Sidebar base styles */
+.sidebar {
+  width: 280px;
+  background-color: #000000;
+  border-right: 1px solid #333333;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.25s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed {
+  width: 72px;
+}
+
+/* Sidebar toggle button */
+.sidebar-toggle {
+  width: 100%;
+  height: 56px;
+  background: none;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+
+.sidebar-toggle:hover {
+  background-color: #1f1f1f;
+}
+
+.sidebar-toggle-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #aaaaaa;
+}
+
+.sidebar.collapsed .sidebar-toggle .material-symbols-rounded {
+  font-size: 24px;
+}
+
+/* Sidebar navigation */
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.nav-section {
+  padding: 8px 0;
+}
+
+.nav-item {
+  width: 100%;
+  height: 48px;
+  background: none;
+  border: none;
+  color: #aaaaaa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 24px;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.nav-item:hover {
+  background-color: #1f1f1f;
+  color: #ffffff;
+}
+
+.nav-item.active {
+  background-color: #1f1f1f;
+  color: #ffffff;
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: #ff1e56;
+}
+
+.nav-item .material-symbols-rounded {
+  font-size: 24px;
+}
+
+.nav-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.sidebar.collapsed .nav-label {
+  display: none;
+}
+
+/* Playlist section */
+.playlist-section {
+  padding: 16px 0;
+}
+
+.playlist-header {
+  padding: 8px 24px;
+  margin-bottom: 8px;
+}
+
+.sidebar.collapsed .playlist-header {
+  display: none;
+}
+
+.playlist-header-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  color: #777777;
+}
+
+.playlist-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.playlist-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 24px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  position: relative;
+  color: #aaaaaa;
+}
+
+.sidebar.collapsed .playlist-item {
+  justify-content: center;
+  padding: 8px;
+}
+
+.playlist-item:hover {
+  background-color: #1f1f1f;
+  color: #ffffff;
+}
+
+.playlist-item.selected {
+  background-color: #2d2d2d;
+  color: #ffffff;
+}
+
+.playlist-item.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: #ff1e56;
+}
+
+.playlist-item.selected .playlist-name {
+  font-weight: 500;
+}
+
+.playlist-icon {
+  font-size: 20px;
+}
+
+.sidebar.collapsed .playlist-name,
+.sidebar.collapsed .playlist-count {
+  display: none;
+}
+
+.playlist-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+
+.playlist-count {
+  font-size: 12px;
+  color: #777777;
+  background-color: #1f1f1f;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
 /* Volume slider styling */
 .slider::-webkit-slider-thumb {
   appearance: none;
@@ -87,6 +290,102 @@ html, body, #root {
   height: 4px;
   border-radius: 2px;
   border: none;
+}
+
+/* ==========================================
+   ADMIN WINDOW TAB CONTENT STYLES
+   ========================================== */
+
+.tab-content {
+  display: none;
+  height: 100%;
+}
+
+.tab-content.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Settings container */
+.settings-container {
+  padding: 32px;
+  max-width: 800px;
+}
+
+.settings-container h1 {
+  font-size: 32px;
+  font-weight: 400;
+  margin-bottom: 32px;
+  color: #ffffff;
+}
+
+/* Tools container */
+.tools-container {
+  padding: 32px;
+  text-align: center;
+}
+
+.tools-container h1 {
+  font-size: 32px;
+  font-weight: 400;
+  margin-bottom: 16px;
+  color: #ffffff;
+}
+
+.tools-container > p {
+  font-size: 16px;
+  color: #aaaaaa;
+  margin-bottom: 48px;
+}
+
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.tool-card {
+  background-color: #1f1f1f;
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  transition: all 0.15s ease;
+  border: 1px solid #333333;
+}
+
+.tool-card:not(.disabled) {
+  cursor: pointer;
+}
+
+.tool-card:not(.disabled):hover {
+  background-color: #2d2d2d;
+  transform: translateY(-4px);
+  border-color: #ff1e56;
+}
+
+.tool-card.disabled {
+  opacity: 0.5;
+}
+
+.tool-card .material-symbols-rounded {
+  font-size: 48px;
+  color: #ff1e56;
+  margin-bottom: 16px;
+}
+
+.tool-card h3 {
+  font-size: 18px;
+  font-weight: 500;
+  margin-bottom: 8px;
+  color: #ffffff;
+}
+
+.tool-card p {
+  font-size: 14px;
+  color: #aaaaaa;
+  margin: 0;
 }
 
 .material-symbols-rounded {
