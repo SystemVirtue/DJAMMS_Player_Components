@@ -1343,48 +1343,37 @@ ipcMain.handle('set-player-fullscreen', async (event, fullscreen) => {
     }
   }
   
-  // Get current display ID
-  const displays = screen.getAllDisplays();
-  const currentBounds = fullscreenWindow.getBounds();
-  const currentDisplay = screen.getDisplayMatching(currentBounds);
-  const displayId = currentDisplay.id;
-  
-  // If switching to windowed mode, we need to recreate the window with frame
-  // If switching to fullscreen, we can just toggle fullscreen
-  if (!fullscreen && fullscreenWindow.isFullScreen()) {
-    // Switching to windowed: recreate window with frame
-    const savedState = {
-      displayId: displayId,
-      fullscreen: false
-    };
-    
-    // Close current window
-    fullscreenWindow.close();
-    fullscreenWindow = null;
-    
-    // Recreate in windowed mode
-    const win = createFullscreenWindow(displayId, false);
-    
-    // Notify renderer to resize video players
-    if (win && win.webContents) {
-      win.webContents.once('did-finish-load', () => {
-        win.webContents.send('control-player', { action: 'resize', data: { mode: 'windowed' } });
-      });
+  const isCurrentlyFullscreen = fullscreenWindow.isFullScreen();
+
+  // Only make changes if the state is actually different
+  if (fullscreen !== isCurrentlyFullscreen) {
+    console.log(`[Electron] Toggling player window ${fullscreen ? 'to fullscreen' : 'to windowed'} mode`);
+
+    if (fullscreen) {
+      // Switching to fullscreen
+      fullscreenWindow.setFullScreen(true);
+      fullscreenWindow.setAlwaysOnTop(true);
+      fullscreenWindow.setResizable(false);
+
+      // Notify renderer about fullscreen mode
+      if (fullscreenWindow.webContents) {
+        fullscreenWindow.webContents.send('control-player', { action: 'resize', data: { mode: 'fullscreen' } });
+      }
+    } else {
+      // Switching to windowed mode
+      fullscreenWindow.setFullScreen(false);
+      fullscreenWindow.setAlwaysOnTop(false);
+      fullscreenWindow.setResizable(true);
+
+      // Notify renderer about windowed mode
+      if (fullscreenWindow.webContents) {
+        fullscreenWindow.webContents.send('control-player', { action: 'resize', data: { mode: 'windowed' } });
+      }
     }
-    
-    return { success: true };
-  } else if (fullscreen && !fullscreenWindow.isFullScreen()) {
-    // Switching to fullscreen: just toggle
-    fullscreenWindow.setFullScreen(true);
-    fullscreenWindow.setAlwaysOnTop(true);
-    fullscreenWindow.setResizable(false);
-    
-    // Notify renderer
-    if (fullscreenWindow.webContents) {
-      fullscreenWindow.webContents.send('control-player', { action: 'resize', data: { mode: 'fullscreen' } });
-    }
-    
-    return { success: true };
+
+    console.log(`[Electron] Player window toggled to ${fullscreen ? 'fullscreen' : 'windowed'} mode successfully`);
+  } else {
+    console.log(`[Electron] Player window already in ${fullscreen ? 'fullscreen' : 'windowed'} mode, no change needed`);
   }
   
   // Already in the requested state

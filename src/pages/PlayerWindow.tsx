@@ -3545,7 +3545,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                           if (isElectron) {
                             try {
                               if (enabled && !playerWindowOpen) {
-                                await (window as any).electronAPI.createPlayerWindow(settings.playerDisplayId);
+                                await (window as any).electronAPI.createPlayerWindow(settings.playerDisplayId, settings.playerFullscreen);
                                 setPlayerWindowOpen(true);
                               } else if (!enabled && playerWindowOpen) {
                                 await (window as any).electronAPI.closePlayerWindow();
@@ -3613,8 +3613,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                         onChange={async (e) => {
                           const fullscreen = e.target.checked;
                           handleUpdateSetting('playerFullscreen', fullscreen);
-                          // Directly set fullscreen on the player window
-                          if (isElectron && playerWindowOpen) {
+                          // Apply fullscreen setting to ALL existing player windows
+                          if (isElectron) {
                             try {
                               await (window as any).electronAPI.setPlayerFullscreen(fullscreen);
                             } catch (error) {
