@@ -387,11 +387,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   }, [settings]);
 
   // Check if we're in Electron (check multiple ways for reliability)
-  const isElectron = typeof window !== 'undefined' && (
-    !!(window as any).electronAPI ||
-    !!(window as any).process?.versions?.electron ||
-    navigator.userAgent.toLowerCase().includes('electron')
-  );
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
   // Initialize Player ID on mount
   useEffect(() => {
@@ -1536,13 +1532,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Listen for player window closed/opened events
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron || !(window as any).electronAPI) return;
     const api = (window as any).electronAPI;
-    
+
     const unsubPlayerClosed = api.onPlayerWindowClosed?.(() => {
       setPlayerWindowOpen(false);
     });
-    
+
     // Listen for player window opened event
     const handlePlayerOpened = () => {
       setPlayerWindowOpen(true);
