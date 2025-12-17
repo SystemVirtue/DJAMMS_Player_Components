@@ -930,48 +930,73 @@ ipcMain.on('queue-command', async (_event, command) => {
           const currentVideoAt0 = queueState.activeQueue[0];
           const wasFromPriority = queueState.nowPlayingSource === 'priority';
           
-          // Step 1: Handle the current video at index 0
-          if (wasFromPriority) {
-            // Current video was from priority queue - remove it entirely (don't recycle)
-            console.log('[main] 🗑️ Removing priority queue video (not recycling):', currentVideoAt0?.title);
-            queueState.activeQueue.shift(); // Remove from index 0
-          }
+          // CRITICAL: Priority queue videos must play consecutively before active queue
+          // If there are more priority videos, they should play next regardless of active queue
           
-          // Step 2: BEFORE moving index 0 to end, insert priority video into index 1 if available
-          let priorityVideoInserted = false;
+          // Step 1: Check if there are more priority videos waiting
           if (queueState.priorityQueue.length > 0) {
+            // There are more priority videos - they must play next
+            // Remove current video (whether from priority or active)
+            if (wasFromPriority) {
+              console.log('[main] 🗑️ Removing finished priority video:', currentVideoAt0?.title);
+              queueState.activeQueue.shift(); // Remove from index 0
+            } else {
+              // Current video is from active queue, but priority videos are waiting
+              // Move current active video to end (recycle it)
+              const currentVideo = queueState.activeQueue.shift();
+              queueState.activeQueue.push(currentVideo);
+              console.log('[main] ♻️ Recycling active queue video (priority videos waiting):', currentVideo?.title);
+            }
+            
+            // Step 2: Insert next priority video at index 0 (plays immediately)
             const priorityVideo = queueState.priorityQueue.shift();
-            console.log('[main] 📥 Inserting priority video into index 1:', priorityVideo?.title, 'Remaining priority:', queueState.priorityQueue.length);
-            queueState.activeQueue.splice(1, 0, priorityVideo); // Insert at index 1
-            priorityVideoInserted = true;
-          }
-          
-          // Step 3: Move index 0 to end (recycle) - but ONLY if it was from active queue
-          if (!wasFromPriority && queueState.activeQueue.length > 0) {
-            const currentVideo = queueState.activeQueue.shift(); // Remove from index 0
-            queueState.activeQueue.push(currentVideo); // Add to end (recycle)
-            console.log('[main] ♻️ Recycled active queue video to end:', currentVideo?.title);
-          }
-          
-          // Step 4: The new index 0 is now the next video to play
-          const nextVideo = queueState.activeQueue[0];
-          
-          if (nextVideo) {
-            // Determine source: if we inserted a priority video, it's now at index 0
-            queueState.nowPlaying = nextVideo;
-            queueState.nowPlayingSource = priorityVideoInserted ? 'priority' : 'active';
+            console.log('[main] 📥 Inserting next priority video at index 0:', priorityVideo?.title, 'Remaining priority:', queueState.priorityQueue.length);
+            queueState.activeQueue.unshift(priorityVideo); // Insert at index 0
+            
+            // Step 3: Play the priority video
+            queueState.nowPlaying = priorityVideo;
+            queueState.nowPlayingSource = 'priority';
             queueState.isPlaying = true;
-            console.log('[main] 🎬 Next video:', nextVideo.title, 'Source:', queueState.nowPlayingSource);
+            console.log('[main] 🎬 Playing priority video (consecutive):', priorityVideo.title);
             
             if (fullscreenWindow) {
-              fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
+              fullscreenWindow.webContents.send('control-player', { action: 'play', data: priorityVideo });
             }
           } else {
-            // Queue is empty
-            queueState.nowPlaying = null;
-            queueState.nowPlayingSource = null;
-            queueState.isPlaying = false;
-            console.log('[main] ⚠️ Queue is empty after next command');
+            // No more priority videos - proceed with normal active queue logic
+            // Step 1: Handle the current video at index 0
+            if (wasFromPriority) {
+              // Current video was from priority queue - remove it entirely (don't recycle)
+              console.log('[main] 🗑️ Removing priority queue video (not recycling):', currentVideoAt0?.title);
+              queueState.activeQueue.shift(); // Remove from index 0
+            }
+            
+            // Step 2: Move index 0 to end (recycle) - but ONLY if it was from active queue
+            if (!wasFromPriority && queueState.activeQueue.length > 0) {
+              const currentVideo = queueState.activeQueue.shift(); // Remove from index 0
+              queueState.activeQueue.push(currentVideo); // Add to end (recycle)
+              console.log('[main] ♻️ Recycled active queue video to end:', currentVideo?.title);
+            }
+            
+            // Step 3: The new index 0 is now the next video to play
+            const nextVideo = queueState.activeQueue[0];
+            
+            if (nextVideo) {
+              queueState.nowPlaying = nextVideo;
+              queueState.nowPlayingSource = 'active';
+              queueState.isPlaying = true;
+              console.log('[main] 🎬 Next video (active queue):', nextVideo.title);
+              
+              if (fullscreenWindow) {
+                fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
+              }
+            } else {
+              // Queue is empty
+              queueState.nowPlaying = null;
+              queueState.nowPlayingSource = null;
+              queueState.isPlaying = false;
+              console.log('[main] ⚠️ Queue is empty after next command');
+            }
           }
         } else if (queueState.priorityQueue.length > 0) {
           // Active queue is empty, but priority queue has items
