@@ -229,9 +229,27 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
       logger.debug(`[TRANSITION] Already in progress, ignoring ${reason} trigger`);
       return;
     }
-    
+
     logger.debug(`[TRANSITION] Starting transition (reason: ${reason})`);
     transitionLockRef.current = true;
+
+    // CRITICAL: Ensure audio output is restored before transitioning
+    // This prevents audio being disabled after video errors
+    if (reason === 'error') {
+      console.log('🔊 [TRANSITION] Restoring audio output after error transition');
+      try {
+        // Ensure audio context is not suspended
+        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume().then(() => {
+            console.log('🔊 [TRANSITION] Audio context resumed during error transition');
+          }).catch(err => {
+            console.warn('🔊 [TRANSITION] Failed to resume audio context during transition:', err);
+          });
+        }
+      } catch (audioError) {
+        console.warn('🔊 [TRANSITION] Audio restoration failed during transition:', audioError);
+      }
+    }
     
     // Notify SupabaseService of transition lock
     try {
@@ -393,6 +411,46 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
     };
 
     const errorDetails = errorMessages[errorCode || 0] || `Error code: ${errorCode || 'unknown'}`;
+
+    // SPECIAL HANDLING: Detect "ERR_" patterns in video sources (corrupted files)
+    const isCorruptedFile = videoSrc.includes('ERR_') || videoSrc.includes('error') || videoSrc.includes('Error');
+    if (isCorruptedFile) {
+      console.error('🚨 [VIDEO ERROR] DETECTED CORRUPTED FILE with ERR_ pattern:', videoSrc);
+      console.error('🚨 [VIDEO ERROR] This will likely cause audio output to be disabled for subsequent videos');
+    }
+
+    // CRITICAL: Restore audio output when video fails
+    // Video errors can disable audio output for subsequent videos
+    console.log('🔊 [VIDEO ERROR] Restoring audio output after video failure');
+    try {
+      // Ensure audio context is not suspended (can happen after errors)
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().then(() => {
+          console.log('🔊 [VIDEO ERROR] Audio context resumed after error');
+        }).catch(err => {
+          console.warn('🔊 [VIDEO ERROR] Failed to resume audio context:', err);
+        });
+      }
+
+      // Reset audio normalization state
+      normalizationFactorRef.current = 1.0;
+      isAnalyzingRef.current = false;
+
+      // Force audio output check by creating and resuming a temporary audio context
+      // This can help restore audio output that gets disabled after errors
+      if (typeof window !== 'undefined' && 'AudioContext' in window) {
+        const tempAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (tempAudioContext.state === 'suspended') {
+          tempAudioContext.resume().then(() => {
+            console.log('🔊 [VIDEO ERROR] Temporary audio context resumed');
+          }).catch(err => {
+            console.warn('🔊 [VIDEO ERROR] Could not resume temporary audio context:', err);
+          });
+        }
+      }
+    } catch (audioError) {
+      console.warn('🔊 [VIDEO ERROR] Audio restoration failed:', audioError);
+    }
 
     // SPECIAL HANDLING: If current video at index 0 is "Unknown" (corrupted/missing), remove it and auto-play next
     if (currentVideo?.title === 'Unknown' && typeof window !== 'undefined' && (window as any).electronAPI) {
@@ -739,7 +797,27 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     const videoSrc = getVideoSource(video);
     console.log('[MANUAL] Video source:', videoSrc);
-    
+
+    // CRITICAL: Ensure audio output is available before playing new video
+    // This prevents audio being disabled after video errors
+    console.log('🔊 [PLAY] Ensuring audio output is available');
+    try {
+      // Ensure audio context is not suspended
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().then(() => {
+          console.log('🔊 [PLAY] Audio context resumed for new video');
+        }).catch(err => {
+          console.warn('🔊 [PLAY] Failed to resume audio context:', err);
+        });
+      }
+
+      // Ensure video element is not muted (can happen after errors)
+      activeVideo.muted = false;
+      activeVideo.volume = volume; // Restore volume
+    } catch (audioError) {
+      console.warn('🔊 [PLAY] Audio restoration failed:', audioError);
+    }
+
     // Clear any previous error state
     setError(null);
     setIsLoading(true);
@@ -856,6 +934,25 @@ export function useVideoPlayer(config: VideoPlayerConfig) {
 
     const videoSrc = getVideoSource(video);
     console.log('[SEAMLESS] Video source:', videoSrc);
+
+    // CRITICAL: Ensure audio output is available for seamless transition
+    console.log('🔊 [SEAMLESS] Ensuring audio output is available');
+    try {
+      // Ensure audio context is not suspended
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().then(() => {
+          console.log('🔊 [SEAMLESS] Audio context resumed for seamless transition');
+        }).catch(err => {
+          console.warn('🔊 [SEAMLESS] Failed to resume audio context:', err);
+        });
+      }
+
+      // Ensure next video element is not muted
+      nextActive.muted = false;
+      nextActive.volume = volume;
+    } catch (audioError) {
+      console.warn('🔊 [SEAMLESS] Audio restoration failed:', audioError);
+    }
     
     // Clear any previous error state
     setError(null);
