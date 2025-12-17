@@ -698,6 +698,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         if (isElectron && newPlaylistTracks.length > 0) {
           console.log('[PlayerWindow] Loading playlist while preserving current video and priority queue');
 
+          // Mark playlist loading as in progress to prevent Supabase polling interference
+          playlistLoadingInProgressRef.current = true;
+
           // Get current queue state from main process
           (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
             const currentQueue = queueState?.activeQueue || [];
@@ -779,10 +782,17 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             setQueue(newPlaylistTracks);
             setQueueIndex(0);
           });
+
+          // Mark playlist loading as complete after a delay to allow main process to finish processing
+          setTimeout(() => {
+            playlistLoadingInProgressRef.current = false;
+            console.log('[PlayerWindow] Supabase playlist loading marked as complete');
+          }, 2000); // 2 second delay to ensure all operations complete
         } else {
           // Fallback for non-Electron or empty playlist
           setQueue(newPlaylistTracks);
           setQueueIndex(0);
+          playlistLoadingInProgressRef.current = false;
         }
       }
     },
@@ -950,11 +960,14 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Track when indexing is complete (for auto-play logic)
   const indexingCompleteRef = useRef(false);
-  
+
   // Track last indexed playerId and supabaseInitialized state to prevent unnecessary reloads
   // Note: These refs are declared here to avoid duplicate declarations
   const lastIndexedPlayerIdRef = useRef<string>('');
   const lastSupabaseInitializedRef = useRef<boolean>(false);
+
+  // Track when playlist loading is in progress to prevent Supabase polling interference
+  const playlistLoadingInProgressRef = useRef(false);
   
   // Initialize indexingCompleteRef based on whether Supabase is available
   useEffect(() => {
@@ -1963,6 +1976,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       if (isElectron && finalTracks.length > 0) {
         console.log('[PlayerWindow] Loading playlist: preserving index 0, clearing from index 1 onwards');
 
+        // Mark playlist loading as in progress to prevent Supabase polling interference
+        playlistLoadingInProgressRef.current = true;
+
         // Get current queue state from main process
         (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
           const currentQueue = queueState?.activeQueue || [];
@@ -2055,8 +2071,14 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setQueue(finalTracks);
           setQueueIndex(0);
         });
+
+        // Mark playlist loading as complete after a delay to allow main process to finish processing
+        setTimeout(() => {
+          playlistLoadingInProgressRef.current = false;
+          console.log('[PlayerWindow] Playlist loading marked as complete');
+        }, 2000); // 2 second delay to ensure all operations complete
       }
-      
+
       // Save active playlist to persist between sessions
       if (isElectron) {
         (window as any).electronAPI.setSetting('activePlaylist', playlistToLoad);
@@ -2696,8 +2718,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         const activeQueueEmpty = !state.activeQueue || state.activeQueue.length === 0;
         const noCurrentVideo = !state.currentVideo && !state.nowPlaying;
         
-        if (activeQueueEmpty && noCurrentVideo && supabaseInitialized) {
-          console.log('[PlayerWindow] Active queue is empty - polling Supabase for queue state');
+        if (activeQueueEmpty && noCurrentVideo && supabaseInitialized && !playlistLoadingInProgressRef.current) {
+          console.log('[PlayerWindow] Active queue is empty - polling Supabase for queue state (not during playlist loading)');
           
           // Poll Supabase to get active_queue
           const supabaseService = getSupabaseService();
