@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { QueueVideoItem, SupabaseLocalVideo } from '@shared/types';
-import { searchLocalVideos, getAllLocalVideos, blockingCommands, localVideoToQueueItem } from '@shared/supabase-client';
+import { searchLocalVideos, getAllLocalVideos, blockingCommands } from '@shared/supabase-client';
 import { cleanVideoTitle } from '@shared/video-utils';
 import './JukeboxSearchMode.css';
 
@@ -242,7 +242,20 @@ export const JukeboxSearchMode: React.FC<JukeboxSearchModeProps> = ({
     setShowConfirmModal(false);
     
     try {
-      const queueItem = localVideoToQueueItem(selectedVideo);
+      // Match admin console format exactly - send plain path in src, not file:// URL
+      // The Electron player will handle path conversion internally
+      const metadata = selectedVideo.metadata as any;
+      const queueItem: QueueVideoItem = {
+        id: selectedVideo.id,
+        src: selectedVideo.path, // Plain path, same as admin console
+        path: selectedVideo.path,
+        title: selectedVideo.title,
+        artist: selectedVideo.artist,
+        sourceType: 'local',
+        duration: selectedVideo.duration || undefined,
+        playlist: metadata?.playlist,
+        playlistDisplayName: metadata?.playlistDisplayName
+      };
       // Both queue and play-now use priority queue - play-now items will be handled by player
       const result = await blockingCommands.queueAdd(queueItem, 'priority', 'kiosk', playerId);
       

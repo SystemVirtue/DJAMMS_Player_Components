@@ -8,8 +8,7 @@ import { VideoResultCard, VideoGrid } from './VideoResultCard';
 import { 
   searchLocalVideos,
   getAllLocalVideos,
-  blockingCommands,
-  localVideoToQueueItem 
+  blockingCommands
 } from '@shared/supabase-client';
 import { videoCache } from '../services/videoCache';
 import { cleanVideoTitle } from '@shared/video-utils';
@@ -285,7 +284,20 @@ export function SearchInterface({
 
     setIsRequesting(true);
     try {
-      const queueItem = localVideoToQueueItem(selectedVideo);
+      // Match admin console format exactly - send plain path in src, not file:// URL
+      // The Electron player will handle path conversion internally
+      const metadata = selectedVideo.metadata as any;
+      const queueItem: QueueVideoItem = {
+        id: selectedVideo.id,
+        src: selectedVideo.path, // Plain path, same as admin console
+        path: selectedVideo.path,
+        title: selectedVideo.title,
+        artist: selectedVideo.artist,
+        sourceType: 'local',
+        duration: selectedVideo.duration || undefined,
+        playlist: metadata?.playlist,
+        playlistDisplayName: metadata?.playlistDisplayName
+      };
       
       // Send command to add to priority queue (using blocking command for feedback)
       const result = await blockingCommands.queueAdd(queueItem, 'priority', 'kiosk', playerId);
@@ -309,7 +321,7 @@ export function SearchInterface({
     } finally {
       setIsRequesting(false);
     }
-  }, [selectedVideo, onSongRequested, playerId]);
+  }, [selectedVideo, onSongRequested, playerId, onSearchQueryChange]);
 
   const handleCancelRequest = useCallback(() => {
     setShowConfirm(false);
