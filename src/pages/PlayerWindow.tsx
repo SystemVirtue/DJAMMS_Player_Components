@@ -1975,6 +1975,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       // Load playlist preserving current playing video (index 0) and priority queue
       if (isElectron && finalTracks.length > 0) {
         console.log('[PlayerWindow] Loading playlist: preserving index 0, clearing from index 1 onwards');
+        console.log('[PlayerWindow] DEBUG: finalTracks length:', finalTracks.length, 'playlist name:', playlistToLoad);
 
         // Mark playlist loading as in progress to prevent Supabase polling interference
         playlistLoadingInProgressRef.current = true;
@@ -2036,16 +2037,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           if (currentQueue.length > 1) {
             console.log('[PlayerWindow] Clearing active queue from index 1 onwards:', currentQueue.length - 1, 'items');
             for (let i = currentQueue.length - 1; i >= 1; i--) {
+              console.log('[PlayerWindow] DEBUG: Sending remove_from_queue for index', i);
               (window as any).electronAPI.sendQueueCommand?.({
                 action: 'remove_from_queue',
                 payload: { index: i }
               });
             }
+          } else {
+            console.log('[PlayerWindow] DEBUG: No items to clear (queue length <= 1)');
           }
 
           // Add converted playlist videos to main process queue starting from index 1
           console.log('[PlayerWindow] Adding', convertedTracks.length, 'playlist tracks starting from index 1');
-          convertedTracks.forEach((video) => {
+          convertedTracks.forEach((video, index) => {
+            console.log('[PlayerWindow] DEBUG: Sending add_to_queue for video:', video.title);
             (window as any).electronAPI.sendQueueCommand?.({
               action: 'add_to_queue',
               payload: { video }
@@ -2072,11 +2077,15 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           setQueueIndex(0);
         });
 
-        // Mark playlist loading as complete after a delay to allow main process to finish processing
-        setTimeout(() => {
-          playlistLoadingInProgressRef.current = false;
-          console.log('[PlayerWindow] Playlist loading marked as complete');
-        }, 2000); // 2 second delay to ensure all operations complete
+          // Mark playlist loading as complete after a delay to allow main process to finish processing
+          setTimeout(() => {
+            playlistLoadingInProgressRef.current = false;
+            console.log('[PlayerWindow] Playlist loading marked as complete');
+            console.log('[PlayerWindow] DEBUG: Final queue state after loading:', {
+              localQueueLength: queue.length,
+              localPriorityQueueLength: priorityQueue.length
+            });
+          }, 2000); // 2 second delay to ensure all operations complete
       }
 
       // Save active playlist to persist between sessions
@@ -2488,6 +2497,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     let previousVideoId: string | null = null;
     
     const unsubscribe = (window as any).electronAPI.onQueueState?.((state: any) => {
+      console.log('[PlayerWindow] DEBUG: Received queue state broadcast:', {
+        activeQueueLength: state.activeQueue?.length || 0,
+        priorityQueueLength: state.priorityQueue?.length || 0,
+        nowPlaying: state.nowPlaying?.title || 'none'
+      });
       if (state) {
         // Set flag to prevent status sync while processing external updates
         syncStateRef.current.isReceivingExternalUpdate = true;
