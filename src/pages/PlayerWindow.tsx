@@ -1981,7 +1981,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         playlistLoadingInProgressRef.current = true;
 
         // Get current queue state from main process
+        console.log('[PlayerWindow] DEBUG: About to call get-queue-state, electronAPI available:', !!(window as any).electronAPI);
         (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
+          console.log('[PlayerWindow] DEBUG: get-queue-state promise resolved');
           console.log('[PlayerWindow] DEBUG: Raw queueState response:', queueState);
           const currentQueue = queueState?.activeQueue || [];
           const currentPriorityQueue = queueState?.priorityQueue || [];
@@ -2069,6 +2071,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
           setQueueIndex(0);
         }).catch((error: any) => {
+          console.error('[PlayerWindow] DEBUG: get-queue-state promise rejected:', error);
           console.error('[PlayerWindow] Failed to get queue state for playlist load:', error);
           // Fallback: clear and load normally
           (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
