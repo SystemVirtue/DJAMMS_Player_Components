@@ -315,7 +315,13 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
           </button>
         </div>
       </div>
-      <div className="table-container" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '600px' }}>
+      <div className="table-container" style={{ 
+        overflowX: 'auto', 
+        overflowY: 'auto', 
+        maxHeight: '70vh',
+        border: '1px solid var(--ytm-divider)',
+        borderRadius: '4px'
+      }}>
         <table className="media-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--ytm-surface)', zIndex: 10 }}>
             <tr style={{ borderBottom: '1px solid var(--ytm-divider)' }}>

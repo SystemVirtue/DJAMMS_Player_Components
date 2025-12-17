@@ -125,8 +125,21 @@ export const QueueManager: React.FC<QueueManagerProps> = ({
             <span className="material-symbols-rounded text-red-400">priority_high</span>
             <h3 className="text-lg font-medium text-ytm-text">PRIORITY QUEUE</h3>
           </div>
-          <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: '400px' }}>
+          <div className="overflow-x-auto overflow-y-auto" style={{ 
+            maxHeight: '400px',
+            border: '1px solid var(--ytm-divider)',
+            borderRadius: '4px'
+          }}>
             <table className="w-full border-collapse" style={{ minWidth: '600px' }}>
+              <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--ytm-surface)', zIndex: 10 }}>
+                <tr className="border-b border-red-500/30">
+                  <th className="text-left py-3 px-4 text-sm font-medium text-red-400" style={{ width: '60px' }}>#</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-red-400">Title</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-red-400">Artist</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-red-400" style={{ width: '80px' }}>Duration</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-red-400">Playlist</th>
+                </tr>
+              </thead>
               <tbody>
                 {playerState.priority_queue.map((item, index) => (
                   <tr
@@ -163,7 +176,11 @@ export const QueueManager: React.FC<QueueManagerProps> = ({
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: '500px' }}>
+          <div className="overflow-x-auto overflow-y-auto" style={{ 
+            maxHeight: '500px',
+            border: '1px solid var(--ytm-divider)',
+            borderRadius: '4px'
+          }}>
             <table className="w-full border-collapse" style={{ minWidth: '600px' }}>
               <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--ytm-surface)', zIndex: 10 }}>
                 <tr className="border-b border-ytm-divider">
