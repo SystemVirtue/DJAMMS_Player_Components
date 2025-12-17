@@ -396,23 +396,93 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
               left: Math.min(dialogPosition.x, window.innerWidth - 320),
               top: Math.min(dialogPosition.y, window.innerHeight - 150),
               zIndex: 9999,
+              backgroundColor: '#000000',
+              border: '2px solid #FFD700',
+              borderRadius: '12px',
+              padding: '16px',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 215, 0, 0.3)',
+              minWidth: '280px',
+              maxWidth: '360px',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="popover-content">
-              <div className="popover-title">
+            <div className="popover-content" style={{ marginBottom: '16px' }}>
+              <div className="popover-title" style={{ 
+                fontSize: '16px', 
+                fontWeight: '600', 
+                color: '#fff', 
+                marginBottom: '4px', 
+                wordBreak: 'break-word' 
+              }}>
                 {getDisplayArtist(selectedVideo.artist) 
                   ? `${getDisplayArtist(selectedVideo.artist)} - ${cleanVideoTitle(selectedVideo.title)}` 
                   : cleanVideoTitle(selectedVideo.title)}
               </div>
-              <div className="popover-subtitle">Add to Priority Queue?</div>
+              <div className="popover-subtitle" style={{ 
+                fontSize: '14px', 
+                color: '#FFD700', 
+                marginTop: '8px',
+                fontWeight: '500'
+              }}>Add to Priority Queue?</div>
             </div>
-            <div className="popover-actions">
-              <button className="popover-btn popover-btn-cancel" onClick={handleCancelDialog}>Cancel</button>
-              <button className="popover-btn popover-btn-primary" onClick={handleConfirmAddToPriorityQueue}>Add to Priority Queue</button>
+            <div className="popover-actions" style={{ 
+              display: 'flex', 
+              gap: '12px', 
+              justifyContent: 'flex-end' 
+            }}>
+              <button 
+                className="popover-btn popover-btn-cancel" 
+                onClick={handleCancelDialog}
+                style={{
+                  padding: '10px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  backgroundColor: '#3f3f3f',
+                  color: '#fff',
+                  transition: 'background 0.2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#4f4f4f'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3f3f3f'}
+              >
+                Cancel
+              </button>
+              <button 
+                className="popover-btn popover-btn-primary" 
+                onClick={handleConfirmAddToPriorityQueue}
+                style={{
+                  padding: '10px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  backgroundColor: '#FFD700',
+                  color: '#000',
+                  transition: 'background 0.2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#FFED4E'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFD700'}
+              >
+                Add to Priority Queue
+              </button>
             </div>
           </div>
-          <div className="popover-backdrop" onClick={handleCancelDialog} />
+          <div 
+            className="popover-backdrop" 
+            onClick={handleCancelDialog}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 9998,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)'
+            }}
+          />
         </>
       )}
     </div>
