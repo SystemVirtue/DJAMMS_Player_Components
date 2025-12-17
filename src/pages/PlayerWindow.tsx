@@ -2079,10 +2079,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
           // Don't manually update local state - let main process broadcasts handle it
           // The main process will broadcast the final correct state after all operations
-          console.log('[PlayerWindow] Playlist load commands sent - waiting for main process broadcasts');
+        console.log('[PlayerWindow] Playlist load commands sent - waiting for main process broadcasts');
+        console.log('[PlayerWindow] DEBUG: Queue state after playlist loading - length:', queueRef.current.length);
 
-          // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
-          setQueueIndex(0);
+        // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
+        setQueueIndex(0);
         }).catch((error: any) => {
           console.error('[PlayerWindow] DEBUG: getQueueState promise rejected:', error);
           console.error('[PlayerWindow] Failed to get queue state for playlist load:', error);
@@ -3336,7 +3337,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       setPlayerWindowOpen(true);
 
       // Mark player as ready since we have a queue loaded
-      if (!playerReadyRef.current) {
+      console.log('[PlayerWindow] DEBUG: Checking player readiness - current ready:', playerReadyRef.current, 'queue length:', queue.length);
+      if (!playerReadyRef.current && queue.length > 0) {
+        console.log('[PlayerWindow] DEBUG: Setting player to READY - queue loaded with', queue.length, 'tracks');
         playerReadyRef.current = true;
         setPlayerReady(true);
       }
