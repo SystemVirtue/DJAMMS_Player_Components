@@ -79,6 +79,34 @@ export const FullscreenPlayer = forwardRef<FullscreenPlayerRef, FullscreenPlayer
   const prevIsPlayingRef = useRef<boolean>(false);
   const prevPreloadVideoRef = useRef<string | null>(null);
 
+  // Hide cursor on video player window
+  useEffect(() => {
+    // Hide cursor on body and html elements
+    document.body.style.cursor = 'none';
+    document.documentElement.style.cursor = 'none';
+    
+    // Also hide cursor on all child elements
+    const hideCursorOnElements = () => {
+      const allElements = document.querySelectorAll('*');
+      allElements.forEach(el => {
+        if (el instanceof HTMLElement && !el.style.cursor) {
+          el.style.cursor = 'none';
+        }
+      });
+    };
+    
+    // Hide cursor immediately and after a short delay to catch dynamically added elements
+    hideCursorOnElements();
+    const timeoutId = setTimeout(hideCursorOnElements, 100);
+    
+    return () => {
+      // Restore cursor when component unmounts
+      document.body.style.cursor = '';
+      document.documentElement.style.cursor = '';
+      clearTimeout(timeoutId);
+    };
+  }, []);
+
   // Handle preload video changes
   useEffect(() => {
     // Compare by video ID to prevent duplicate preloads of the same video
