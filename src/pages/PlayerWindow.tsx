@@ -502,10 +502,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       }
     },
     onSkip: () => {
-      console.log('[PlayerWindow] Supabase skip command received');
-      // Send skip command to Player Window - triggers fade-out, then video end
-      if (isElectron) {
-        (window as any).electronAPI.controlPlayerWindow('skip');
+      console.log('[PlayerWindow] Supabase skip command received (from Web Admin)');
+      // Web Admin skip: Directly request next video from main orchestrator
+      // Main orchestrator will check priority queue first, then active queue
+      // This ensures priority queue videos play before active queue videos
+      if (isElectron && playerReadyRef.current) {
+        console.log('[PlayerWindow] Web Admin skip - requesting next video (priority queue checked first)');
+        // Send 'next' command directly to main process - it handles priority queue correctly
+        (window as any).electronAPI.sendQueueCommand?.({ action: 'next' });
+      } else {
+        console.warn('[PlayerWindow] Web Admin skip ignored - player not ready or not Electron');
       }
     },
     onSetVolume: (newVolume: number) => {
