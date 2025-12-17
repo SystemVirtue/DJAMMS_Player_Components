@@ -300,6 +300,32 @@ class SupabaseService {
           this.playerStateId = existing.id;
           logger.info(`[SupabaseService] Found existing player state: ${this.playerStateId}`);
           
+          // CRITICAL: Initialize lastSyncedState with existing database state
+          // This ensures active_queue and priority_queue are always available for preservation in updates
+          const { data: fullState, error: stateError } = await this.client!
+            .from('player_state')
+            .select('*')
+            .eq('id', this.playerStateId)
+            .maybeSingle();
+          
+          if (!stateError && fullState) {
+            // Initialize lastSyncedState with existing database state
+            // Ensure active_queue and priority_queue default to empty arrays if null/undefined
+            this.lastSyncedState = {
+              ...fullState,
+              active_queue: fullState.active_queue || [],
+              priority_queue: fullState.priority_queue || []
+            } as SupabasePlayerState;
+            logger.info(`[SupabaseService] ✅ Initialized lastSyncedState with existing DB state (active_queue: ${this.lastSyncedState.active_queue?.length || 0}, priority_queue: ${this.lastSyncedState.priority_queue?.length || 0})`);
+          } else if (stateError) {
+            logger.warn('[SupabaseService] Failed to fetch full player state for lastSyncedState initialization:', stateError.message);
+            // Initialize with empty arrays as fallback
+            this.lastSyncedState = {
+              active_queue: [],
+              priority_queue: []
+            } as Partial<SupabasePlayerState>;
+          }
+          
           // Update online status (non-blocking)
           this.setOnlineStatus(true).catch(err => {
             logger.warn('[SupabaseService] Failed to update online status (non-critical):', err);
@@ -330,6 +356,13 @@ class SupabaseService {
 
           this.playerStateId = newState.id;
           logger.info(`[SupabaseService] Created new player state: ${this.playerStateId}`);
+          
+          // Initialize lastSyncedState with empty queues for new player state
+          this.lastSyncedState = {
+            active_queue: [],
+            priority_queue: []
+          } as Partial<SupabasePlayerState>;
+          logger.info('[SupabaseService] ✅ Initialized lastSyncedState with empty queues for new player state');
         }
       })();
 
@@ -623,7 +656,8 @@ class SupabaseService {
       // This ensures Web Admin receives queue data in EVERY Realtime update, even for partial updates
       // This is a fallback in case the above logic didn't catch it (defensive programming)
       // IMPORTANT: This is especially critical for SKIP operations where queueIndex changes
-      if (updateData.active_queue === undefined) {
+      // Check for both undefined AND null to catch all cases
+      if (updateData.active_queue === undefined || updateData.active_queue === null) {
         if (this.lastSyncedState?.active_queue !== undefined && this.lastSyncedState?.active_queue !== null) {
           updateData.active_queue = this.lastSyncedState.active_queue;
           logger.debug('[SupabaseService] Fallback: Including active_queue from lastSyncedState to ensure Web Admin receives it');
@@ -670,7 +704,8 @@ class SupabaseService {
           }
         }
       }
-      if (updateData.priority_queue === undefined) {
+      // Check for both undefined AND null to catch all cases
+      if (updateData.priority_queue === undefined || updateData.priority_queue === null) {
         if (this.lastSyncedState?.priority_queue !== undefined && this.lastSyncedState?.priority_queue !== null) {
           updateData.priority_queue = this.lastSyncedState.priority_queue;
           logger.debug('[SupabaseService] Fallback: Including priority_queue from lastSyncedState to ensure Web Admin receives it');
@@ -888,6 +923,17 @@ class SupabaseService {
         priority_length: updateData.priority_queue?.length
       }, null, 2);
       const requestId = await getIOLogger().logSent('supabase', requestStr, 'player_state');
+
+      // ABSOLUTE FINAL CHECK: Ensure active_queue and priority_queue are ALWAYS included before sending to Supabase
+      // This is the last line of defense to prevent missing queue data in Realtime updates
+      if (updateData.active_queue === undefined || updateData.active_queue === null) {
+        logger.warn('[SupabaseService] ⚠️ CRITICAL: active_queue missing right before DB update - using empty array');
+        updateData.active_queue = [];
+      }
+      if (updateData.priority_queue === undefined || updateData.priority_queue === null) {
+        logger.warn('[SupabaseService] ⚠️ CRITICAL: priority_queue missing right before DB update - using empty array');
+        updateData.priority_queue = [];
+      }
 
       // #region agent log
       if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
