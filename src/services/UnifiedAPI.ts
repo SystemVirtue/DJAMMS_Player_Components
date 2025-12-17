@@ -24,10 +24,14 @@ export class UnifiedAPI {
 
   // Unified command sending
   async sendCommand(command: string, data?: any): Promise<any> {
+    console.log('[UnifiedAPI] 🎯 Sending command:', command, 'data:', data, 'isElectron:', this.isElectron, 'playerId:', this.playerId);
     if (this.isElectron) {
       return await (window as any).electronAPI.sendCommand(command, data);
     } else {
-      return await insertCommand(command as any, data, 'web-admin', this.playerId);
+      console.log('[UnifiedAPI] 📤 Sending command to Supabase:', command, data);
+      const result = await insertCommand(command as any, data, 'web-admin', this.playerId);
+      console.log('[UnifiedAPI] ✅ Command sent to Supabase, result:', result);
+      return result;
     }
   }
 

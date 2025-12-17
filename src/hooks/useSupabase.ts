@@ -272,10 +272,16 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
 
     // Load playlist command
     if (callbacks.onLoadPlaylist) {
+      console.log(`[useSupabase] ✅ Registering load_playlist handler`);
       service.onCommand('load_playlist', (cmd) => {
+        console.log(`[useSupabase] 🎯 load_playlist handler called with command:`, cmd.id, cmd.command_type);
         const payload = cmd.command_data as LoadPlaylistCommandPayload;
+        console.log(`[useSupabase] 🎯 load_playlist payload:`, payload);
+        console.log(`[useSupabase] 📡 Processing load_playlist command from Web Admin`);
         callbacks.onLoadPlaylist?.(payload.playlistName, payload.shuffle);
       });
+    } else {
+      console.warn(`[useSupabase] ⚠️ onLoadPlaylist handler not provided - load_playlist commands will not be processed`);
     }
 
     // Queue move command

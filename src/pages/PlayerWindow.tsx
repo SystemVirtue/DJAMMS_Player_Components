@@ -663,7 +663,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     },
 
     onLoadPlaylist: async (playlistName: string, shuffle?: boolean) => {
-      console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
+      console.log('[PlayerWindow] 🎯 Supabase load_playlist command received:', playlistName, shuffle, 'isElectron:', isElectron);
 
       // Refresh playlists from disk to ensure we have the latest changes
       let refreshedPlaylists = playlists; // Default to current state
