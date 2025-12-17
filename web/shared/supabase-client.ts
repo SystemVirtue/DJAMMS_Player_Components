@@ -611,7 +611,6 @@ export async function insertCommand(
   issuedBy: string = 'web-admin',
   playerId: string = DEFAULT_PLAYER_ID
 ): Promise<boolean> {
-  console.log('[supabase-client] 📤 insertCommand called:', commandType, commandData, 'playerId:', playerId, 'issuedBy:', issuedBy);
   try {
     // Generate ID upfront for broadcast
     const commandId = crypto.randomUUID();

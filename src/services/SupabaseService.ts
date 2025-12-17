@@ -149,21 +149,10 @@ class SupabaseService {
       logger.info(`[SupabaseService] Player ID changed from ${this.playerId} to ${newPlayerId} - re-initializing`);
       this.isInitialized = false;
       this.isOnline = false;
-      // Clear existing subscriptions and cleanup client
+      // Clear existing subscriptions
       if (this.commandChannel) {
         this.commandChannel.unsubscribe();
         this.commandChannel = null;
-      }
-      // Cleanup existing client to prevent multiple GoTrueClient instances
-      if (this.client) {
-        try {
-          // Remove all realtime subscriptions
-          this.client.realtime.disconnect();
-          // Clear the client reference
-          this.client = null;
-        } catch (error) {
-          logger.warn('[SupabaseService] Error cleaning up old client:', error);
-        }
       }
     } else if (this.isInitialized) {
       logger.info('[SupabaseService] Already initialized with same player ID');
@@ -310,26 +299,7 @@ class SupabaseService {
         if (existing) {
           this.playerStateId = existing.id;
           logger.info(`[SupabaseService] Found existing player state: ${this.playerStateId}`);
-
-          // CRITICAL: Initialize lastSyncedState with existing state from database
-          // This ensures Web Admin receives queue data in subsequent Realtime updates
-          // Without this, partial updates would not include active_queue
-          this.lastSyncedState = {
-            active_queue: existing.active_queue || [],
-            priority_queue: existing.priority_queue || [],
-            now_playing_video: existing.now_playing_video,
-            status: existing.status,
-            volume: existing.volume,
-            current_position: existing.current_position,
-            last_updated: existing.last_updated
-          };
-          logger.debug('[SupabaseService] Initialized lastSyncedState from existing DB state', {
-            hasActiveQueue: !!existing.active_queue,
-            activeQueueLength: existing.active_queue?.length || 0,
-            hasPriorityQueue: !!existing.priority_queue,
-            priorityQueueLength: existing.priority_queue?.length || 0
-          });
-
+          
           // Update online status (non-blocking)
           this.setOnlineStatus(true).catch(err => {
             logger.warn('[SupabaseService] Failed to update online status (non-critical):', err);
@@ -613,24 +583,14 @@ class SupabaseService {
       if (state.activeQueue !== undefined) {
         updateData.active_queue = state.activeQueue.map(v => this.videoToQueueItem(v));
       } else {
-      // CRITICAL: Always preserve active_queue from lastSyncedState if it exists
-      // This ensures Web Admin receives queue data in every Realtime update, even when only other fields change
-      // Without this, partial updates (e.g., only now_playing_video) would not include active_queue
-      // Check for both existence and non-null (empty arrays are valid)
-      if (this.lastSyncedState?.active_queue !== undefined && this.lastSyncedState?.active_queue !== null) {
-        updateData.active_queue = this.lastSyncedState.active_queue;
-        logger.debug('[SupabaseService] Preserving active_queue from lastSyncedState for partial update', {
-          lastSyncedQueueLength: this.lastSyncedState.active_queue?.length || 0,
-          hasLastSyncedState: !!this.lastSyncedState,
-          lastSyncedStateKeys: this.lastSyncedState ? Object.keys(this.lastSyncedState) : []
-        });
-      } else {
-        logger.warn('[SupabaseService] WARNING: No active_queue in lastSyncedState to preserve!', {
-          lastSyncedStateExists: !!this.lastSyncedState,
-          lastSyncedActiveQueue: this.lastSyncedState?.active_queue,
-          lastSyncedStateKeys: this.lastSyncedState ? Object.keys(this.lastSyncedState) : []
-        });
-      }
+        // CRITICAL: Always preserve active_queue from lastSyncedState if it exists
+        // This ensures Web Admin receives queue data in every Realtime update, even when only other fields change
+        // Without this, partial updates (e.g., only now_playing_video) would not include active_queue
+        // Check for both existence and non-null (empty arrays are valid)
+        if (this.lastSyncedState?.active_queue !== undefined && this.lastSyncedState?.active_queue !== null) {
+          updateData.active_queue = this.lastSyncedState.active_queue;
+          logger.debug('[SupabaseService] Preserving active_queue from lastSyncedState for partial update');
+        }
       }
 
       // Same logic for priority queue
@@ -668,22 +628,76 @@ class SupabaseService {
           updateData.active_queue = this.lastSyncedState.active_queue;
           logger.debug('[SupabaseService] Fallback: Including active_queue from lastSyncedState to ensure Web Admin receives it');
         } else {
-          // ⚠️ REMOVED: Player should NEVER fetch queue state from Supabase
-          // The Player is the single source of truth and should only PUSH its state
-          // If lastSyncedState is missing, we use empty array (no fetching from DB)
-          updateData.active_queue = [];
-          logger.warn('[SupabaseService] ⚠️ lastSyncedState missing active_queue - using empty array (no DB fetch)');
+          // CRITICAL FIX: If lastSyncedState doesn't have active_queue, fetch it from the database
+          // This ensures we always include queue data in updates, preventing WEBADMIN from showing stale data
+          // This should be rare - only happens if lastSyncedState was never initialized or got cleared
+          logger.warn('[SupabaseService] ⚠️ lastSyncedState missing active_queue - fetching from database to ensure WEBADMIN receives queue data');
+          
+          // #region agent log
+          if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+            (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:619',message:'Fetching active_queue from DB - lastSyncedState missing it',data:{hasLastSyncedState:!!this.lastSyncedState,lastSyncedStateKeys:this.lastSyncedState?Object.keys(this.lastSyncedState):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'}).catch(()=>{});
+          }
+          // #endregion
+          
+          try {
+            const currentState = await this.fetchPlayerState();
+            if (currentState?.active_queue !== undefined && currentState?.active_queue !== null) {
+              updateData.active_queue = currentState.active_queue;
+              // Also update lastSyncedState so we don't need to fetch again on next sync
+              if (!this.lastSyncedState) {
+                this.lastSyncedState = {};
+              }
+              this.lastSyncedState.active_queue = currentState.active_queue;
+              logger.info('[SupabaseService] ✅ Fetched active_queue from database and included in update (length: ' + currentState.active_queue.length + ')');
+              
+              // #region agent log
+              if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
+                (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:633',message:'Successfully fetched active_queue from DB',data:{queueLength:currentState.active_queue.length,hasPriorityQueue:currentState.priority_queue!==undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'}).catch(()=>{});
+              }
+              // #endregion
+            } else {
+              // Even if database doesn't have it, use empty array instead of undefined
+              // This ensures WEBADMIN receives a valid (empty) queue rather than undefined
+              updateData.active_queue = [];
+              logger.warn('[SupabaseService] ⚠️ Database also missing active_queue - using empty array to prevent undefined in Realtime update');
+            }
+          } catch (fetchError) {
+            logger.error('[SupabaseService] ❌ Failed to fetch active_queue from database:', fetchError);
+            // Last resort: use empty array instead of undefined
+            // This is critical - undefined active_queue causes WEBADMIN to preserve stale data
+            updateData.active_queue = [];
+            logger.warn('[SupabaseService] ⚠️ Using empty array as fallback for active_queue (prevents undefined in Realtime)');
+          }
         }
       }
-
-      // Same logic for priority_queue - use lastSyncedState or empty array
       if (updateData.priority_queue === undefined) {
         if (this.lastSyncedState?.priority_queue !== undefined && this.lastSyncedState?.priority_queue !== null) {
           updateData.priority_queue = this.lastSyncedState.priority_queue;
           logger.debug('[SupabaseService] Fallback: Including priority_queue from lastSyncedState to ensure Web Admin receives it');
         } else {
-          updateData.priority_queue = [];
-          logger.warn('[SupabaseService] ⚠️ lastSyncedState missing priority_queue - using empty array (no DB fetch)');
+          // CRITICAL FIX: If lastSyncedState doesn't have priority_queue, fetch it from the database
+          // This should be rare - only happens if lastSyncedState was never initialized or got cleared
+          logger.warn('[SupabaseService] ⚠️ lastSyncedState missing priority_queue - fetching from database');
+          try {
+            const currentState = await this.fetchPlayerState();
+            if (currentState?.priority_queue !== undefined && currentState?.priority_queue !== null) {
+              updateData.priority_queue = currentState.priority_queue;
+              // Also update lastSyncedState so we don't need to fetch again on next sync
+              if (!this.lastSyncedState) {
+                this.lastSyncedState = {};
+              }
+              this.lastSyncedState.priority_queue = currentState.priority_queue;
+              logger.info('[SupabaseService] ✅ Fetched priority_queue from database and included in update (length: ' + currentState.priority_queue.length + ')');
+            } else {
+              // Use empty array instead of undefined
+              updateData.priority_queue = [];
+              logger.warn('[SupabaseService] ⚠️ Database also missing priority_queue - using empty array');
+            }
+          } catch (fetchError) {
+            logger.error('[SupabaseService] ❌ Failed to fetch priority_queue from database:', fetchError);
+            updateData.priority_queue = [];
+            logger.warn('[SupabaseService] ⚠️ Using empty array as fallback for priority_queue');
+          }
         }
       }
       
@@ -693,23 +707,6 @@ class SupabaseService {
       if (updateData.active_queue === undefined || updateData.active_queue === null) {
         logger.warn('[SupabaseService] ⚠️ CRITICAL: active_queue is still undefined/null after all preservation logic - using empty array');
         updateData.active_queue = [];
-      }
-      
-      // ABSOLUTE FINAL GUARANTEE: Ensure active_queue is ALWAYS an array before database update
-      // This prevents any possibility of undefined/null being sent to Supabase
-      // This is a safety net to ensure Web Admin always receives active_queue in Realtime updates
-      if (!Array.isArray(updateData.active_queue)) {
-        logger.error('[SupabaseService] ❌ CRITICAL ERROR: active_queue is not an array - forcing to empty array');
-        updateData.active_queue = [];
-      }
-      
-      // Same guarantee for priority_queue
-      if (updateData.priority_queue === undefined || updateData.priority_queue === null) {
-        updateData.priority_queue = [];
-      }
-      if (!Array.isArray(updateData.priority_queue)) {
-        logger.error('[SupabaseService] ❌ CRITICAL ERROR: priority_queue is not an array - forcing to empty array');
-        updateData.priority_queue = [];
       }
       
       // ARCHITECTURE VALIDATION: Ensure activeQueue[0] always matches now_playing_video
@@ -892,25 +889,9 @@ class SupabaseService {
       }, null, 2);
       const requestId = await getIOLogger().logSent('supabase', requestStr, 'player_state');
 
-      // ABSOLUTE FINAL GUARANTEE BEFORE DATABASE UPDATE: Ensure active_queue is ALWAYS included
-      // This is the last safety check before sending to Supabase to prevent missing active_queue in Realtime updates
-      if (!updateData.active_queue || !Array.isArray(updateData.active_queue)) {
-        logger.error('[SupabaseService] ❌ CRITICAL: active_queue missing or invalid before DB update - forcing to array');
-        updateData.active_queue = this.lastSyncedState?.active_queue || [];
-        if (!Array.isArray(updateData.active_queue)) {
-          updateData.active_queue = [];
-        }
-      }
-      if (!updateData.priority_queue || !Array.isArray(updateData.priority_queue)) {
-        updateData.priority_queue = this.lastSyncedState?.priority_queue || [];
-        if (!Array.isArray(updateData.priority_queue)) {
-          updateData.priority_queue = [];
-        }
-      }
-      
       // #region agent log
       if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
-        (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:760',message:'Sending update to Supabase DB',data:{hasActiveQueue:updateData.active_queue!==undefined,activeQueueLength:updateData.active_queue?.length,hasPriorityQueue:updateData.priority_queue!==undefined,hasNowPlaying:updateData.now_playing_video!==undefined,nowPlayingId:updateData.now_playing_video?.id,updateDataKeys:Object.keys(updateData),isActiveQueueArray:Array.isArray(updateData.active_queue)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
+        (window as any).electronAPI.writeDebugLog({location:'SupabaseService.ts:760',message:'Sending update to Supabase DB',data:{hasActiveQueue:updateData.active_queue!==undefined,activeQueueLength:updateData.active_queue?.length,hasPriorityQueue:updateData.priority_queue!==undefined,hasNowPlaying:updateData.now_playing_video!==undefined,nowPlayingId:updateData.now_playing_video?.id,updateDataKeys:Object.keys(updateData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'}).catch(()=>{});
       }
       // #endregion
       // Select updated_at after update to get the actual timestamp from database trigger
@@ -984,11 +965,6 @@ class SupabaseService {
         }
         
         this.lastSyncedState = mergedState;
-        logger.debug('[SupabaseService] Updated lastSyncedState after DB write', {
-          hasActiveQueue: mergedState.active_queue !== undefined,
-          activeQueueLength: mergedState.active_queue?.length || 0,
-          lastSyncedStateKeys: Object.keys(mergedState)
-        });
         
         // #region agent log
         if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
@@ -2826,14 +2802,13 @@ class SupabaseService {
    * Convert local Video type to NowPlayingVideo
    */
   private videoToNowPlaying(video: Video): NowPlayingVideo {
-    const src = video.src || video.path || video.file_path || '';
     return {
       id: video.id,
-      src: src,
+      src: video.src,
       path: video.path || video.file_path || video.src,
       title: video.title,
       artist: video.artist || null,
-      sourceType: src.startsWith('http') ? 'youtube' : 'local',
+      sourceType: video.src.startsWith('http') ? 'youtube' : 'local',
       duration: video.duration
     };
   }
@@ -2842,14 +2817,13 @@ class SupabaseService {
    * Convert local Video type to QueueVideoItem
    */
   private videoToQueueItem(video: Video): QueueVideoItem {
-    const src = video.src || video.path || video.file_path || '';
     return {
       id: video.id,
-      src: src,
+      src: video.src,
       path: video.path || video.file_path || video.src,
       title: video.title,
       artist: video.artist || null,
-      sourceType: src.startsWith('http') ? 'youtube' : 'local',
+      sourceType: video.src.startsWith('http') ? 'youtube' : 'local',
       duration: video.duration,
       playlist: video.playlist,
       playlistDisplayName: video.playlistDisplayName

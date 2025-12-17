@@ -342,11 +342,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const [playerWindowOpen, setPlayerWindowOpen] = useState(false);
   const [playerReady, setPlayerReady] = useState(false); // True after queue is loaded and ready
   const playerReadyRef = useRef(false); // Ref to avoid stale closure in IPC callbacks
-
-  // New state for proper initialization sequence
-  const [adminConsoleReady, setAdminConsoleReady] = useState(false);
-  const [activeQueuePopulated, setActiveQueuePopulated] = useState(false);
-  const [playerWindowInitializing, setPlayerWindowInitializing] = useState(false);
   const hasIndexedRef = useRef(false); // Prevent multiple indexing calls during mount
   const lastIndexedPlaylistsRef = useRef<string>(''); // Track last indexed playlists to prevent re-indexing
   const isReloadingPlaylistsRef = useRef(false); // Prevent concurrent playlist reloads
@@ -387,7 +382,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   }, [settings]);
 
   // Check if we're in Electron (check multiple ways for reliability)
-  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
+  const isElectron = typeof window !== 'undefined' && (
+    !!(window as any).electronAPI ||
+    !!(window as any).process?.versions?.electron ||
+    navigator.userAgent.toLowerCase().includes('electron')
+  );
 
   // Initialize Player ID on mount
   useEffect(() => {
@@ -440,23 +439,23 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     autoInit: !!(isElectron && playerIdInitialized), // Initialize if Player ID is initialized (including DJAMMS_DEMO)
     onPlay: (video?: QueueVideoItem, queueIndex?: number) => {
       console.log('[PlayerWindow] Supabase play command received:', video?.title, 'queueIndex:', queueIndex);
-
+      
       // If queueIndex is provided, play from that position in the queue (click-to-play from Web Admin)
       if (typeof queueIndex === 'number' && queueIndex >= 0) {
         const currentQueue = queueRef.current;
         if (currentQueue && queueIndex < currentQueue.length) {
           const videoToPlay = currentQueue[queueIndex];
-          console.log('[PlayerWindow] Requesting play from queue index:', queueIndex, videoToPlay.title);
+          console.log('[PlayerWindow] Playing from queue index:', queueIndex, videoToPlay.title);
           setQueueIndex(queueIndex);
           setCurrentVideo(videoToPlay);
-          // Don't set isPlaying here - let actual playback state determine it
+          setIsPlaying(true);
           if (isElectron) {
             (window as any).electronAPI.controlPlayerWindow('play', videoToPlay);
           }
           return;
         }
       }
-
+      
       // If video object is provided, play that specific video
       if (video && video.id) {
         // Convert QueueVideoItem to Video format and play
@@ -471,15 +470,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           duration: video.duration
         };
         setCurrentVideo(videoToPlay);
-        // Don't set isPlaying here - let actual playback state determine it
-        console.log('[PlayerWindow] Requesting play of specific video:', videoToPlay.title);
+        setIsPlaying(true);
         if (isElectron) {
           (window as any).electronAPI.controlPlayerWindow('play', videoToPlay);
         }
       } else if (currentVideo) {
         // Resume current video
-        // Don't set isPlaying here - let actual playback state determine it
-        console.log('[PlayerWindow] Requesting resume of current video');
+        setIsPlaying(true);
         if (isElectron) {
           (window as any).electronAPI.controlPlayerWindow('resume');
         }
@@ -498,8 +495,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       }
     },
     onResume: () => {
-      console.log('[PlayerWindow] Supabase resume command received - requesting resume');
-      // Don't set isPlaying here - let actual playback state determine it
+      console.log('[PlayerWindow] Supabase resume command received');
+      setIsPlaying(true);
       if (isElectron) {
         (window as any).electronAPI.controlPlayerWindow('resume');
       }
@@ -551,42 +548,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         // IMPORTANT: Also add to main process queue state (source of truth for playback)
         // Main process will also check for duplicates
         if (isElectron) {
-          // Apply the same URL conversion as sendPlayCommand for priority queue videos
-          const isDevMode = typeof window !== 'undefined' && window.location.origin.startsWith('http://localhost');
-          let videoForPriorityQueue = { ...videoToAdd };
-
-          if (isDevMode) {
-            const videoPath = videoToAdd.src || videoToAdd.path || (videoToAdd as any).file_path;
-            if (videoPath && videoPath.startsWith('file://')) {
-              // Extract the actual file path from file:// URL
-              try {
-                const url = new URL(videoPath);
-                let cleanPath = url.pathname;
-
-                // Convert file:// to djamms:// for Electron protocol handling
-                const djammsUrl = `djamms://${cleanPath}`;
-
-                videoForPriorityQueue = {
-                  ...videoToAdd,
-                  src: djammsUrl,
-                  path: cleanPath
-                };
-
-                console.log('[PlayerWindow] 🔄 Converted priority queue video URL:', {
-                  title: videoToAdd.title,
-                  originalSrc: videoPath,
-                  newSrc: djammsUrl
-                });
-              } catch (error) {
-                console.warn('[PlayerWindow] Failed to convert priority queue video URL:', error);
-              }
-            }
-          }
-
-          console.log('[PlayerWindow] 📤 Adding video to priority queue in main process (from Supabase):', videoForPriorityQueue.title);
-          (window as any).electronAPI.sendQueueCommand?.({
-            action: 'add_to_priority_queue',
-            payload: { video: videoForPriorityQueue }
+          console.log('[PlayerWindow] 📤 Adding video to priority queue in main process (from Supabase):', videoToAdd.title);
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'add_to_priority_queue', 
+            payload: { video: videoToAdd } 
           });
           console.log('[PlayerWindow] ✅ Priority queue command sent to main process');
         }
@@ -657,158 +622,73 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         return newQueue;
       });
     },
-    onMigratePlaylistNames: async () => {
-      console.log('[PlayerWindow] Manual playlist name migration triggered');
-      await migrateSupabasePlaylistNames(playlists);
-    },
-
-    onLoadPlaylist: async (playlistName: string, shuffle?: boolean) => {
-      console.log('[PlayerWindow] 🎯 Supabase load_playlist command received:', playlistName, shuffle, 'isElectron:', isElectron);
-
-      // Refresh playlists from disk to ensure we have the latest changes
-      let refreshedPlaylists = playlists; // Default to current state
-      if (isElectron) {
-        try {
-          const result = await (window as any).electronAPI.getPlaylists();
-          if (result?.playlists) {
-            refreshedPlaylists = result.playlists;
-            setPlaylists(refreshedPlaylists);
-            localSearchService.indexVideos(refreshedPlaylists);
-          }
-        } catch (error) {
-          console.warn('[PlayerWindow] Failed to refresh playlists:', error);
-        }
-      }
-
-      // Find the playlist (may have YouTube ID prefix) - use the refreshed playlists
-      const playlistKey = Object.keys(refreshedPlaylists).find(key =>
+    onLoadPlaylist: (playlistName: string, shuffle?: boolean) => {
+      console.log('[PlayerWindow] Supabase load_playlist command received:', playlistName, shuffle);
+      // Find the playlist (may have YouTube ID prefix)
+      const playlistKey = Object.keys(playlists).find(key => 
         key === playlistName || key.includes(playlistName)
       );
-
-      if (playlistKey && refreshedPlaylists[playlistKey]) {
-        const playlistTracks = refreshedPlaylists[playlistKey];
+      if (playlistKey && playlists[playlistKey]) {
+        const playlistTracks = playlists[playlistKey];
         const shouldShuffle = shuffle ?? settings.autoShufflePlaylists;
-        const newPlaylistTracks = Array.isArray(playlistTracks)
+        const finalTracks = Array.isArray(playlistTracks)
           ? (shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks])
           : [];
-
         setActivePlaylist(playlistKey);
-
-        // Load playlist preserving current playing video and priority queue
-        if (isElectron && newPlaylistTracks.length > 0) {
-          console.log('[PlayerWindow] Loading playlist while preserving current video and priority queue');
-
-          // Mark playlist loading as in progress to prevent Supabase polling interference
-          playlistLoadingInProgressRef.current = true;
-
-          // Get current queue state from main process
-          const invokePromise = (window as any).electronAPI.getQueueState?.();
-
-          if (!invokePromise) {
-            console.error('[PlayerWindow] DEBUG: electronAPI.getQueueState is not available');
-            return;
+        
+        // Load playlist into main process queue
+        if (isElectron && finalTracks.length > 0) {
+          // Clear queue in main process
+          (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+          
+          // Add all videos to main process queue
+          finalTracks.forEach((video) => {
+            (window as any).electronAPI.sendQueueCommand?.({ 
+              action: 'add_to_queue', 
+              payload: { video } 
+            });
+          });
+          
+          // Determine starting index based on playback state
+          // If video is currently PLAYING, start at index 1 (skip index 0) to not interrupt
+          // If video is NOT playing (paused/inactive), play index 0 (first song in new playlist)
+          const startIndex = (isPlaying && currentVideo) ? 1 : 0;
+          
+          if (startIndex === 1) {
+            // Video is playing - start playlist at index 1 to not interrupt current video
+            console.log('[PlayerWindow] Video is playing - starting playlist at index 1 to avoid interruption');
+            setTimeout(() => {
+              (window as any).electronAPI.sendQueueCommand?.({ 
+                action: 'play_at_index', 
+                payload: { index: 1 } 
+              });
+            }, 100);
+          } else {
+            // Video is not playing - play index 0 (first song in new playlist)
+            // This effectively "skips" to the next song (which is the first in the new playlist)
+            console.log('[PlayerWindow] Video is not playing - playing index 0 (first song in new playlist)');
+            setTimeout(() => {
+              (window as any).electronAPI.sendQueueCommand?.({ 
+                action: 'play_at_index', 
+                payload: { index: 0 } 
+              });
+            }, 100);
           }
-
-          // Add timeout to detect hanging calls
-          const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('getQueueState timeout after 5s')), 5000);
-          });
-
-          Promise.race([invokePromise, timeoutPromise])
-            .then((queueState: any) => {
-              console.log('[PlayerWindow] DEBUG: getQueueState promise resolved');
-              const currentQueue = queueState?.activeQueue || [];
-              const currentPriorityQueue = queueState?.priorityQueue || [];
-
-              console.log('[PlayerWindow] Current queue state:', {
-                activeQueueLength: currentQueue.length,
-                priorityQueueLength: currentPriorityQueue.length,
-                nowPlaying: queueState?.nowPlaying?.title,
-                isPlaying: queueState?.isPlaying
-              });
-
-            // Preserve index 0 (currently playing video) if it exists and is playing
-            const preservedVideo = (currentQueue.length > 0 && queueState?.isPlaying) ? currentQueue[0] : null;
-
-            if (preservedVideo) {
-              console.log('[PlayerWindow] Preserving currently playing video at index 0:', preservedVideo.title);
-            }
-
-            // Clear the entire queue first
-            (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-
-            // If we have a preserved video, add it back at index 0
-            if (preservedVideo) {
-              (window as any).electronAPI.sendQueueCommand?.({
-                action: 'add_to_queue',
-                payload: { video: preservedVideo }
-              });
-            }
-
-            // Add new playlist tracks (they will start from index 1 if preserved video exists)
-            newPlaylistTracks.forEach((video) => {
-              (window as any).electronAPI.sendQueueCommand?.({
-                action: 'add_to_queue',
-                payload: { video }
-              });
-            });
-
-            // Determine if we should auto-play
-            // Only auto-play if there's no currently playing video OR if video is not playing
-            const shouldAutoPlay = !preservedVideo || !queueState?.isPlaying;
-
-            if (shouldAutoPlay) {
-              console.log('[PlayerWindow] Auto-playing first track of new playlist');
-              setTimeout(() => {
-                (window as any).electronAPI.sendQueueCommand?.({
-                  action: 'play_at_index',
-                  payload: { index: 0 }
-                });
-              }, 100);
-            } else {
-              console.log('[PlayerWindow] Preserving current playing video, playlist loaded starting from index 1');
-            }
-
-            // Don't manually update local state - let main process broadcasts handle it
-            console.log('[PlayerWindow] Supabase playlist load commands sent - waiting for main process broadcasts');
-
-            // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
-            setQueueIndex(0);
-
-            // Sync state with preserved priority queue
-            if (updatedQueue.length > 0) {
-              syncStateRef.current.lastSyncedHash = JSON.stringify({
-                activeQueue: updatedQueue.map(v => v.id),
-                priorityQueue: currentPriorityQueue.map((v: Video) => v.id),
-                queueIndex: 0
-              });
-            }
-          }).catch((error: any) => {
-            console.error('[PlayerWindow] DEBUG: getQueueState promise rejected:', error);
-            console.error('[PlayerWindow] Failed to get queue state for playlist load:', error);
-            // Fallback: clear and load normally
-            (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-            newPlaylistTracks.forEach((video) => {
-              (window as any).electronAPI.sendQueueCommand?.({
-                action: 'add_to_queue',
-                payload: { video }
-              });
-            });
-            setQueue(newPlaylistTracks);
-            setQueueIndex(0);
-          });
-
-          // Mark playlist loading as complete after a delay to allow main process to finish processing
-          setTimeout(() => {
-            playlistLoadingInProgressRef.current = false;
-            console.log('[PlayerWindow] Supabase playlist loading marked as complete');
-          }, 2000); // 2 second delay to ensure all operations complete
-        } else {
-          // Fallback for non-Electron or empty playlist
-          setQueue(newPlaylistTracks);
-          setQueueIndex(0);
-          playlistLoadingInProgressRef.current = false;
         }
+        
+        // Update local state (will be synced from main process via queue-state event)
+        // IMPORTANT: Do NOT clear priority queue - it should persist when loading a new playlist
+        setQueue(finalTracks);
+        setQueueIndex(0);
+        // Mark that we have a non-empty queue (allows syncing to Supabase)
+        if (finalTracks.length > 0) {
+          syncStateRef.current.lastSyncedHash = JSON.stringify({
+            activeQueue: finalTracks.map(v => v.id),
+            priorityQueue: [],
+            queueIndex: 0
+          });
+        }
+        // Priority queue is preserved - do NOT call setPriorityQueue([]) here
       }
     },
     onQueueMove: (fromIndex: number, toIndex: number) => {
@@ -975,14 +855,11 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Track when indexing is complete (for auto-play logic)
   const indexingCompleteRef = useRef(false);
-
+  
   // Track last indexed playerId and supabaseInitialized state to prevent unnecessary reloads
   // Note: These refs are declared here to avoid duplicate declarations
   const lastIndexedPlayerIdRef = useRef<string>('');
   const lastSupabaseInitializedRef = useRef<boolean>(false);
-
-  // Track when playlist loading is in progress to prevent Supabase polling interference
-  const playlistLoadingInProgressRef = useRef(false);
   
   // Initialize indexingCompleteRef based on whether Supabase is available
   useEffect(() => {
@@ -996,26 +873,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   useEffect(() => {
     if (!supabaseInitialized || Object.keys(playlists).length === 0) return;
 
-    // Create a comprehensive hash of playlist names AND contents to detect actual changes
-    const createPlaylistHash = (playlists: Record<string, Video[]>) => {
-      const parts: string[] = [];
-
-      // Sort playlist names for consistent ordering
-      const sortedNames = Object.keys(playlists).sort();
-
-      for (const name of sortedNames) {
-        const videos = playlists[name] || [];
-        // Include playlist name and all video IDs in the hash
-        const videoIds = videos.map(v => v.id || v.src || v.title).sort().join(',');
-        parts.push(`${name}:${videoIds}:${videos.length}`);
-      }
-
-      return parts.join('|');
-    };
-
-    const playlistHash = createPlaylistHash(playlists);
-
-    // Skip if we've already indexed these exact playlists (including contents)
+    // Create a hash of playlist keys to detect actual changes
+    const playlistHash = Object.keys(playlists).sort().join('|');
+    
+    // Skip if we've already indexed these exact playlists
     if (lastIndexedPlaylistsRef.current === playlistHash) {
       console.log('[PlayerWindow] Playlists unchanged, skipping re-index');
       return;
@@ -1076,22 +937,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       try {
         // Re-parse playlists from disk
         const { playlists: loadedPlaylists } = await (window as any).electronAPI.getPlaylists();
-
-        // Create comprehensive hash including playlist contents
-        const createPlaylistHash = (playlists: Record<string, Video[]>) => {
-          const parts: string[] = [];
-          const sortedNames = Object.keys(playlists).sort();
-          for (const name of sortedNames) {
-            const videos = playlists[name] || [];
-            const videoIds = videos.map(v => v.id || v.src || v.title).sort().join(',');
-            parts.push(`${name}:${videoIds}:${videos.length}`);
-          }
-          return parts.join('|');
-        };
-
-        const playlistHash = createPlaylistHash(loadedPlaylists || {});
-
-        // Only update if playlists actually changed (including contents)
+        const playlistHash = Object.keys(loadedPlaylists || {}).sort().join('|');
+        
+        // Only update if playlists actually changed
         if (lastIndexedPlaylistsRef.current !== playlistHash) {
           console.log('[PlayerWindow] Player ID validated - reloading playlists');
           setPlaylists(loadedPlaylists || {});
@@ -1184,38 +1032,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           }
           setPlaylists(loadedPlaylists || {});
           localSearchService.indexVideos(loadedPlaylists || {});
-
-          // STARTUP CHECK: Compare local playlist file counts with Supabase data
-          if (playlistCount > 0 && supabaseInitialized) {
-            try {
-              console.log('[PlayerWindow] 🔍 Checking playlist count consistency with Supabase...');
-
-              // Get total video count from local playlists
-              const localVideoCount = Object.values(loadedPlaylists).reduce((total, videos) => total + videos.length, 0);
-
-              // Get video count from Supabase local_videos table
-              const supabaseVideos = await getSupabaseService().getLocalVideos();
-              const supabaseVideoCount = supabaseVideos?.length || 0;
-
-              console.log(`[PlayerWindow] 📊 Playlist count comparison: Local=${localVideoCount} videos, Supabase=${supabaseVideoCount} videos`);
-
-              // If there's a significant discrepancy (>10% difference), trigger re-indexing
-              const discrepancyThreshold = Math.max(5, Math.floor(localVideoCount * 0.1)); // At least 5 videos or 10% difference
-              if (Math.abs(localVideoCount - supabaseVideoCount) > discrepancyThreshold) {
-                console.warn(`[PlayerWindow] 🚨 Playlist count discrepancy detected! Local: ${localVideoCount}, Supabase: ${supabaseVideoCount}`);
-                console.log('[PlayerWindow] 🔄 Triggering automatic playlist re-indexing...');
-
-                // Trigger re-indexing by sending command to index playlists
-                await getSupabaseService().indexLocalVideos(loadedPlaylists);
-                console.log('[PlayerWindow] ✅ Automatic playlist re-indexing completed');
-              } else {
-                console.log('[PlayerWindow] ✅ Playlist counts are consistent');
-              }
-            } catch (error) {
-              console.warn('[PlayerWindow] ⚠️ Failed to check playlist count consistency:', error);
-            }
-          }
-
+          
           // Check for default playlist name and prompt to change if found
           if (loadedPlaylists) {
             const defaultPlaylistKey = Object.keys(loadedPlaylists).find(name => 
@@ -1289,8 +1106,17 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           }
           // Otherwise, values were set in the else block above via setSettings
           
-          // Note: Player window is now only created when explicitly requested
-          // Removed automatic player window creation to prevent duplicate windows
+          // Open player window on startup if enabled
+          if (enablePlayerValue && isElectron) {
+            setTimeout(async () => {
+              try {
+                await (window as any).electronAPI.createPlayerWindow(displayIdValue ?? undefined, fullscreenValue ?? true);
+                setPlayerWindowOpen(true);
+              } catch (error) {
+                console.error('[PlayerWindow] Failed to open player window on startup:', error);
+              }
+            }, 1000); // Delay to ensure main window is ready
+          }
           
           // Listen for auto-disabled fullscreen event (when Admin and Player are on same display)
           if (isElectron && (window as any).electronAPI?.on) {
@@ -1371,111 +1197,37 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               const shouldShuffle = autoShuffleValue ?? true;
               const finalTracks = shouldShuffle ? shuffleArray(playlistTracks) : [...playlistTracks];
               
-              // Load playlist into main process queue (preserve any existing current video)
+              // Load playlist into main process queue
               if (isElectron && finalTracks.length > 0) {
-                // Get current queue state to preserve currently playing video
-                (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
-                  const currentQueue = queueState?.activeQueue || [];
-                  const preservedVideo = (currentQueue.length > 0 && queueState?.isPlaying) ? currentQueue[0] : null;
-
-                  if (preservedVideo) {
-                    console.log('[PlayerWindow] Preserving currently playing video during initial load:', preservedVideo.title);
-                  }
-
-                  // Apply URL conversion to playlist tracks (same as sendPlayCommand)
-                  const isDevMode = typeof window !== 'undefined' && window.location.origin.startsWith('http://localhost');
-                  const convertedTracks = finalTracks.map(video => {
-                    if (!isDevMode) return video;
-
-                    let convertedVideo = { ...video };
-                    const videoPath = video.src || video.path || (video as any).file_path;
-                    if (videoPath && videoPath.startsWith('file://')) {
-                      try {
-                        const url = new URL(videoPath);
-                        let cleanPath = url.pathname;
-
-                        // Convert file:// to djamms:// for Electron protocol handling
-                        const djammsUrl = `djamms://${cleanPath}`;
-
-                        convertedVideo = {
-                          ...video,
-                          src: djammsUrl,
-                          path: cleanPath
-                        };
-
-                        console.log('[PlayerWindow] 🔄 Converted playlist video URL:', {
-                          title: video.title,
-                          originalSrc: videoPath,
-                          newSrc: djammsUrl
-                        });
-                      } catch (error) {
-                        console.warn('[PlayerWindow] Failed to convert playlist video URL:', error);
-                      }
+                // Clear queue in main process
+                (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+                
+                // Add all videos to main process queue
+                finalTracks.forEach((video) => {
+                  (window as any).electronAPI.sendQueueCommand?.({ 
+                    action: 'add_to_queue', 
+                    payload: { video } 
+                  });
+                });
+                
+                // Wait for indexing to complete, then start playback
+                waitForIndexingComplete().then(() => {
+                  console.log('[PlayerWindow] Indexing complete - starting auto-play');
+                  // Delay to ensure Player Window is fully loaded and ready to receive IPC
+                  // Player Window is created at 500ms, needs time to load and register handlers
+                  setTimeout(() => {
+                    console.log('[PlayerWindow] Sending initial play command to Player Window');
+                    // Mark player as ready since we have a queue loaded
+                    if (!playerReadyRef.current) {
+                      playerReadyRef.current = true;
+                      setPlayerReady(true);
                     }
-                    return convertedVideo;
-                  });
-
-                  // Clear queue in main process
-                  (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-
-                  // If we have a preserved video, add it back at index 0
-                  if (preservedVideo) {
-                    (window as any).electronAPI.sendQueueCommand?.({
-                      action: 'add_to_queue',
-                      payload: { video: preservedVideo }
+                    // Play first video via main process orchestrator
+                    (window as any).electronAPI.sendQueueCommand?.({ 
+                      action: 'play_at_index', 
+                      payload: { index: 0 } 
                     });
-                  }
-
-                  // Add converted playlist videos to main process queue
-                  convertedTracks.forEach((video) => {
-                    (window as any).electronAPI.sendQueueCommand?.({
-                      action: 'add_to_queue',
-                      payload: { video }
-                    });
-                  });
-
-                  // Wait for indexing to complete, then wait for admin console readiness
-                  waitForIndexingComplete().then(async () => {
-                    console.log('[PlayerWindow] Indexing complete - waiting for admin console and queue setup');
-
-                    // Mark active queue as populated
-                    setActiveQueuePopulated(true);
-
-                    // Wait for admin console to be ready before initializing player window
-                    const waitForReady = () => {
-                      if (adminConsoleReady && !playerWindowInitializing) {
-                        console.log('[PlayerWindow] Admin console ready and queue populated - starting auto-play');
-                        initializePlayerWindow();
-                      } else {
-                        console.log('[PlayerWindow] Waiting for admin console readiness...');
-                        setTimeout(waitForReady, 500);
-                      }
-                    };
-
-                    waitForReady();
-                  });
-                }).catch((error: any) => {
-                  console.error('[PlayerWindow] Failed to get queue state for initial load:', error);
-                  // Fallback: clear and load normally
-                  (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-                  finalTracks.forEach((video) => {
-                    (window as any).electronAPI.sendQueueCommand?.({
-                      action: 'add_to_queue',
-                      payload: { video }
-                    });
-                  });
-                  // Continue with the indexing wait...
-                  waitForIndexingComplete().then(async () => {
-                    setActiveQueuePopulated(true);
-                    const waitForReady = () => {
-                      if (adminConsoleReady && !playerWindowInitializing) {
-                        initializePlayerWindow();
-                      } else {
-                        setTimeout(waitForReady, 500);
-                      }
-                    };
-                    waitForReady();
-                  });
+                  }, 500);
                 });
               }
               
@@ -1522,15 +1274,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       }
     };
     loadData();
-
-  // Check if Supabase playlist names need migration due to folder name changes
-  if (isElectron && supabaseInitialized) {
-    migrateSupabasePlaylistNames(playlists);
-  }
-
-  // Mark admin console as ready AFTER all initialization is complete
-  console.log('[PlayerWindow] ✅ Admin console initialization complete - marking as ready');
-  setAdminConsoleReady(true);
   }, []); // Empty deps - only run once on mount, but check electronAPI availability inside
 
   // Save queue state whenever it changes (for persistence across app restarts)
@@ -1599,13 +1342,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
   // Listen for player window closed/opened events
   useEffect(() => {
-    if (!isElectron || !(window as any).electronAPI) return;
+    if (!isElectron) return;
     const api = (window as any).electronAPI;
-
+    
     const unsubPlayerClosed = api.onPlayerWindowClosed?.(() => {
       setPlayerWindowOpen(false);
     });
-
+    
     // Listen for player window opened event
     const handlePlayerOpened = () => {
       setPlayerWindowOpen(true);
@@ -1751,26 +1494,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     playNextVideo();
   };
 
-  // Track last play command to prevent duplicates during initialization
-  const lastPlayCommandRef = useRef<{ videoId: string; timestamp: number } | null>(null);
-  const PLAY_COMMAND_DEBOUNCE_MS = 1000; // Prevent duplicate play commands within 1 second
-
   // Send play command to Player Window (the ONLY player - handles all audio/video)
   const sendPlayCommand = useCallback((video: Video) => {
     if (isElectron) {
-      // Prevent duplicate play commands for the same video within debounce window
-      const videoId = video.id || video.src || video.title;
-      const now = Date.now();
-
-      if (lastPlayCommandRef.current &&
-          lastPlayCommandRef.current.videoId === videoId &&
-          (now - lastPlayCommandRef.current.timestamp) < PLAY_COMMAND_DEBOUNCE_MS) {
-        console.log('🎬 [PlayerWindow] Skipping duplicate play command for:', video.title, '(within debounce window)');
-        return;
-      }
-
-      // Update the last command tracking
-      lastPlayCommandRef.current = { videoId, timestamp: now };
       // Convert file:// URLs to djamms:// in dev mode BEFORE sending to player window
       const isDevMode = typeof window !== 'undefined' && window.location.origin.startsWith('http://localhost');
       let videoToSend = { ...video };
@@ -1940,191 +1666,67 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     setSearchLimit(100); // Reset pagination
   };
 
-  const handlePlayButtonClick = async (e: React.MouseEvent, playlistName: string) => {
+  const handlePlayButtonClick = (e: React.MouseEvent, playlistName: string) => {
     e.stopPropagation();
-
-    // Refresh playlists from disk before showing load dialog
-    if (isElectron) {
-      try {
-        const { playlists: refreshedPlaylists } = await (window as any).electronAPI.getPlaylists();
-        if (refreshedPlaylists) {
-          setPlaylists(refreshedPlaylists);
-          localSearchService.indexVideos(refreshedPlaylists);
-        }
-      } catch (error) {
-        console.warn('[PlayerWindow] Failed to refresh playlists:', error);
-      }
-    }
-
     setPlaylistToLoad(playlistName);
     setShowLoadDialog(true);
   };
 
-  const confirmLoadPlaylist = async () => {
+  const confirmLoadPlaylist = () => {
     if (playlistToLoad) {
-      // Set tab to 'queue' when loading a playlist
-      setCurrentTab('queue');
-
-      // Refresh playlists from disk to ensure we have the latest changes
-      let refreshedPlaylists = playlists; // Default to current state
-      if (isElectron) {
-        try {
-          const result = await (window as any).electronAPI.getPlaylists();
-          if (result?.playlists) {
-            refreshedPlaylists = result.playlists;
-            setPlaylists(refreshedPlaylists);
-            localSearchService.indexVideos(refreshedPlaylists);
-          }
-        } catch (error) {
-          console.warn('[PlayerWindow] Failed to refresh playlists:', error);
-        }
-      }
-
       setActivePlaylist(playlistToLoad);
       setSelectedPlaylist(null);
-      const playlistTracks = refreshedPlaylists[playlistToLoad] || [];
+      const playlistTracks = playlists[playlistToLoad] || [];
       const finalTracks = Array.isArray(playlistTracks)
         ? (settings.autoShufflePlaylists ? shuffleArray(playlistTracks) : [...playlistTracks])
         : [];
       
-      // Load playlist preserving current playing video (index 0) and priority queue
+      // Clear the main process queue first, then add all videos
       if (isElectron && finalTracks.length > 0) {
-        console.log('[PlayerWindow] Loading playlist: preserving index 0, clearing from index 1 onwards');
-        console.log('[PlayerWindow] DEBUG: finalTracks length:', finalTracks.length, 'playlist name:', playlistToLoad);
-
-        // Mark playlist loading as in progress to prevent Supabase polling interference
-        playlistLoadingInProgressRef.current = true;
-
-        // Get current queue state from main process
-        console.log('[PlayerWindow] DEBUG: About to call getQueueState, electronAPI available:', !!(window as any).electronAPI);
-        const invokePromise = (window as any).electronAPI.getQueueState?.();
-
-        if (!invokePromise) {
-          console.error('[PlayerWindow] DEBUG: electronAPI.getQueueState is not available');
-          return;
-        }
-
-        // Add timeout to detect hanging calls
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('getQueueState timeout after 5s')), 5000);
+        // Clear queue in main process
+        (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+        
+        // Add all videos to main process queue
+        finalTracks.forEach((video) => {
+          (window as any).electronAPI.sendQueueCommand?.({ 
+            action: 'add_to_queue', 
+            payload: { video } 
+          });
         });
-
-        Promise.race([invokePromise, timeoutPromise])
-          .then((queueState: any) => {
-            console.log('[PlayerWindow] DEBUG: getQueueState promise resolved');
-          console.log('[PlayerWindow] DEBUG: Raw queueState response:', queueState);
-          const currentQueue = queueState?.activeQueue || [];
-          const currentPriorityQueue = queueState?.priorityQueue || [];
-
-          console.log('[PlayerWindow] Current queue state for playlist load:', {
-            activeQueueLength: currentQueue.length,
-            priorityQueueLength: currentPriorityQueue.length,
-            nowPlaying: queueState?.nowPlaying?.title,
-            isPlaying: queueState?.isPlaying,
-            queueStateType: typeof queueState,
-            hasActiveQueue: !!queueState?.activeQueue,
-            activeQueueType: typeof queueState?.activeQueue
-          });
-
-          // Preserve index 0 (currently playing video) - DO NOT MODIFY INDEX 0
-          const preservedVideo = currentQueue.length > 0 ? currentQueue[0] : null;
-
-          if (preservedVideo) {
-            console.log('[PlayerWindow] Preserving currently playing video at index 0:', preservedVideo.title);
-          }
-
-          // Apply URL conversion to playlist tracks (same as sendPlayCommand)
-          const isDevMode = typeof window !== 'undefined' && window.location.origin.startsWith('http://localhost');
-          const convertedTracks = finalTracks.map(video => {
-            if (!isDevMode) return video;
-
-            let convertedVideo = { ...video };
-            const videoPath = video.src || video.path || (video as any).file_path;
-            if (videoPath && videoPath.startsWith('file://')) {
-              try {
-                const url = new URL(videoPath);
-                let cleanPath = url.pathname;
-
-                // Convert file:// to djamms:// for Electron protocol handling
-                const djammsUrl = `djamms://${cleanPath}`;
-
-                convertedVideo = {
-                  ...video,
-                  src: djammsUrl,
-                  path: cleanPath
-                };
-
-                console.log('[PlayerWindow] 🔄 Converted playlist video URL:', {
-                  title: video.title,
-                  originalSrc: videoPath,
-                  newSrc: djammsUrl
-                });
-              } catch (error) {
-                console.warn('[PlayerWindow] Failed to convert playlist video URL:', error);
-              }
-            }
-            return convertedVideo;
-          });
-
-          // Clear active queue from index 1 onwards (preserve index 0)
-          // Remove items from the end backwards to avoid index shifting issues
-          console.log('[PlayerWindow] DEBUG: Checking queue clearing - currentQueue.length:', currentQueue.length, 'condition:', currentQueue.length > 1);
-          if (currentQueue.length > 1) {
-            console.log('[PlayerWindow] Clearing active queue from index 1 onwards:', currentQueue.length - 1, 'items');
-            for (let i = currentQueue.length - 1; i >= 1; i--) {
-              console.log('[PlayerWindow] DEBUG: Sending remove_from_queue for index', i);
-              (window as any).electronAPI.sendQueueCommand?.({
-                action: 'remove_from_queue',
-                payload: { index: i }
-              });
-            }
-          } else {
-            console.log('[PlayerWindow] DEBUG: No items to clear (queue length <= 1)');
-          }
-
-          // Add converted playlist videos to main process queue starting from index 1
-          console.log('[PlayerWindow] Adding', convertedTracks.length, 'playlist tracks starting from index 1');
-          convertedTracks.forEach((video, index) => {
-            console.log('[PlayerWindow] DEBUG: Sending add_to_queue for video:', video.title);
-            (window as any).electronAPI.sendQueueCommand?.({
-              action: 'add_to_queue',
-              payload: { video }
-            });
-          });
-
-          // Don't manually update local state - let main process broadcasts handle it
-          // The main process will broadcast the final correct state after all operations
-        console.log('[PlayerWindow] Playlist load commands sent - waiting for main process broadcasts');
-        console.log('[PlayerWindow] DEBUG: Queue state after playlist loading - length:', queueRef.current.length);
-
-        // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
-        setQueueIndex(0);
-        }).catch((error: any) => {
-          console.error('[PlayerWindow] DEBUG: getQueueState promise rejected:', error);
-          console.error('[PlayerWindow] Failed to get queue state for playlist load:', error);
-          // Fallback: clear and load normally
-          (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-          finalTracks.forEach((video) => {
-            (window as any).electronAPI.sendQueueCommand?.({
-              action: 'add_to_queue',
-              payload: { video }
-            });
-          });
-          setQueue(finalTracks);
-          setQueueIndex(0);
-        });
-
-          // Mark playlist loading as complete after a delay to allow main process to finish processing
+        
+        // Determine starting index based on playback state
+        // If video is currently PLAYING, start at index 1 (skip index 0) to not interrupt
+        // If video is NOT playing (paused/inactive), play index 0 (first song in new playlist)
+        const startIndex = (isPlaying && currentVideo) ? 1 : 0;
+        
+        if (startIndex === 1) {
+          // Video is playing - start playlist at index 1 to not interrupt current video
+          console.log('[PlayerWindow] Video is playing - starting playlist at index 1 to avoid interruption');
           setTimeout(() => {
-            playlistLoadingInProgressRef.current = false;
-            console.log('[PlayerWindow] Playlist loading marked as complete');
-            console.log('[PlayerWindow] DEBUG: Final queue state after loading:', {
-              localQueueLength: queue.length,
-              localPriorityQueueLength: priorityQueue.length
+            (window as any).electronAPI.sendQueueCommand?.({ 
+              action: 'play_at_index', 
+              payload: { index: 1 } 
             });
-          }, 2000); // 2 second delay to ensure all operations complete
+          }, 100);
+        } else {
+          // Video is not playing - play index 0 (first song in new playlist)
+          // This effectively "skips" to the next song (which is the first in the new playlist)
+          console.log('[PlayerWindow] Video is not playing - playing index 0 (first song in new playlist)');
+          setTimeout(() => {
+            (window as any).electronAPI.sendQueueCommand?.({ 
+              action: 'play_at_index', 
+              payload: { index: 0 } 
+            });
+          }, 100);
+        }
       }
-
+      
+      // Update local state (will be synced from main process via queue-state event)
+      // IMPORTANT: Do NOT clear priority queue - it should persist when loading a new playlist
+      setQueue(finalTracks);
+      setQueueIndex(0);
+      // Priority queue is preserved - do NOT call setPriorityQueue([]) here
+      
       // Save active playlist to persist between sessions
       if (isElectron) {
         (window as any).electronAPI.setSetting('activePlaylist', playlistToLoad);
@@ -2293,11 +1895,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     lastVideoId: '', // Tracks last video ID for change detection
     isExplicitSync: false, // Flag to indicate we're doing an explicit sync (prevents useEffect from skipping)
     lastSyncTime: 0, // Tracks when we last synced to prevent rapid successive syncs
-    syncDebounceTimeout: null as NodeJS.Timeout | null, // Debounce timeout for syncs
-    lastPlaybackSyncTime: 0, // Tracks when we last synced playback position
-    lastSyncedPlaybackPosition: 0, // Tracks last synced playback position
-    isReceivingExternalUpdate: false, // Flag to prevent syncing when receiving external state updates
-    lastSyncedStatus: null as 'playing' | 'paused' | null // Track last synced status to prevent unnecessary syncs
+    syncDebounceTimeout: null as NodeJS.Timeout | null // Debounce timeout for syncs
   });
   
   // Keep refs in sync with state
@@ -2322,21 +1920,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     return null;
   }, [priorityQueue, queue, queueIndex]);
 
-  // Track the last preloaded video ID to prevent duplicate preloads
-  const lastPreloadedVideoIdRef = useRef<string | null>(null);
-
-  // Request initial state (only once per component mount)
-  const initialStateRequestedRef = useRef(false);
-
-  // Reset preload tracking when current video changes (allows re-preloading if video loops back)
-  useEffect(() => {
-    if (currentVideo?.id) {
-      // Reset preload tracking when video changes, so next video can be preloaded
-      // This allows the same video to be preloaded again if it comes back in the queue
-      lastPreloadedVideoIdRef.current = null;
-    }
-  }, [currentVideo?.id]);
-
   // Preload the next video when it changes (after current video starts playing)
   // This maintains a single queue buffer (up-next video) for smoother playback
   useEffect(() => {
@@ -2346,28 +1929,20 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     // This prevents unnecessary preloads when queue is empty
     if (!currentVideo && !isPlaying) return;
     
-    // Prevent duplicate preloads of the same video
-    const videoId = nextVideoToPreload.id;
-    if (videoId === lastPreloadedVideoIdRef.current) {
-      return; // Already preloaded this video
-    }
-    
     // Small delay to let current video start loading first (if playing)
     // If not playing yet, preload immediately
     const delay = isPlaying ? 1000 : 100;
     const preloadTimer = setTimeout(() => {
       console.log('[PlayerWindow] 📥 Preloading next video:', nextVideoToPreload.title);
       try {
-        lastPreloadedVideoIdRef.current = videoId; // Mark as preloaded
         (window as any).electronAPI.controlPlayerWindow('preload', nextVideoToPreload);
       } catch (error) {
         console.warn('[PlayerWindow] Preload failed:', error);
-        lastPreloadedVideoIdRef.current = null; // Reset on error to allow retry
       }
     }, delay);
     
     return () => clearTimeout(preloadTimer);
-  }, [nextVideoToPreload, isElectron]); // Only re-preload when nextVideoToPreload changes
+  }, [nextVideoToPreload, isElectron, isPlaying, currentVideo]); // Re-preload when any of these change
 
   const handleVideoEnd = useCallback(() => {
     const endTime = new Date().toISOString();
@@ -2425,9 +2000,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     // Listen for playback state updates from Player Window
     const unsubscribePlaybackState = (window as any).electronAPI.onPlaybackStateSync?.((state: any) => {
       if (state) {
-        // Set flag to prevent status sync while processing external updates
-        syncStateRef.current.isReceivingExternalUpdate = true;
-
         if (typeof state.isPlaying === 'boolean') {
           setIsPlaying(state.isPlaying);
           // Mark player as ready once Player Window responds with playback state
@@ -2445,11 +2017,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         if (typeof state.duration === 'number') {
           setPlaybackDuration(state.duration);
         }
-
-        // Clear the external update flag after processing
-        setTimeout(() => {
-          syncStateRef.current.isReceivingExternalUpdate = false;
-        }, 100);
       }
     });
 
@@ -2495,16 +2062,13 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         console.warn(`[Watchdog] ⚠️ Playback stalled - check ${watchdogCheckCountRef.current}/${WATCHDOG_MAX_STALL_CHECKS}`);
         
         if (watchdogCheckCountRef.current >= WATCHDOG_MAX_STALL_CHECKS) {
-          console.error('[Watchdog] 🚨 PLAYBACK STALL DETECTED - Setting isPlaying=false and triggering recovery skip!');
+          console.error('[Watchdog] 🚨 PLAYBACK STALL DETECTED - Triggering recovery skip!');
           console.error(`[Watchdog] Current video: ${currentVideo?.title}, time stuck at: ${currentPlaybackTime.toFixed(1)}s`);
-
-          // Set isPlaying to false to reflect actual playback state
-          setIsPlaying(false);
-
+          
           // Reset watchdog state
           watchdogCheckCountRef.current = 0;
           lastPlaybackTimeRef.current = 0;
-
+          
           // Force skip to next video (bypass normal debounce)
           lastPlayNextTimeRef.current = 0; // Clear debounce
           playNextVideo();
@@ -2534,15 +2098,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     let previousVideoId: string | null = null;
     
     const unsubscribe = (window as any).electronAPI.onQueueState?.((state: any) => {
-      console.log('[PlayerWindow] DEBUG: Received queue state broadcast:', {
-        activeQueueLength: state.activeQueue?.length || 0,
-        priorityQueueLength: state.priorityQueue?.length || 0,
-        nowPlaying: state.nowPlaying?.title || 'none'
-      });
       if (state) {
-        // Set flag to prevent status sync while processing external updates
-        syncStateRef.current.isReceivingExternalUpdate = true;
-
         // ARCHITECTURE: Index 0 is always now-playing - no queueIndex needed
         // Store the queue state we're about to set (for state-based sync detection)
         const mainProcessQueueHash = JSON.stringify({
@@ -2645,8 +2201,9 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               activeQueue: state.activeQueue || queueRef.current,
               priorityQueue: state.priorityQueue || priorityQueueRef.current,
               queueIndex: 0, // Always 0 - index 0 is now-playing
-              currentVideo: newVideo
-              // Note: Status and isPlaying are synced separately by status sync effect to prevent recursion
+              currentVideo: newVideo,
+              isPlaying: state.isPlaying !== undefined ? state.isPlaying : isPlaying,
+              status: state.isPlaying ? 'playing' : 'paused'
             }, true); // immediate = true to bypass debounce
             
             setTimeout(() => {
@@ -2705,23 +2262,16 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           // Otherwise preserve current video (may be transitioning)
         }
         
-        // Always update isPlaying based on actual playback state from fullscreen window
-        if (typeof state.isPlaying === 'boolean') {
+        // Update isPlaying state if not already set above
+        if (typeof state.isPlaying === 'boolean' && !newVideo) {
           setIsPlaying(state.isPlaying);
         }
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
-
-        // Clear the external update flag after processing
-        setTimeout(() => {
-          syncStateRef.current.isReceivingExternalUpdate = false;
-        }, 100);
       }
     });
-
-    // Request initial state (only once per component mount)
-    if (!initialStateRequestedRef.current) {
-      initialStateRequestedRef.current = true;
-      (window as any).electronAPI.getQueueState?.().then(async (state: any) => {
+    
+    // Request initial state
+    (window as any).electronAPI.getQueueState?.().then(async (state: any) => {
       if (state) {
         if (state.activeQueue) {
           setQueue(state.activeQueue);
@@ -2765,15 +2315,110 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         }
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
         
-        // ⚠️ REMOVED: Player should NEVER pull queue state from Supabase
-        // The Player is the single source of truth for active_queue
-        // It should only PUSH its state to Supabase, never PULL from it
-        // The only exception is loading initial state on app startup (handled separately)
-
-        // REMOVED: Supabase polling logic - Player should never pull queue state
+        // Check if active queue is empty/null - if so, poll Supabase
+        const activeQueueEmpty = !state.activeQueue || state.activeQueue.length === 0;
+        const noCurrentVideo = !state.currentVideo && !state.nowPlaying;
+        
+        if (activeQueueEmpty && noCurrentVideo && supabaseInitialized) {
+          console.log('[PlayerWindow] Active queue is empty - polling Supabase for queue state');
+          
+          // Poll Supabase to get active_queue
+          const supabaseService = getSupabaseService();
+          if (supabaseService.initialized) {
+            try {
+              const playerState = await supabaseService.fetchPlayerState();
+              if (playerState && playerState.active_queue && playerState.active_queue.length > 0) {
+                console.log('[PlayerWindow] ✅ Found active queue in Supabase:', playerState.active_queue.length, 'items');
+                
+                // Convert QueueVideoItem[] to Video[]
+                const activeQueueVideos: Video[] = playerState.active_queue.map(q => ({
+                  id: q.id,
+                  src: q.src,
+                  title: q.title,
+                  artist: q.artist,
+                  path: q.path,
+                  playlist: q.playlist,
+                  playlistDisplayName: q.playlistDisplayName,
+                  duration: q.duration
+                }));
+                
+                // Update queue state
+                setQueue(activeQueueVideos);
+                queueRef.current = activeQueueVideos;
+                setQueueIndex(0);
+                queueIndexRef.current = 0;
+                // Mark that we have a non-empty queue (allows syncing to Supabase)
+                if (activeQueueVideos.length > 0) {
+                  // Set lastSyncedHash to indicate we've synced a non-empty queue
+                  syncStateRef.current.lastSyncedHash = JSON.stringify({
+                    activeQueue: activeQueueVideos.map(v => v.id),
+                    priorityQueue: [],
+                    queueIndex: 0
+                  });
+                }
+                
+                // Send queue to main process (same approach as playlist loading)
+                if (isElectron && activeQueueVideos.length > 0) {
+                  // Clear queue in main process
+                  (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
+                  
+                  // Add all videos to main process queue
+                  activeQueueVideos.forEach((video) => {
+                    (window as any).electronAPI.sendQueueCommand?.({ 
+                      action: 'add_to_queue', 
+                      payload: { video } 
+                    });
+                  });
+                  
+                  // Add priority queue videos if any
+                  const priorityQueueVideos = playerState.priority_queue?.map(q => ({
+                    id: q.id,
+                    src: q.src,
+                    title: q.title,
+                    artist: q.artist,
+                    path: q.path,
+                    playlist: q.playlist,
+                    playlistDisplayName: q.playlistDisplayName,
+                    duration: q.duration
+                  })) || [];
+                  
+                  priorityQueueVideos.forEach((video) => {
+                    (window as any).electronAPI.sendQueueCommand?.({ 
+                      action: 'add_to_priority_queue', 
+                      payload: { video } 
+                    });
+                  });
+                  
+                  // Wait for indexing to complete (if still in progress), then autoplay index 0 (same as playlist loading)
+                  waitForIndexingComplete().then(() => {
+                    console.log('[PlayerWindow] Queue loaded from Supabase - starting auto-play');
+                    // Delay to ensure Player Window is fully loaded and ready to receive IPC
+                    // Player Window is created at 500ms, needs time to load and register handlers
+                    setTimeout(() => {
+                      console.log('[PlayerWindow] 🎬 Autoplaying index 0 video from Supabase queue');
+                      // Mark player as ready since we have a queue loaded
+                      if (!playerReadyRef.current) {
+                        playerReadyRef.current = true;
+                        setPlayerReady(true);
+                      }
+                      // Play first video via main process orchestrator (same as playlist loading)
+                      (window as any).electronAPI.sendQueueCommand?.({ 
+                        action: 'play_at_index', 
+                        payload: { index: 0 } 
+                      });
+                    }, 500);
+                  });
+                }
+              } else {
+                console.log('[PlayerWindow] No active queue found in Supabase');
+              }
+            } catch (error) {
+              console.error('[PlayerWindow] Error fetching player state from Supabase:', error);
+            }
+          }
+        }
       }
     });
-    } // Close the initialStateRequestedRef check
     
     return () => {
       if (unsubscribe) unsubscribe();
@@ -2877,67 +2522,102 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
     };
   }, [settings.forceAutoPlay, isPlaying, currentVideo, playerReady, handleResumePlayback, playNextVideo]);
 
-  // REMOVED: Playback position sync - not needed by any endpoints
-  // Playback time (elapsed duration) is not required by Web Admin or Kiosk
-
-  // Sync player state to Supabase when it changes (excluding frequent playback position updates)
+  // Sync player state to Supabase when it changes
   // This ensures Web Admin / Kiosk see up-to-date state
   useEffect(() => {
     if (!supabaseInitialized) return;
-
+    
     // Skip sync if offline (prevents log spam from repeated attempts)
     if (!supabaseOnline) {
       // Silently skip - SupabaseService will queue updates when offline
       return;
     }
-
+    
     // Prevent concurrent/recursive syncs
     if (syncStateRef.current.isSyncing) {
-      return; // Silently skip concurrent syncs
+      // #region agent log
+      if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2322',message:'Skipping sync - already syncing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+      }
+      // #endregion
+      return; // Silently skip - no need to log every time
     }
-
+    
     // Create a hash of queue state to detect if it actually changed
     const queueHash = JSON.stringify({
       activeQueue: queue.map(v => v.id),
       priorityQueue: priorityQueue.map(v => v.id),
       queueIndex
     });
-
-    // Create a hash of other state (excluding playbackTime - not synced, and isPlaying - handled separately)
+    
+    // Create a hash of other state that might trigger syncs
+    // IMPORTANT: Round playbackTime to nearest 5 seconds to prevent frequent syncs from playback position updates
+    // This prevents recursion loops from playbackTime updating every second
+    const roundedPlaybackTime = Math.floor(playbackTime / 5) * 5; // Round to nearest 5 seconds
     const otherStateHash = JSON.stringify({
       currentVideo: currentVideo?.id || null,
+      isPlaying,
+      playbackTime: roundedPlaybackTime, // Round to 5-second intervals to reduce sync frequency
       volume: Math.round(volume)
     });
-
+    
     // Combine hashes for full state comparison
     const fullStateHash = `${queueHash}|${otherStateHash}`;
-
+    
+    // #region agent log
+    if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+      (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2342',message:'useEffect triggered - checking if sync needed',data:{playbackTime,roundedPlaybackTime,lastFullStateHash:syncStateRef.current.lastFullStateHash?.substring(0,50),fullStateHash:fullStateHash.substring(0,50),hashesMatch:fullStateHash===syncStateRef.current.lastFullStateHash},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+    }
+    // #endregion
+    
     // State-based detection: Skip sync if current queue matches what we just received from main process
     // This prevents syncing back to Supabase what we just received from main process
     // CRITICAL: Don't skip if we're doing an explicit sync (isExplicitSync flag is set)
-    if (queueHash === syncStateRef.current.lastMainProcessHash &&
+    // The explicit sync should always go through, even if the queue hash matches
+    if (queueHash === syncStateRef.current.lastMainProcessHash && 
         syncStateRef.current.lastMainProcessHash !== '' &&
         !syncStateRef.current.isExplicitSync) {
-      return; // Skip queue echo prevention
+      // Only log occasionally to reduce spam (every 5 seconds max)
+      const now = Date.now();
+      if (!syncStateRef.current.lastSkipLogTime || (now - syncStateRef.current.lastSkipLogTime) > 5000) {
+        console.log('[PlayerWindow] Skipping syncState - queue matches last main process update (state-based detection)');
+        syncStateRef.current.lastSkipLogTime = now;
+      }
+      return;
     }
-
+    
     // Skip syncing empty queues on initial load (prevents overwriting Supabase with empty queue)
+    // Only sync empty queues if we've previously synced a non-empty queue (explicit clear)
     const queueIsEmpty = queue.length === 0 && priorityQueue.length === 0;
+    
+    // If queue is empty and we haven't synced a non-empty queue yet, skip sync (prevents overwriting Supabase on startup)
     if (queueIsEmpty && syncStateRef.current.lastSyncedHash === '') {
       return; // Silently skip initial empty queue
     }
-
+    
     // Skip if state hasn't actually changed (prevents unnecessary syncs)
+    // Compare both queue hash and other state hash
     const lastFullStateHash = syncStateRef.current.lastFullStateHash || '';
-    if (fullStateHash === lastFullStateHash && !syncStateRef.current.isExplicitSync) {
+    if (fullStateHash === lastFullStateHash) {
+      // #region agent log
+      if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+        (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2369',message:'Skipping sync - state hash unchanged',data:{fullStateHash:fullStateHash.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+      }
+      // #endregion
       return; // State hasn't changed, skip sync
     }
-
+    
     console.log(`[PlayerWindow] 📤 Syncing state to Supabase: ${queue.length} active, ${priorityQueue.length} priority items, queueIndex: ${queueIndex}`);
-
+    
+    // #region agent log
+    if (isElectron && (window as any).electronAPI?.writeDebugLog) {
+      (window as any).electronAPI.writeDebugLog({location:'PlayerWindow.tsx:2373',message:'Starting sync to Supabase',data:{queueLength:queue.length,priorityLength:priorityQueue.length,queueIndex,playbackTime,roundedPlaybackTime,currentVideoId:currentVideo?.id,isPlaying,wasSyncing:syncStateRef.current.isSyncing},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'}).catch(()=>{});
+    }
+    // #endregion
+    
     // Set syncing flag to prevent recursion
     syncStateRef.current.isSyncing = true;
-
+    
     // Detect queue advancement: if queueIndex changed, force immediate sync
     const prevQueueIndex = queueIndexRef.current;
     const queueAdvanced = prevQueueIndex !== queueIndex;
@@ -2982,62 +2662,26 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           console.log(`[PlayerWindow] Current video changed, forcing immediate sync`);
         }
         // Force immediate sync for queue/video changes to ensure Web Admin sees updates immediately
-        // Note: Status and isPlaying are synced separately by the status sync effect to prevent recursion
         syncState({
+          status: isPlaying ? 'playing' : 'paused',
+          isPlaying,
           currentVideo,
+          currentPosition: playbackTime,
           volume: volume / 100,
-          activeQueue: queue.map(v => ({
-            id: v.id,
-            src: v.src,
-            path: v.path,
-            title: v.title,
-            artist: v.artist,
-            sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-            duration: v.duration,
-            playlist: v.playlist,
-            playlistDisplayName: v.playlistDisplayName
-          })),
-          priorityQueue: priorityQueue.map(v => ({
-            id: v.id,
-            src: v.src,
-            path: v.path,
-            title: v.title,
-            artist: v.artist,
-            sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-            duration: v.duration,
-            playlist: v.playlist,
-            playlistDisplayName: v.playlistDisplayName
-          })),
+          activeQueue: queue,
+          priorityQueue,
           queueIndex
         }, true); // immediate = true
       } else {
-        // Normal sync (debounced) for other state changes (volume, etc.)
-        // Note: Status and isPlaying are synced separately by the status sync effect to prevent recursion
+        // Normal sync (debounced) for other state changes (playback position, volume, etc.)
         syncState({
+          status: isPlaying ? 'playing' : 'paused',
+          isPlaying,
           currentVideo,
+          currentPosition: playbackTime, // Include playback position for admin console timeline
           volume: volume / 100,
-          activeQueue: queue.map(v => ({
-            id: v.id,
-            src: v.src,
-            path: v.path,
-            title: v.title,
-            artist: v.artist,
-            sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-            duration: v.duration,
-            playlist: v.playlist,
-            playlistDisplayName: v.playlistDisplayName
-          })),
-          priorityQueue: priorityQueue.map(v => ({
-            id: v.id,
-            src: v.src,
-            path: v.path,
-            title: v.title,
-            artist: v.artist,
-            sourceType: v.src?.startsWith('http') ? 'youtube' : 'local',
-            duration: v.duration,
-            playlist: v.playlist,
-            playlistDisplayName: v.playlistDisplayName
-          })),
+          activeQueue: queue,
+          priorityQueue,
           queueIndex
         });
       }
@@ -3053,7 +2697,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         syncStateRef.current.isSyncing = false;
       }, 100);
     }
-  }, [supabaseInitialized, supabaseOnline, currentVideo, volume, queue, priorityQueue, queueIndex]); // Removed isPlaying - status is synced separately
+  }, [supabaseInitialized, supabaseOnline, isPlaying, currentVideo, playbackTime, volume, queue, priorityQueue, queueIndex]);
 
   // Tools handlers
   const handleOpenFullscreen = useCallback(async () => {
@@ -3073,10 +2717,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
       const { playlists: newPlaylists } = await (window as any).electronAPI.getPlaylists();
       setPlaylists(newPlaylists || {});
       localSearchService.indexVideos(newPlaylists || {});
-
-      // Force re-index to Supabase even if hash hasn't changed (manual refresh)
-      lastIndexedPlaylistsRef.current = ''; // Reset hash to force re-indexing
-
       // Sync entire music database to Supabase for Web Admin/Kiosk
       if (supabaseInitialized) {
         console.log('[PlayerWindow] Syncing music database to Supabase after manual refresh');
@@ -3231,197 +2871,6 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
   const playlistToLoadDisplayName = playlistToLoad ? getPlaylistDisplayName(playlistToLoad) : '';
 
   const currentTrack = currentVideo;
-
-  // Function to migrate Supabase playlist names when folder names change
-  const migrateSupabasePlaylistNames = async (currentPlaylists: Record<string, Video[]>) => {
-    try {
-      console.log('[PlayerWindow] Checking for playlist name migration needs...');
-
-      const supabaseService = getSupabaseService();
-      const client = supabaseService.getClient();
-
-      if (!client) {
-        console.log('[PlayerWindow] No Supabase client available for migration');
-        return;
-      }
-
-      // Get videos from Supabase that have playlist names with YouTube IDs
-      const { data: videosWithOldNames, error } = await client
-        .from('videos')
-        .select('id, metadata')
-        .eq('player_id', playerId)
-        .like('metadata->>playlist', 'PL%');
-
-      if (error) {
-        console.error('[PlayerWindow] Error fetching videos for migration:', error);
-        return;
-      }
-
-      if (!videosWithOldNames || videosWithOldNames.length === 0) {
-        console.log('[PlayerWindow] No videos with old playlist names found');
-        return;
-      }
-
-      console.log(`[PlayerWindow] Found ${videosWithOldNames.length} videos with potential old playlist names`);
-
-      // Create mapping from old names to new names
-      const updateOperations = [];
-
-      for (const video of videosWithOldNames) {
-        const metadata = video.metadata as any;
-        const oldPlaylistName = metadata?.playlist;
-
-        if (!oldPlaylistName) continue;
-
-        // Extract new playlist name by removing YouTube ID
-        const youtubeIdMatch = oldPlaylistName.match(/^PL[A-Za-z0-9_-]+[._](.+)$/);
-        if (youtubeIdMatch) {
-          const newPlaylistName = youtubeIdMatch[1];
-
-          // Check if this new playlist name exists in current playlists
-          if (currentPlaylists[newPlaylistName] || currentPlaylists[oldPlaylistName]) {
-            // Update the metadata
-            const updatedMetadata = {
-              ...metadata,
-              playlist: newPlaylistName,
-              playlistDisplayName: newPlaylistName
-            };
-
-            updateOperations.push({
-              id: video.id,
-              metadata: updatedMetadata
-            });
-          }
-        }
-      }
-
-      if (updateOperations.length === 0) {
-        console.log('[PlayerWindow] No playlist migrations needed');
-        return;
-      }
-
-      console.log(`[PlayerWindow] Migrating ${updateOperations.length} video records...`);
-
-      // Perform updates in batches to avoid overwhelming Supabase
-      const batchSize = 50;
-      let successCount = 0;
-
-      for (let i = 0; i < updateOperations.length; i += batchSize) {
-        const batch = updateOperations.slice(i, i + batchSize);
-
-        const promises = batch.map(operation =>
-          client
-            .from('videos')
-            .update({ metadata: operation.metadata })
-            .eq('id', operation.id)
-        );
-
-        const results = await Promise.all(promises);
-        const batchSuccess = results.filter(result => !result.error).length;
-        successCount += batchSuccess;
-
-        if (results.some(result => result.error)) {
-          console.error('[PlayerWindow] Some updates in batch failed:', results.filter(r => r.error));
-        }
-      }
-
-      if (successCount > 0) {
-        console.log(`[PlayerWindow] ✅ Successfully migrated ${successCount} video records to new playlist names`);
-        console.log('[PlayerWindow] Videos should now load properly without MEDIA_ERR_SRC_NOT_SUPPORTED errors');
-      }
-
-    } catch (error) {
-      console.error('[PlayerWindow] Error during playlist name migration:', error);
-    }
-  };
-
-  // Function to initialize player window after admin console is ready
-  const initializePlayerWindow = async () => {
-    if (playerWindowInitializing) {
-      console.log('[PlayerWindow] Player window initialization already in progress');
-      return;
-    }
-
-    setPlayerWindowInitializing(true);
-
-    try {
-      console.log('[PlayerWindow] Initializing fullscreen window for auto-play');
-
-      // Create fullscreen window first
-      await (window as any).electronAPI.createPlayerWindow(displayIdValue ?? undefined, fullscreenValue ?? true);
-      setPlayerWindowOpen(true);
-
-      // Mark player as ready since we have a queue loaded
-      console.log('[PlayerWindow] DEBUG: Checking player readiness - current ready:', playerReadyRef.current, 'queue length:', queue.length);
-      if (!playerReadyRef.current && queue.length > 0) {
-        console.log('[PlayerWindow] DEBUG: Setting player to READY - queue loaded with', queue.length, 'tracks');
-        playerReadyRef.current = true;
-        setPlayerReady(true);
-      }
-
-      console.log('[PlayerWindow] Sending initial play command to fullscreen window');
-      // Play first video via main process orchestrator
-      (window as any).electronAPI.sendQueueCommand?.({
-        action: 'play_at_index',
-        payload: { index: 0 }
-      });
-
-      // Sync current player state with status for watchdog monitoring
-      syncState({
-        currentVideo: queue[0] || null,
-        volume: volume / 100
-        // Note: Status and isPlaying are synced separately by status sync effect to prevent recursion
-      });
-
-    } catch (error) {
-      console.error('[PlayerWindow] Failed to initialize player window:', error);
-    } finally {
-      setPlayerWindowInitializing(false);
-    }
-  };
-
-  // Admin console readiness is now set after full initialization in the main useEffect
-
-  // Sync player status changes with Supabase for watchdog monitoring
-  // Only sync when status actually changes, not on every playbackTime update
-  // This prevents recursion loops where status keeps toggling
-  useEffect(() => {
-    if (supabaseInitialized && currentVideo) {
-      // Don't sync if we're currently receiving external state updates
-      if (syncStateRef.current.isReceivingExternalUpdate) {
-        return;
-      }
-
-      const playerStatus = isPlaying ? 'playing' : 'paused';
-      
-      // Only sync status if it actually changed from last sync
-      // This prevents recursion loops where status keeps toggling
-      if (syncStateRef.current.lastSyncedStatus === playerStatus) {
-        // Status hasn't changed - don't sync status
-        // Other fields (queue, position, etc.) are synced separately via other syncState calls
-        return;
-      }
-
-      // Status changed - update the ref and sync
-      syncStateRef.current.lastSyncedStatus = playerStatus;
-      console.log(`[PlayerWindow] Syncing player status: ${playerStatus} for video: ${currentVideo.title}`);
-
-      // Debounce status sync to prevent rapid toggling
-      if (syncStateRef.current.syncDebounceTimeout) {
-        clearTimeout(syncStateRef.current.syncDebounceTimeout);
-      }
-
-      syncStateRef.current.syncDebounceTimeout = setTimeout(() => {
-        // Only sync status - don't include queue/other fields to prevent conflicts with main state sync
-        // The main state sync effect handles queue/volume/etc separately
-        syncState({
-          status: playerStatus,
-          isPlaying
-        }, true); // immediate = true to ensure status updates quickly
-        syncStateRef.current.syncDebounceTimeout = null;
-      }, 500); // 500ms debounce to prevent rapid toggling
-    }
-  }, [currentVideo, isPlaying, supabaseInitialized]); // Only depend on isPlaying and currentVideo - status sync is independent
 
   return (
     <div className={`app ${className}`}>
@@ -3890,7 +3339,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                           if (isElectron) {
                             try {
                               if (enabled && !playerWindowOpen) {
-                                await (window as any).electronAPI.createPlayerWindow(settings.playerDisplayId, settings.playerFullscreen);
+                                await (window as any).electronAPI.createPlayerWindow(settings.playerDisplayId);
                                 setPlayerWindowOpen(true);
                               } else if (!enabled && playerWindowOpen) {
                                 await (window as any).electronAPI.closePlayerWindow();
@@ -3958,8 +3407,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
                         onChange={async (e) => {
                           const fullscreen = e.target.checked;
                           handleUpdateSetting('playerFullscreen', fullscreen);
-                          // Apply fullscreen setting to ALL existing player windows
-                          if (isElectron) {
+                          // Directly set fullscreen on the player window
+                          if (isElectron && playerWindowOpen) {
                             try {
                               await (window as any).electronAPI.setPlayerFullscreen(fullscreen);
                             } catch (error) {

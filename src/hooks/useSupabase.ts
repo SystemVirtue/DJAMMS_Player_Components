@@ -272,16 +272,10 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
 
     // Load playlist command
     if (callbacks.onLoadPlaylist) {
-      console.log(`[useSupabase] ✅ Registering load_playlist handler`);
       service.onCommand('load_playlist', (cmd) => {
-        console.log(`[useSupabase] 🎯 load_playlist handler called with command:`, cmd.id, cmd.command_type);
         const payload = cmd.command_data as LoadPlaylistCommandPayload;
-        console.log(`[useSupabase] 🎯 load_playlist payload:`, payload);
-        console.log(`[useSupabase] 📡 Processing load_playlist command from Web Admin`);
         callbacks.onLoadPlaylist?.(payload.playlistName, payload.shuffle);
       });
-    } else {
-      console.warn(`[useSupabase] ⚠️ onLoadPlaylist handler not provided - load_playlist commands will not be processed`);
     }
 
     // Queue move command
@@ -358,8 +352,6 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
   const hasInitializedRef = useRef(false);
   const lastAutoInitRef = useRef(false);
   const lastPlayerIdRef = useRef<string | undefined>(undefined);
-  const initializationInProgressRef = useRef(false); // Prevent concurrent initializations
-
   useEffect(() => {
     // Re-initialize if playerId changed (even if already initialized)
     const playerIdChanged = playerId !== lastPlayerIdRef.current;
@@ -368,23 +360,16 @@ export function useSupabase(options: UseSupabaseOptions = {}): UseSupabaseReturn
       console.log(`[useSupabase] Player ID changed to ${playerId} - re-initializing`);
       hasInitializedRef.current = false; // Reset to allow re-initialization
     }
-
+    
     // Only initialize when autoInit changes from false to true OR playerId changed
-    // AND not already initializing
-    if (autoInit && !initializationInProgressRef.current &&
-        (playerIdChanged || (!lastAutoInitRef.current && !hasInitializedRef.current))) {
+    if (autoInit && (playerIdChanged || (!lastAutoInitRef.current && !hasInitializedRef.current))) {
       hasInitializedRef.current = true;
       lastAutoInitRef.current = true;
-      initializationInProgressRef.current = true;
-
-      initialize().finally(() => {
-        initializationInProgressRef.current = false;
-      });
+      initialize();
     } else if (!autoInit) {
       // Reset when autoInit becomes false
       lastAutoInitRef.current = false;
       hasInitializedRef.current = false;
-      initializationInProgressRef.current = false;
     }
 
     // Cleanup on unmount

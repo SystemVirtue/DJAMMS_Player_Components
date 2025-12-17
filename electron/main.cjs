@@ -298,32 +298,34 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const VITE_DEV_SERVER_URL = 'http://localhost:3003';
 
 // Register custom protocol for serving local files
-// This must be done when app is ready but BEFORE windows are created
-app.on('ready', () => {
+// This must be done BEFORE app is ready - use app.on('ready') or register synchronously
+// For dev mode, we'll register it when app is ready (before windows are created)
+app.whenReady().then(() => {
   // Register a custom protocol to serve local files with Range request support
   // This is CRITICAL for seeking to work properly (prevents MEDIA_NETWORK_ERR)
   // Using registerFileProtocol which automatically handles Range requests in Electron
   protocol.registerFileProtocol('djamms', (request, callback) => {
     const url = request.url;
-    console.log('[Electron] 🔍 djamms:// protocol request received:', url);
-
     // Remove protocol prefix: djamms://
     let filePath = url.replace(/^djamms:\/\//, '');
-    console.log('[Electron] 📂 Raw filePath after protocol removal:', filePath);
     
     try {
-      // The path is now properly URL-encoded to handle spaces and special characters
-      // We need to decode it back to get the actual filesystem path
+      // The path should NOT be encoded (we fixed the double-encoding issue)
+      // But handle both cases: encoded and unencoded
       let decodedPath = filePath;
-
-      // Always try to decode since we're now encoding the paths properly
-      try {
-        decodedPath = decodeURIComponent(filePath);
-        console.log('[Electron] djamms:// protocol request (decoded):', { url, original: filePath, decoded: decodedPath });
-      } catch (e) {
-        // If decoding fails, log the error and use the path as-is
-        console.error('[Electron] djamms:// protocol decode failed:', e.message);
-        console.log('[Electron] djamms:// protocol request (decode failed, using as-is):', { url, path: filePath });
+      
+      // Try to decode if it looks encoded (contains %)
+      if (filePath.includes('%')) {
+        try {
+          decodedPath = decodeURIComponent(filePath);
+          console.log('[Electron] djamms:// protocol request (decoded):', { url, original: filePath, decoded: decodedPath });
+        } catch (e) {
+          // If decoding fails, use the path as-is
+          console.log('[Electron] djamms:// protocol request (not encoded):', { url, path: filePath });
+          decodedPath = filePath;
+        }
+      } else {
+        console.log('[Electron] djamms:// protocol request (unencoded):', { url, path: filePath });
         decodedPath = filePath;
       }
       
@@ -846,8 +848,7 @@ ipcMain.on('queue-command', async (_event, command) => {
           
           console.log('[main] Moved video to index 0 and playing:', video?.title);
           if (fullscreenWindow) {
-            const convertedVideo = convertToDjammsUrl(queueState.nowPlaying);
-            fullscreenWindow.webContents.send('control-player', { action: 'play', data: convertedVideo });
+            fullscreenWindow.webContents.send('control-player', { action: 'play', data: queueState.nowPlaying });
           }
         }
         break;
@@ -961,10 +962,9 @@ ipcMain.on('queue-command', async (_event, command) => {
             queueState.nowPlayingSource = priorityVideoInserted ? 'priority' : 'active';
             queueState.isPlaying = true;
             console.log('[main] 🎬 Next video:', nextVideo.title, 'Source:', queueState.nowPlayingSource);
-
+            
             if (fullscreenWindow) {
-              const convertedVideo = convertToDjammsUrl(nextVideo);
-              fullscreenWindow.webContents.send('control-player', { action: 'play', data: convertedVideo });
+              fullscreenWindow.webContents.send('control-player', { action: 'play', data: nextVideo });
             }
           } else {
             // Queue is empty
@@ -983,20 +983,9 @@ ipcMain.on('queue-command', async (_event, command) => {
           
           // Insert into active queue at index 0
           queueState.activeQueue.push(priorityVideo);
-
+          
           if (fullscreenWindow) {
-            console.log('[main] Sending priority video to fullscreen window:', {
-              title: priorityVideo?.title,
-              src: priorityVideo?.src,
-              path: priorityVideo?.path
-            });
-            const convertedVideo = convertToDjammsUrl(priorityVideo);
-            console.log('[main] Converted priority video:', {
-              title: convertedVideo?.title,
-              src: convertedVideo?.src,
-              path: convertedVideo?.path
-            });
-            fullscreenWindow.webContents.send('control-player', { action: 'play', data: convertedVideo });
+            fullscreenWindow.webContents.send('control-player', { action: 'play', data: priorityVideo });
           }
         } else {
           // No videos in either queue
@@ -1012,46 +1001,6 @@ ipcMain.on('queue-command', async (_event, command) => {
           mainWindow.webContents.send('refresh-playlists-request');
         }
         break;
-      case 'remove_unknown_video_at_index_zero':
-        console.log('[main] 🚨 Removing unknown video at index 0 from active queue');
-
-        if (queueState.activeQueue.length > 0) {
-          const removedVideo = queueState.activeQueue[0];
-          console.log('[main] Removed unknown video:', removedVideo?.title || 'Unknown');
-
-          // Remove the video at index 0
-          queueState.activeQueue.shift();
-
-          // If there's still a video at index 0, auto-play it
-          if (queueState.activeQueue.length > 0) {
-            const nextVideo = queueState.activeQueue[0];
-            console.log('[main] Auto-playing next video:', nextVideo?.title || 'Unknown');
-
-            // Move the next video to now-playing position
-            queueState.nowPlaying = nextVideo;
-            queueState.nowPlayingSource = nextVideo?.src || null;
-            queueState.isPlaying = true;
-            queueState.queueIndex = 0;
-
-            // Send play command to player window
-            if (fullscreenWindow) {
-              const convertedVideo = convertToDjammsUrl(nextVideo);
-              fullscreenWindow.webContents.send('control-player', {
-                action: 'play',
-                data: convertedVideo
-              });
-            }
-          } else {
-            // Queue is now empty
-            queueState.nowPlaying = null;
-            queueState.nowPlayingSource = null;
-            queueState.isPlaying = false;
-            console.log('[main] ⚠️ Queue is now empty after removing unknown video');
-          }
-        } else {
-          console.warn('[main] Cannot remove unknown video - active queue is empty');
-        }
-        break;
       default:
         console.warn('[main] Unknown queue command:', action);
     }
@@ -1063,21 +1012,10 @@ ipcMain.on('queue-command', async (_event, command) => {
 
 // Allow renderer to request current queue state snapshot
 ipcMain.handle('get-queue-state', async () => {
-  console.log('[main] DEBUG: get-queue-state handler called, queueState:', {
-    activeQueueLength: queueState.activeQueue?.length || 0,
-    priorityQueueLength: queueState.priorityQueue?.length || 0,
-    nowPlaying: queueState.nowPlaying?.title || 'none'
-  });
-  const result = {
+  return {
     ...queueState,
     currentVideo: queueState.nowPlaying
   };
-  console.log('[main] DEBUG: get-queue-state returning:', {
-    activeQueueLength: result.activeQueue?.length || 0,
-    priorityQueueLength: result.priorityQueue?.length || 0,
-    nowPlaying: result.nowPlaying?.title || 'none'
-  });
-  return result;
 });
 // ==================== IPC Handlers ====================
 
@@ -1237,108 +1175,30 @@ ipcMain.handle('close-fullscreen-window', async () => {
 
 ipcMain.handle('control-fullscreen-player', async (event, action, data) => {
   if (fullscreenWindow) {
-    // Convert video data for play actions
-    if (action === 'play' && data) {
-      data = convertToDjammsUrl(data);
-    }
     fullscreenWindow.webContents.send('control-player', { action, data });
     return { success: true };
   }
   return { success: false, error: 'No fullscreen window' };
 });
 
-// Helper function to convert file:// URLs to djamms:// URLs for Electron dev mode
-function convertToDjammsUrl(video) {
-  if (!video) return video;
-
-  // Only convert in dev mode
-  if (!isDev) return video;
-
-  let videoToSend = { ...video };
-
-  console.log('[Electron] 🔄 convertToDjammsUrl called with video:', {
-    title: video.title,
-    src: video.src,
-    path: video.path,
-    hasSrc: !!video.src,
-    hasPath: !!video.path
-  });
-
-  // Convert file:// URLs to djamms:// for proper video playback in Electron dev mode
-  const videoPath = video.src || video.path;
-  if (videoPath) {
-    console.log('[Electron] 🔄 Video path found:', videoPath);
-
-    if (videoPath.startsWith('file://')) {
-      try {
-        // Extract the actual file path from file:// URL
-        const url = new URL(videoPath);
-        let cleanPath = url.pathname;
-
-        // On macOS, pathname includes the leading slash which is correct
-        // On Windows, it would be /C:/... which is also correct
-
-        // Convert file:// to djamms:// for Electron protocol handling
-        const djammsUrl = `djamms://${cleanPath}`;
-
-        console.log('[Electron] 🔄 Converting video src for fullscreen window:');
-        console.log('[Electron] 🔄   Original src:', videoPath);
-        console.log('[Electron] 🔄   Clean path:', cleanPath);
-        console.log('[Electron] 🔄   djamms:// URL:', djammsUrl);
-
-        videoToSend.src = djammsUrl;
-        videoToSend.path = cleanPath; // Keep clean path for reference
-      } catch (error) {
-        console.warn('[Electron] Failed to convert file:// to djamms:// URL:', error);
-      }
-    } else if (!videoPath.startsWith('djamms://')) {
-      // If it's a plain filesystem path, convert it to djamms://
-      console.log('[Electron] 🔄 Converting plain path to djamms://:', videoPath);
-      videoToSend.src = `djamms://${videoPath}`;
-    }
-  } else {
-    console.warn('[Electron] 🔄 No video path found in video object:', video);
-  }
-
-  console.log('[Electron] 🔄 convertToDjammsUrl returning:', {
-    title: videoToSend.title,
-    src: videoToSend.src,
-    path: videoToSend.path
-  });
-
-  return videoToSend;
-}
-
 // Player window control (new handler)
 ipcMain.handle('control-player-window', async (event, action, data) => {
   console.log('[Electron] control-player-window called:', action, 'fullscreenWindow exists:', !!fullscreenWindow);
-
-  // Convert video data for proper playback (both play and preload actions)
-  if ((action === 'play' || action === 'preload') && data) {
-    console.log(`[Electron] 🎬 BEFORE conversion - video object (${action}):`, {
-      title: data.title,
-      src: data.src,
-      path: data.path,
-      id: data.id
-    });
-    data = convertToDjammsUrl(data);
-    console.log(`[Electron] 🎬 AFTER conversion - video object (${action}):`);
+  if (action === 'play' && data) {
+    console.log('[Electron] 🎬 Play command received - video object:');
     console.log('[Electron] 🎬   - title:', data.title);
     console.log('[Electron] 🎬   - src:', data.src);
     console.log('[Electron] 🎬   - path:', data.path);
     console.log('[Electron] 🎬   - id:', data.id);
     console.log('[Electron] 🎬   - Full data keys:', Object.keys(data || {}));
   }
-
   if (fullscreenWindow) {
     console.log('[Electron] Sending control-player to fullscreen window:', { action, data: data?.title || data?.id || 'no data' });
     if (action === 'play' && data) {
       console.log('[Electron] 🎬 Video object being sent to fullscreen window:');
       console.log('[Electron] 🎬   - src:', data.src);
       console.log('[Electron] 🎬   - path:', data.path);
-      console.log('[Electron] 🎬   - title:', data.title);
-      console.log('[Electron] 🎬   - Full object keys:', Object.keys(data));
-      console.log('[Electron] 🎬   - Full object (first 200 chars):', JSON.stringify(data).substring(0, 200));
+      console.log('[Electron] 🎬   - Full object:', JSON.stringify(data, null, 2).substring(0, 500));
     }
     fullscreenWindow.webContents.send('control-player', { action, data });
     return { success: true };
@@ -1353,8 +1213,7 @@ ipcMain.handle('control-player-window', async (event, action, data) => {
     await new Promise(resolve => setTimeout(resolve, 1000));
     if (fullscreenWindow) {
       console.log('[Electron] ✅ Fullscreen window created, sending play command');
-      if ((action === 'play' || action === 'preload') && data) {
-        data = convertToDjammsUrl(data);
+      if (action === 'play' && data) {
         console.log('[Electron] Video object being sent after creation - src:', data.src, 'path:', data.path);
       }
       fullscreenWindow.webContents.send('control-player', { action, data });
@@ -1484,37 +1343,48 @@ ipcMain.handle('set-player-fullscreen', async (event, fullscreen) => {
     }
   }
   
-  const isCurrentlyFullscreen = fullscreenWindow.isFullScreen();
-
-  // Only make changes if the state is actually different
-  if (fullscreen !== isCurrentlyFullscreen) {
-    console.log(`[Electron] Toggling player window ${fullscreen ? 'to fullscreen' : 'to windowed'} mode`);
-
-    if (fullscreen) {
-      // Switching to fullscreen
-      fullscreenWindow.setFullScreen(true);
-      fullscreenWindow.setAlwaysOnTop(true);
-      fullscreenWindow.setResizable(false);
-
-      // Notify renderer about fullscreen mode
-      if (fullscreenWindow.webContents) {
-        fullscreenWindow.webContents.send('control-player', { action: 'resize', data: { mode: 'fullscreen' } });
-      }
-    } else {
-      // Switching to windowed mode
-      fullscreenWindow.setFullScreen(false);
-      fullscreenWindow.setAlwaysOnTop(false);
-      fullscreenWindow.setResizable(true);
-
-      // Notify renderer about windowed mode
-      if (fullscreenWindow.webContents) {
-        fullscreenWindow.webContents.send('control-player', { action: 'resize', data: { mode: 'windowed' } });
-      }
+  // Get current display ID
+  const displays = screen.getAllDisplays();
+  const currentBounds = fullscreenWindow.getBounds();
+  const currentDisplay = screen.getDisplayMatching(currentBounds);
+  const displayId = currentDisplay.id;
+  
+  // If switching to windowed mode, we need to recreate the window with frame
+  // If switching to fullscreen, we can just toggle fullscreen
+  if (!fullscreen && fullscreenWindow.isFullScreen()) {
+    // Switching to windowed: recreate window with frame
+    const savedState = {
+      displayId: displayId,
+      fullscreen: false
+    };
+    
+    // Close current window
+    fullscreenWindow.close();
+    fullscreenWindow = null;
+    
+    // Recreate in windowed mode
+    const win = createFullscreenWindow(displayId, false);
+    
+    // Notify renderer to resize video players
+    if (win && win.webContents) {
+      win.webContents.once('did-finish-load', () => {
+        win.webContents.send('control-player', { action: 'resize', data: { mode: 'windowed' } });
+      });
     }
-
-    console.log(`[Electron] Player window toggled to ${fullscreen ? 'fullscreen' : 'windowed'} mode successfully`);
-  } else {
-    console.log(`[Electron] Player window already in ${fullscreen ? 'fullscreen' : 'windowed'} mode, no change needed`);
+    
+    return { success: true };
+  } else if (fullscreen && !fullscreenWindow.isFullScreen()) {
+    // Switching to fullscreen: just toggle
+    fullscreenWindow.setFullScreen(true);
+    fullscreenWindow.setAlwaysOnTop(true);
+    fullscreenWindow.setResizable(false);
+    
+    // Notify renderer
+    if (fullscreenWindow.webContents) {
+      fullscreenWindow.webContents.send('control-player', { action: 'resize', data: { mode: 'fullscreen' } });
+    }
+    
+    return { success: true };
   }
   
   // Already in the requested state
@@ -1629,19 +1499,6 @@ ipcMain.handle('clear-recent-searches', async () => {
 app.whenReady().then(() => {
   // Initialize logs directory now that app is ready
   initializeLogsDirectory();
-
-  // Close any existing player windows on app refresh/init to prevent duplicates
-  console.log('[Electron] 🔄 Closing any existing player windows on app initialization...');
-  if (fullscreenWindow && !fullscreenWindow.isDestroyed()) {
-    try {
-      fullscreenWindow.close();
-      fullscreenWindow = null;
-      console.log('[Electron] ✅ Closed existing fullscreen window');
-    } catch (error) {
-      console.warn('[Electron] ⚠️ Error closing existing fullscreen window:', error);
-    }
-  }
-
   console.log('[Electron] ✅ App is ready, creating main window...');
   createMainWindow();
 
