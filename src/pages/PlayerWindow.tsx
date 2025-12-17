@@ -2714,110 +2714,12 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         }
         if (state.nowPlayingSource) setIsFromPriorityQueue(state.nowPlayingSource === 'priority');
         
-        // Check if active queue is empty/null - if so, poll Supabase
-        const activeQueueEmpty = !state.activeQueue || state.activeQueue.length === 0;
-        const noCurrentVideo = !state.currentVideo && !state.nowPlaying;
-        
-        if (activeQueueEmpty && noCurrentVideo && supabaseInitialized && !playlistLoadingInProgressRef.current) {
-          console.log('[PlayerWindow] Active queue is empty - polling Supabase for queue state (not during playlist loading)');
-          
-          // Poll Supabase to get active_queue
-          const supabaseService = getSupabaseService();
-          if (supabaseService.initialized) {
-            try {
-              const playerState = await supabaseService.fetchPlayerState();
-              if (playerState && playerState.active_queue && playerState.active_queue.length > 0) {
-                console.log('[PlayerWindow] ✅ Found active queue in Supabase:', playerState.active_queue.length, 'items');
-                
-                // Convert QueueVideoItem[] to Video[]
-                const activeQueueVideos: Video[] = playerState.active_queue.map(q => ({
-                  id: q.id,
-                  src: q.src,
-                  title: q.title,
-                  artist: q.artist,
-                  path: q.path,
-                  playlist: q.playlist,
-                  playlistDisplayName: q.playlistDisplayName,
-                  duration: q.duration
-                }));
-                
-                // Update queue state
-                setQueue(activeQueueVideos);
-                queueRef.current = activeQueueVideos;
-                setQueueIndex(0);
-                queueIndexRef.current = 0;
-                // Mark that we have a non-empty queue (allows syncing to Supabase)
-                if (activeQueueVideos.length > 0) {
-                  // Mark active queue as populated
-                  setActiveQueuePopulated(true);
-                  // Set lastSyncedHash to indicate we've synced a non-empty queue
-                  syncStateRef.current.lastSyncedHash = JSON.stringify({
-                    activeQueue: activeQueueVideos.map(v => v.id),
-                    priorityQueue: [],
-                    queueIndex: 0
-                  });
-                }
-                
-                // Send queue to main process (same approach as playlist loading)
-                if (isElectron && activeQueueVideos.length > 0) {
-                  // Clear queue in main process
-                  (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
-                  
-                  // Add all videos to main process queue
-                  activeQueueVideos.forEach((video) => {
-                    (window as any).electronAPI.sendQueueCommand?.({ 
-                      action: 'add_to_queue', 
-                      payload: { video } 
-                    });
-                  });
-                  
-                  // Add priority queue videos if any
-                  const priorityQueueVideos = playerState.priority_queue?.map(q => ({
-                    id: q.id,
-                    src: q.src,
-                    title: q.title,
-                    artist: q.artist,
-                    path: q.path,
-                    playlist: q.playlist,
-                    playlistDisplayName: q.playlistDisplayName,
-                    duration: q.duration
-                  })) || [];
-                  
-                  priorityQueueVideos.forEach((video) => {
-                    (window as any).electronAPI.sendQueueCommand?.({ 
-                      action: 'add_to_priority_queue', 
-                      payload: { video } 
-                    });
-                  });
-                  
-                  // Wait for indexing to complete (if still in progress), then autoplay index 0 (same as playlist loading)
-                  waitForIndexingComplete().then(() => {
-                    console.log('[PlayerWindow] Queue loaded from Supabase - starting auto-play');
-                    // Delay to ensure Player Window is fully loaded and ready to receive IPC
-                    // Player Window is created at 500ms, needs time to load and register handlers
-                    setTimeout(() => {
-                      console.log('[PlayerWindow] 🎬 Autoplaying index 0 video from Supabase queue');
-                      // Mark player as ready since we have a queue loaded
-                      if (!playerReadyRef.current) {
-                        playerReadyRef.current = true;
-                        setPlayerReady(true);
-                      }
-                      // Play first video via main process orchestrator (same as playlist loading)
-                      (window as any).electronAPI.sendQueueCommand?.({ 
-                        action: 'play_at_index', 
-                        payload: { index: 0 } 
-                      });
-                    }, 500);
-                  });
-                }
-              } else {
-                console.log('[PlayerWindow] No active queue found in Supabase');
-              }
-            } catch (error) {
-              console.error('[PlayerWindow] Error fetching player state from Supabase:', error);
-            }
-          }
-        }
+        // ⚠️ REMOVED: Player should NEVER pull queue state from Supabase
+        // The Player is the single source of truth for active_queue
+        // It should only PUSH its state to Supabase, never PULL from it
+        // The only exception is loading initial state on app startup (handled separately)
+
+        // REMOVED: Supabase polling logic - Player should never pull queue state
       }
     });
     } // Close the initialStateRequestedRef check
