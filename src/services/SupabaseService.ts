@@ -310,7 +310,26 @@ class SupabaseService {
         if (existing) {
           this.playerStateId = existing.id;
           logger.info(`[SupabaseService] Found existing player state: ${this.playerStateId}`);
-          
+
+          // CRITICAL: Initialize lastSyncedState with existing state from database
+          // This ensures Web Admin receives queue data in subsequent Realtime updates
+          // Without this, partial updates would not include active_queue
+          this.lastSyncedState = {
+            active_queue: existing.active_queue || [],
+            priority_queue: existing.priority_queue || [],
+            now_playing_video: existing.now_playing_video,
+            status: existing.status,
+            volume: existing.volume,
+            current_position: existing.current_position,
+            last_updated: existing.last_updated
+          };
+          logger.debug('[SupabaseService] Initialized lastSyncedState from existing DB state', {
+            hasActiveQueue: !!existing.active_queue,
+            activeQueueLength: existing.active_queue?.length || 0,
+            hasPriorityQueue: !!existing.priority_queue,
+            priorityQueueLength: existing.priority_queue?.length || 0
+          });
+
           // Update online status (non-blocking)
           this.setOnlineStatus(true).catch(err => {
             logger.warn('[SupabaseService] Failed to update online status (non-critical):', err);
@@ -594,14 +613,24 @@ class SupabaseService {
       if (state.activeQueue !== undefined) {
         updateData.active_queue = state.activeQueue.map(v => this.videoToQueueItem(v));
       } else {
-        // CRITICAL: Always preserve active_queue from lastSyncedState if it exists
-        // This ensures Web Admin receives queue data in every Realtime update, even when only other fields change
-        // Without this, partial updates (e.g., only now_playing_video) would not include active_queue
-        // Check for both existence and non-null (empty arrays are valid)
-        if (this.lastSyncedState?.active_queue !== undefined && this.lastSyncedState?.active_queue !== null) {
-          updateData.active_queue = this.lastSyncedState.active_queue;
-          logger.debug('[SupabaseService] Preserving active_queue from lastSyncedState for partial update');
-        }
+      // CRITICAL: Always preserve active_queue from lastSyncedState if it exists
+      // This ensures Web Admin receives queue data in every Realtime update, even when only other fields change
+      // Without this, partial updates (e.g., only now_playing_video) would not include active_queue
+      // Check for both existence and non-null (empty arrays are valid)
+      if (this.lastSyncedState?.active_queue !== undefined && this.lastSyncedState?.active_queue !== null) {
+        updateData.active_queue = this.lastSyncedState.active_queue;
+        logger.debug('[SupabaseService] Preserving active_queue from lastSyncedState for partial update', {
+          lastSyncedQueueLength: this.lastSyncedState.active_queue?.length || 0,
+          hasLastSyncedState: !!this.lastSyncedState,
+          lastSyncedStateKeys: this.lastSyncedState ? Object.keys(this.lastSyncedState) : []
+        });
+      } else {
+        logger.warn('[SupabaseService] WARNING: No active_queue in lastSyncedState to preserve!', {
+          lastSyncedStateExists: !!this.lastSyncedState,
+          lastSyncedActiveQueue: this.lastSyncedState?.active_queue,
+          lastSyncedStateKeys: this.lastSyncedState ? Object.keys(this.lastSyncedState) : []
+        });
+      }
       }
 
       // Same logic for priority queue
@@ -955,6 +984,11 @@ class SupabaseService {
         }
         
         this.lastSyncedState = mergedState;
+        logger.debug('[SupabaseService] Updated lastSyncedState after DB write', {
+          hasActiveQueue: mergedState.active_queue !== undefined,
+          activeQueueLength: mergedState.active_queue?.length || 0,
+          lastSyncedStateKeys: Object.keys(mergedState)
+        });
         
         // #region agent log
         if (typeof window !== 'undefined' && (window as any).electronAPI?.writeDebugLog) {
