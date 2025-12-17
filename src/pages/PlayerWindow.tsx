@@ -1981,22 +1981,22 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
         playlistLoadingInProgressRef.current = true;
 
         // Get current queue state from main process
-        console.log('[PlayerWindow] DEBUG: About to call get-queue-state, electronAPI available:', !!(window as any).electronAPI);
-        const invokePromise = (window as any).electronAPI.invoke?.('get-queue-state');
+        console.log('[PlayerWindow] DEBUG: About to call getQueueState, electronAPI available:', !!(window as any).electronAPI);
+        const invokePromise = (window as any).electronAPI.getQueueState?.();
 
         if (!invokePromise) {
-          console.error('[PlayerWindow] DEBUG: electronAPI.invoke is not available');
+          console.error('[PlayerWindow] DEBUG: electronAPI.getQueueState is not available');
           return;
         }
 
         // Add timeout to detect hanging calls
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('get-queue-state timeout after 5s')), 5000);
+          setTimeout(() => reject(new Error('getQueueState timeout after 5s')), 5000);
         });
 
         Promise.race([invokePromise, timeoutPromise])
           .then((queueState: any) => {
-            console.log('[PlayerWindow] DEBUG: get-queue-state promise resolved');
+            console.log('[PlayerWindow] DEBUG: getQueueState promise resolved');
           console.log('[PlayerWindow] DEBUG: Raw queueState response:', queueState);
           const currentQueue = queueState?.activeQueue || [];
           const currentPriorityQueue = queueState?.priorityQueue || [];
@@ -2084,7 +2084,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           // Set queue index to 0 (this will be overridden by main process broadcasts if needed)
           setQueueIndex(0);
         }).catch((error: any) => {
-          console.error('[PlayerWindow] DEBUG: get-queue-state promise rejected:', error);
+          console.error('[PlayerWindow] DEBUG: getQueueState promise rejected:', error);
           console.error('[PlayerWindow] Failed to get queue state for playlist load:', error);
           // Fallback: clear and load normally
           (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
