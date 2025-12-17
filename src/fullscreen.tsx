@@ -133,8 +133,32 @@ function FullscreenApp() {
 
           // Ensure src is set correctly (prioritize src over path)
           if (data && !data.src && data.path) {
-            console.warn('[FullscreenApp] Video has path but no src, using path as src');
-            data.src = data.path;
+            console.warn('[FullscreenApp] Video has path but no src, converting path to file:// URL');
+            // Convert plain file path to file:// URL for proper playback
+            let videoPath = data.path;
+            if (!videoPath.startsWith('file://') && !videoPath.startsWith('djamms://') && !videoPath.startsWith('http://') && !videoPath.startsWith('https://')) {
+              // Normalize path separators
+              const normalizedPath = videoPath.replace(/\\/g, '/');
+              // Convert to file:// URL
+              if (normalizedPath.match(/^[A-Za-z]:/)) {
+                // Windows absolute path
+                data.src = `file:///${normalizedPath}`;
+              } else {
+                // Unix/Mac absolute path
+                data.src = `file://${normalizedPath}`;
+              }
+            } else {
+              data.src = videoPath;
+            }
+          } else if (data && data.src && !data.src.startsWith('file://') && !data.src.startsWith('djamms://') && !data.src.startsWith('http://') && !data.src.startsWith('https://')) {
+            // If src is a plain path, convert it to file:// URL
+            console.warn('[FullscreenApp] Video src is plain path, converting to file:// URL');
+            const normalizedPath = data.src.replace(/\\/g, '/');
+            if (normalizedPath.match(/^[A-Za-z]:/)) {
+              data.src = `file:///${normalizedPath}`;
+            } else {
+              data.src = `file://${normalizedPath}`;
+            }
           }
 
           setVideo(data);

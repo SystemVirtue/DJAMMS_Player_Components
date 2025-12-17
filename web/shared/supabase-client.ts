@@ -1076,13 +1076,32 @@ export async function getPlaylists(
 
 /**
  * Convert SupabaseLocalVideo to QueueVideoItem for command payloads
+ * CRITICAL: Converts plain file paths to file:// URLs for proper video playback
  */
 export function localVideoToQueueItem(video: SupabaseLocalVideo): QueueVideoItem {
   const metadata = video.metadata as any;
+  
+  // Convert plain file path to file:// URL for proper video playback
+  // This ensures HTML5 video elements can play the file correctly
+  let videoSrc = video.path;
+  if (videoSrc && !videoSrc.startsWith('file://') && !videoSrc.startsWith('djamms://') && !videoSrc.startsWith('http://') && !videoSrc.startsWith('https://')) {
+    // Normalize path separators (Windows uses backslashes)
+    const normalizedPath = videoSrc.replace(/\\/g, '/');
+    // Convert to file:// URL
+    // On Windows, paths like C:/Users/... need to be C://Users/... for file:// URLs
+    if (normalizedPath.match(/^[A-Za-z]:/)) {
+      // Windows absolute path: C:/Users/... -> file:///C:/Users/...
+      videoSrc = `file:///${normalizedPath}`;
+    } else {
+      // Unix/Mac absolute path: /Users/... -> file:///Users/...
+      videoSrc = `file://${normalizedPath}`;
+    }
+  }
+  
   return {
     id: video.id,
-    src: video.path,
-    path: video.path,
+    src: videoSrc,
+    path: video.path, // Keep original path for reference
     title: video.title,
     artist: video.artist,
     sourceType: 'local',
