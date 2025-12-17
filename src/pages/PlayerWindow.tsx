@@ -1982,8 +1982,21 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
         // Get current queue state from main process
         console.log('[PlayerWindow] DEBUG: About to call get-queue-state, electronAPI available:', !!(window as any).electronAPI);
-        (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
-          console.log('[PlayerWindow] DEBUG: get-queue-state promise resolved');
+        const invokePromise = (window as any).electronAPI.invoke?.('get-queue-state');
+
+        if (!invokePromise) {
+          console.error('[PlayerWindow] DEBUG: electronAPI.invoke is not available');
+          return;
+        }
+
+        // Add timeout to detect hanging calls
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('get-queue-state timeout after 5s')), 5000);
+        });
+
+        Promise.race([invokePromise, timeoutPromise])
+          .then((queueState: any) => {
+            console.log('[PlayerWindow] DEBUG: get-queue-state promise resolved');
           console.log('[PlayerWindow] DEBUG: Raw queueState response:', queueState);
           const currentQueue = queueState?.activeQueue || [];
           const currentPriorityQueue = queueState?.priorityQueue || [];

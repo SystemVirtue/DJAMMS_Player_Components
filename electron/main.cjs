@@ -1063,10 +1063,21 @@ ipcMain.on('queue-command', async (_event, command) => {
 
 // Allow renderer to request current queue state snapshot
 ipcMain.handle('get-queue-state', async () => {
-  return {
+  console.log('[main] DEBUG: get-queue-state handler called, queueState:', {
+    activeQueueLength: queueState.activeQueue?.length || 0,
+    priorityQueueLength: queueState.priorityQueue?.length || 0,
+    nowPlaying: queueState.nowPlaying?.title || 'none'
+  });
+  const result = {
     ...queueState,
     currentVideo: queueState.nowPlaying
   };
+  console.log('[main] DEBUG: get-queue-state returning:', {
+    activeQueueLength: result.activeQueue?.length || 0,
+    priorityQueueLength: result.priorityQueue?.length || 0,
+    nowPlaying: result.nowPlaying?.title || 'none'
+  });
+  return result;
 });
 // ==================== IPC Handlers ====================
 
