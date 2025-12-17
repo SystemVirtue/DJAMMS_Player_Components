@@ -702,16 +702,30 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
           playlistLoadingInProgressRef.current = true;
 
           // Get current queue state from main process
-          (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
-            const currentQueue = queueState?.activeQueue || [];
-            const currentPriorityQueue = queueState?.priorityQueue || [];
+          const invokePromise = (window as any).electronAPI.getQueueState?.();
 
-            console.log('[PlayerWindow] Current queue state:', {
-              activeQueueLength: currentQueue.length,
-              priorityQueueLength: currentPriorityQueue.length,
-              nowPlaying: queueState?.nowPlaying?.title,
-              isPlaying: queueState?.isPlaying
-            });
+          if (!invokePromise) {
+            console.error('[PlayerWindow] DEBUG: electronAPI.getQueueState is not available');
+            return;
+          }
+
+          // Add timeout to detect hanging calls
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('getQueueState timeout after 5s')), 5000);
+          });
+
+          Promise.race([invokePromise, timeoutPromise])
+            .then((queueState: any) => {
+              console.log('[PlayerWindow] DEBUG: getQueueState promise resolved');
+              const currentQueue = queueState?.activeQueue || [];
+              const currentPriorityQueue = queueState?.priorityQueue || [];
+
+              console.log('[PlayerWindow] Current queue state:', {
+                activeQueueLength: currentQueue.length,
+                priorityQueueLength: currentPriorityQueue.length,
+                nowPlaying: queueState?.nowPlaying?.title,
+                isPlaying: queueState?.isPlaying
+              });
 
             // Preserve index 0 (currently playing video) if it exists and is playing
             const preservedVideo = (currentQueue.length > 0 && queueState?.isPlaying) ? currentQueue[0] : null;
@@ -770,7 +784,8 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
               });
             }
           }).catch((error: any) => {
-            console.error('[PlayerWindow] Failed to get queue state:', error);
+            console.error('[PlayerWindow] DEBUG: getQueueState promise rejected:', error);
+            console.error('[PlayerWindow] Failed to get queue state for playlist load:', error);
             // Fallback: clear and load normally
             (window as any).electronAPI.sendQueueCommand?.({ action: 'clear_queue' });
             newPlaylistTracks.forEach((video) => {
