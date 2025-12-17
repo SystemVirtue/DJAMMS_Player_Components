@@ -125,7 +125,7 @@ export const QueueManager: React.FC<QueueManagerProps> = ({
             <span className="material-symbols-rounded text-red-400">priority_high</span>
             <h3 className="text-lg font-medium text-ytm-text">PRIORITY QUEUE</h3>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: '400px' }}>
             <table className="w-full border-collapse" style={{ minWidth: '600px' }}>
               <tbody>
                 {playerState.priority_queue.map((item, index) => (
@@ -163,9 +163,9 @@ export const QueueManager: React.FC<QueueManagerProps> = ({
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: '500px' }}>
             <table className="w-full border-collapse" style={{ minWidth: '600px' }}>
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--ytm-surface)', zIndex: 10 }}>
                 <tr className="border-b border-ytm-divider">
                   <th className="text-left py-3 px-4 text-sm font-medium text-ytm-text-secondary" style={{ width: '60px' }}>#</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-ytm-text-secondary">Title</th>

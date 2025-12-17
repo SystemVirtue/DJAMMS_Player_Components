@@ -315,9 +315,9 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
           </button>
         </div>
       </div>
-      <div className="table-container" style={{ overflowX: 'auto' }}>
+      <div className="table-container" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '600px' }}>
         <table className="media-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
+          <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--ytm-surface)', zIndex: 10 }}>
             <tr style={{ borderBottom: '1px solid var(--ytm-divider)' }}>
               <th className="col-index" style={{ textAlign: 'left', padding: '12px', fontSize: '12px', fontWeight: '600', color: 'var(--ytm-text-secondary)', width: '60px' }}>#</th>
               <th className="col-title" style={{ textAlign: 'left', padding: '12px', fontSize: '12px', fontWeight: '600', color: 'var(--ytm-text-secondary)' }}>Title</th>
