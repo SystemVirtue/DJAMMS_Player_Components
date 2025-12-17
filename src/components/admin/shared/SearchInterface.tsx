@@ -21,6 +21,11 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   const [searchSort, setSearchSort] = useState<'artist' | 'az' | 'title' | 'playlist'>('artist');
   const [searchLimit, setSearchLimit] = useState(100);
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(propSelectedPlaylist);
+  
+  // Dialog state for "Add to Priority Queue?"
+  const [showPriorityQueueDialog, setShowPriorityQueueDialog] = useState(false);
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [dialogPosition, setDialogPosition] = useState({ x: 0, y: 0 });
 
   // Update selectedPlaylist when prop changes
   useEffect(() => {
@@ -121,21 +126,37 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
     return () => clearTimeout(debounceTimer);
   }, [searchQuery, searchScope, searchSort, selectedPlaylist, playlists, allVideos]);
 
-  const handleVideoClick = async (video: Video, event: React.MouseEvent) => {
+  const handleVideoClick = (video: Video, event: React.MouseEvent) => {
     event.stopPropagation();
+    setSelectedVideo(video);
+    setDialogPosition({ x: event.clientX, y: event.clientY });
+    setShowPriorityQueueDialog(true);
+  };
+
+  const handleConfirmAddToPriorityQueue = async () => {
+    if (!selectedVideo) return;
+    
     await onCommand('queue_add', {
       video: {
-        id: video.id,
-        title: video.title,
-        artist: video.artist,
-        src: video.src,
-        path: video.path,
-        duration: video.duration,
-        playlist: video.playlist,
-        playlistDisplayName: video.playlistDisplayName
+        id: selectedVideo.id,
+        title: selectedVideo.title,
+        artist: selectedVideo.artist,
+        src: selectedVideo.src,
+        path: selectedVideo.path,
+        duration: selectedVideo.duration,
+        playlist: selectedVideo.playlist,
+        playlistDisplayName: selectedVideo.playlistDisplayName
       },
       queueType: 'priority'
     });
+    
+    setShowPriorityQueueDialog(false);
+    setSelectedVideo(null);
+  };
+
+  const handleCancelDialog = () => {
+    setShowPriorityQueueDialog(false);
+    setSelectedVideo(null);
   };
 
   const handleScopeChange = (scope: 'all' | 'playlist' | 'karaoke' | 'no-karaoke') => {
@@ -364,6 +385,36 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
           </div>
         )}
       </div>
+
+      {/* Add to Priority Queue Dialog */}
+      {showPriorityQueueDialog && selectedVideo && (
+        <>
+          <div 
+            className="video-popover"
+            style={{
+              position: 'fixed',
+              left: Math.min(dialogPosition.x, window.innerWidth - 320),
+              top: Math.min(dialogPosition.y, window.innerHeight - 150),
+              zIndex: 9999,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="popover-content">
+              <div className="popover-title">
+                {getDisplayArtist(selectedVideo.artist) 
+                  ? `${getDisplayArtist(selectedVideo.artist)} - ${cleanVideoTitle(selectedVideo.title)}` 
+                  : cleanVideoTitle(selectedVideo.title)}
+              </div>
+              <div className="popover-subtitle">Add to Priority Queue?</div>
+            </div>
+            <div className="popover-actions">
+              <button className="popover-btn popover-btn-cancel" onClick={handleCancelDialog}>Cancel</button>
+              <button className="popover-btn popover-btn-primary" onClick={handleConfirmAddToPriorityQueue}>Add to Priority Queue</button>
+            </div>
+          </div>
+          <div className="popover-backdrop" onClick={handleCancelDialog} />
+        </>
+      )}
     </div>
   );
 };
