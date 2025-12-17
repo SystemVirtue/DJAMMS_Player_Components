@@ -1982,6 +1982,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
         // Get current queue state from main process
         (window as any).electronAPI.invoke?.('get-queue-state').then((queueState: any) => {
+          console.log('[PlayerWindow] DEBUG: Raw queueState response:', queueState);
           const currentQueue = queueState?.activeQueue || [];
           const currentPriorityQueue = queueState?.priorityQueue || [];
 
@@ -1989,7 +1990,10 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
             activeQueueLength: currentQueue.length,
             priorityQueueLength: currentPriorityQueue.length,
             nowPlaying: queueState?.nowPlaying?.title,
-            isPlaying: queueState?.isPlaying
+            isPlaying: queueState?.isPlaying,
+            queueStateType: typeof queueState,
+            hasActiveQueue: !!queueState?.activeQueue,
+            activeQueueType: typeof queueState?.activeQueue
           });
 
           // Preserve index 0 (currently playing video) - DO NOT MODIFY INDEX 0
@@ -2034,6 +2038,7 @@ export const PlayerWindow: React.FC<PlayerWindowProps> = ({ className = '' }) =>
 
           // Clear active queue from index 1 onwards (preserve index 0)
           // Remove items from the end backwards to avoid index shifting issues
+          console.log('[PlayerWindow] DEBUG: Checking queue clearing - currentQueue.length:', currentQueue.length, 'condition:', currentQueue.length > 1);
           if (currentQueue.length > 1) {
             console.log('[PlayerWindow] Clearing active queue from index 1 onwards:', currentQueue.length - 1, 'items');
             for (let i = currentQueue.length - 1; i >= 1; i--) {
