@@ -483,10 +483,14 @@ export const AdminWindow: React.FC = () => {
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => handleCommand('queue_shuffle')}
-                className="w-8 h-8 flex items-center justify-center rounded hover:bg-ytm-surface-hover transition-colors"
+                className="w-10 h-10 flex items-center justify-center rounded-lg bg-ytm-surface border border-ytm-divider hover:bg-ytm-surface-hover hover:border-ytm-accent transition-colors"
                 title="Shuffle Queue"
+                style={{
+                  minWidth: '40px',
+                  minHeight: '40px'
+                }}
               >
-                <span className="material-symbols-rounded text-ytm-text-secondary">shuffle</span>
+                <span className="material-symbols-rounded text-ytm-text" style={{ fontSize: '20px' }}>shuffle</span>
               </button>
 
               <button
@@ -501,10 +505,14 @@ export const AdminWindow: React.FC = () => {
 
               <button
                 onClick={() => handleCommand('skip')}
-                className="w-8 h-8 flex items-center justify-center rounded hover:bg-ytm-surface-hover transition-colors"
+                className="w-10 h-10 flex items-center justify-center rounded-lg bg-ytm-surface border border-ytm-divider hover:bg-ytm-surface-hover hover:border-ytm-accent transition-colors"
                 title="Skip Track"
+                style={{
+                  minWidth: '40px',
+                  minHeight: '40px'
+                }}
               >
-                <span className="material-symbols-rounded text-ytm-text-secondary">skip_next</span>
+                <span className="material-symbols-rounded text-ytm-text" style={{ fontSize: '20px' }}>skip_next</span>
               </button>
             </div>
 
